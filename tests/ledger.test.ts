@@ -196,6 +196,19 @@ test("a request whose phone matches an open request is the same person", () => {
   assert.deepEqual(offered.requests.map((r) => [r.id, r.status, r.handle]), [["r_1", "offered", "+15551234567"]]);
 });
 
+test("the owner's conditions from the yes survive a later offer; the person's proposed times are kept apart", () => {
+  const proposed = { days: ["fri"] };
+  const owner = { after: "14:00" };
+  let l = saveRequest(empty(), asked({ proposed }), T0, "r_1");
+  l = saveRequest(l, input({ proposed, constraints: owner }), T0 + HOUR, "r_2");
+  // A counterproposal re-offers with the same owner conditions, or none passed at all.
+  l = saveRequest(l, input({ offered: [{ ...offer, holdId: "h2" }], constraints: owner }), T0 + 2 * HOUR, "r_3");
+  l = saveRequest(l, input({ offered: [{ ...offer, holdId: "h3" }] }), T0 + 3 * HOUR, "r_4");
+  const r = l.requests[0]!;
+  assert.deepEqual([l.requests.length, r.id, r.origin, r.constraints, r.proposed], [1, "r_1", "inbound", owner, proposed]);
+  assert.deepEqual(updateRequest(l, "r_1", { proposed: { days: ["mon"] } }, T0).requests[0]!.proposed, { days: ["mon"] });
+});
+
 test("asked becomes dropped when the owner says no", () => {
   let l = saveRequest(empty(), asked(), T0, "r_1");
   l = updateRequest(l, "r_1", { status: "dropped" }, T0 + HOUR);

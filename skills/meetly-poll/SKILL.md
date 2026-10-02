@@ -73,19 +73,14 @@ thread. For a message to the owner with no meeting thread, use
    6. Run `contact.ts --handle <sender>` for their name, then `ledger.ts save
       --json` with `status: "asked"`, `origin: "inbound"`, `handle`, `name`,
       `sourceRowid` = the request's rowid, `topic`, `durationMin` from the
-      config, `constraints` for any times they proposed, their `locale`, and
+      config, `proposed` for any times they proposed, their `locale`, and
       `format`: the format if their words say it (`meetly-group` "Meeting
       format"; otherwise `unknown`). No holds, no group, no message to them.
    7. If the save fails, stop processing senders. Run `cursor.ts set <the
       rowid just below this sender's first row in the batch>` and go to
       step 6.
 5. Run `cursor.ts set <highest rowid in the batch>`.
-6. For each request from `ledger.ts asked --unnotified`, send the owner one
-   line in their DM, in their language: "<name or handle> asked about
-   <topic> <when>. Want me to offer times?" Then run `ledger.ts update --id
-   <id> --json '{"notifiedAt":"<now ISO>"}'`, also when delivery is unknown.
-   If the send fails, leave it: the next poll asks again.
-7. Maintenance:
+6. Maintenance:
    - For each request from `ledger.ts expired`: delete its holds ("Holds" in
      `meetly-group`), then `ledger.ts update --id <id> --json
      '{"status":"expired","pendingOwner":null}'`. If it has a `chatUid`, tell
@@ -93,4 +88,10 @@ thread. For a message to the owner with no meeting thread, use
      An `asked` request has neither holds nor a group.
    - For each request from `ledger.ts cleanup`: retry each delete, then
      update `holdCleanup` to what is still left (`[]` when none).
+7. After maintenance, so an expired request is never asked about: for each
+   request from `ledger.ts asked --unnotified`, send the owner one line in
+   their DM, in their language: "<name or handle> asked about <topic>
+   <when>. Want me to offer times?" Then run `ledger.ts update --id <id>
+   --json '{"notifiedAt":"<now ISO>"}'`, also when delivery is unknown. If
+   the send fails, leave it: the next poll asks again.
 8. If nothing happened, end silently.

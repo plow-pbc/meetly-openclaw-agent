@@ -77,7 +77,9 @@ test("the poll never contacts anyone new: it saves the request as asked and asks
   assert.ok(poll.includes("never contacts anyone new: it opens no group and messages no one who wrote to the owner"));
   assert.ok(poll.includes("`ledger.ts save --json` with `status: \"asked\"`"));
   assert.ok(poll.includes("No holds, no group, no message to them."));
-  assert.ok(poll.includes("For each request from `ledger.ts asked --unnotified`, send the owner one line in their DM"));
+  assert.ok(poll.includes("request from `ledger.ts asked --unnotified`, send the owner one line in their DM"));
+  // An overdue request expires before the owner could be asked about it.
+  assert.ok(poll.indexOf("For each request from `ledger.ts expired`") < poll.indexOf("`ledger.ts asked --unnotified`"));
   assert.ok(poll.includes("also when delivery is unknown. If the send fails, leave it: the next poll asks again."));
   assert.ok(poll.includes("give https://plow.co/download/latch. Go to step 6: it needs no message reads."));
 });
@@ -90,6 +92,17 @@ test("the owner's yes or no in their DM decides an asked request", () => {
   assert.ok(group.includes("**Yes:** follow \"Offer times\" with `origin: inbound`"));
   assert.ok(group.includes("**No:** run `ledger.ts update --id <id> --json '{\"status\":\"dropped\"}'`. Send nothing to the person."));
   assert.ok(flat(prompt).includes("the owner answers Meetly's \"Want me to offer times?\" → `meetly-group`, \"Asked requests\""));
+});
+
+test("the owner's conditions hold for every offer of a request; the person's proposed times only for the first", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("`constraints` set to any conditions the owner gave with the yes"));
+  assert.ok(group.includes("with the request's `constraints` (the owner's) and, on its first offer, its `proposed` times"));
+  assert.ok(group.includes("run again without them, keeping `constraints`, and say those times don't work"));
+  assert.ok(group.includes("`constraints` (the owner's conditions only, unchanged on a new offer)"));
+  assert.ok(group.includes("narrowed to what they said plus the request's `constraints`"));
+  assert.ok(!group.includes("for `origin: owner`"));
+  assert.ok(pollSkill().includes("`proposed` for any times they proposed"));
 });
 
 test("a group only ever resolves to an offered request by its sender", () => {

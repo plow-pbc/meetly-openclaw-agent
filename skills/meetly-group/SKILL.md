@@ -42,12 +42,14 @@ free there.
      to check, then stop.
 2. Read the calendar.
 3. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
-   locale>`, with the request's constraints: `--days`, `--after`, `--before`,
+   locale>`, with the request's `constraints` (the owner's) and, on its
+   first offer, its `proposed` times: `--days`, `--after`, `--before`,
    `--from`/`--to`, `--duration`, `--allow-overlap`. Slots stay inside the
    owner's days and window; constraints only narrow them.
-   - **No slots.** For an owner request, tell the owner which constraint
-     blocks it and suggest loosening it; stop. For an inbound request with
-     proposed times, run again without them and say those times don't work.
+   - **No slots.** If the person's `proposed` times block it, run again
+     without them, keeping `constraints`, and say those times don't work.
+     If `constraints` block it, tell the owner which one and suggest
+     loosening it; stop.
    - **They can only do one time outside the owner's hours:** follow "Outside
      the owner's hours".
    - **`degraded` is not empty:** never claim the owner is free on those
@@ -59,7 +61,8 @@ free there.
    opening a group. Run `ledger.ts save --json '<request>'` with every field:
    `origin`, `handle` (the intended contact handle), `name`, `sourceRowid`,
    `chatUid` if already known, `topic`, `location`, `durationMin`,
-   `constraints`, `allowOverlap`, `format` and `locale` (see "Meeting
+   `constraints` (the owner's conditions only, unchanged on a new offer),
+   `proposed`, `allowOverlap`, `format` and `locale` (see "Meeting
    format"), and `offered[]` with each `start`/`end`/`holdId`/`account`. `save` creates a request or updates the
    existing open request for that person, preserving its id and existing
    `chatUid` when the new value is absent. Holds from the replaced offer are
@@ -128,9 +131,9 @@ asked` and match their answer to a request; if it could be more than one,
 ask which and end the turn.
 
 - **Yes:** follow "Offer times" with `origin: inbound`, the request's
-  `sourceRowid`, `topic`, `format` and `locale`, and its `constraints`
-  narrowed by anything the owner adds. Saving the offer turns the request
-  into `offered` under the same id.
+  `sourceRowid`, `topic`, `format`, `locale` and `proposed`, and
+  `constraints` set to any conditions the owner gave with the yes. Saving
+  the offer turns the request into `offered` under the same id.
 - **No:** run `ledger.ts update --id <id> --json '{"status":"dropped"}'`.
   Send nothing to the person.
 
@@ -289,8 +292,8 @@ offer.
      yet" when it is `unknown`, and that no reminder will go out when
      `record-booking.ts` warned `no-meet-link`.
 - **Another day or time:** delete the current holds. Run `slots.ts` narrowed
-  to what they said (plus the owner's original constraints for
-  `origin: owner`), hold again, offer again, and update `offered`.
+  to what they said plus the request's `constraints`, hold again, offer
+  again, and update `offered`.
 - **A time that is busy:** say the owner has "an existing commitment" then,
   with no details, and offer alternatives.
 - **Only a time outside the owner's hours:** follow "Outside the owner's

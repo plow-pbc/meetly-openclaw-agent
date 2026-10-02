@@ -38,7 +38,10 @@ export type Request = {
   topic: string;
   location?: string;
   durationMin: number;
+  // The owner's conditions, kept for every offer of this request.
   constraints?: Constraints;
+  // Times the person proposed; only the first offer uses them.
+  proposed?: Constraints;
   allowOverlap?: string[];
   offered: Offer[];
   status: Status;
@@ -66,7 +69,7 @@ export type NewRequest = Omit<Request,
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
   "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale"
-  | "phone" | "notifiedAt" | "startedAt">> & {
+  | "phone" | "notifiedAt" | "startedAt" | "proposed">> & {
   pendingOwner?: PendingOwner | null;
   booked?: Booked | null;
   meetUrl?: string | null;
@@ -79,7 +82,7 @@ const FORMATS: readonly Format[] = ["meet", "in_person", "phone", "unknown"];
 const OUTCOMES: readonly Reminder["outcome"][] = ["sent", "cancelled", "no-link"];
 const PATCH_KEYS = [
   "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "topic", "pendingOwner",
-  "format", "locale", "booked", "meetUrl", "reminder", "phone", "notifiedAt", "startedAt",
+  "format", "locale", "booked", "meetUrl", "reminder", "phone", "notifiedAt", "startedAt", "proposed",
 ];
 // Keys a patch can clear with null.
 const NULLABLE = ["pendingOwner", "booked", "meetUrl", "reminder"] as const;
