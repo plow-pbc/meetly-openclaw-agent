@@ -165,7 +165,6 @@ test("find by handle returns an asked request; asking again changes nothing; no 
 
 test("asked becomes offered by saving the offer over it, keeping the request", () => {
   let l = saveRequest(empty(), asked({ handle: "ana@example.com" }), T0, "r_1");
-  assert.throws(() => updateRequest(l, "r_1", { status: "offered" }, T0), /needs offered times/);
   l = saveRequest(l, input({ handle: "ana@example.com" }), T0 + HOUR, "r_2");
   const r = l.requests[0]!;
   assert.equal(l.requests.length, 1);
@@ -173,7 +172,6 @@ test("asked becomes offered by saving the offer over it, keeping the request", (
   assert.deepEqual(r.offered, [offer]);
   assert.deepEqual(r.holdCleanup, []);
   assert.equal(r.offeredAt, new Date(T0 + HOUR).toISOString());
-  assert.throws(() => updateRequest(l, "r_1", { status: "asked" }, T0), /only asked when saved/);
 });
 
 test("the owner's conditions from the yes survive a later offer; the person's proposed times are kept apart", () => {
@@ -214,7 +212,7 @@ test("CLI saves an asked request, finds it by handle but never by chat", () => {
   assert.deepEqual([again.json.request.id, again.json.request.topic], [saved.json.request.id, "coffee"]);
 });
 
-test("a guest replying in an older group can neither find, link nor advance their asked request", () => {
+test("a guest replying in an older group can neither find nor link their asked request", () => {
   const env = { MEETLY_HOME: tmpHome() };
   const old = cli("ledger.ts", ["add", "--json", JSON.stringify(input({ chatUid: "c_old" }))], env).json.request;
   cli("ledger.ts", ["update", "--id", old.id, "--json", '{"status":"booked"}'], env);
@@ -225,7 +223,6 @@ test("a guest replying in an older group can neither find, link nor advance thei
   const link = cli("ledger.ts", ["update", "--id", id, "--json", '{"chatUid":"c_old"}'], env);
   assert.equal(link.status, 1);
   assert.match(link.stderr, /no chat until the owner says yes/);
-  assert.equal(cli("ledger.ts", ["update", "--id", id, "--json", '{"status":"offered"}'], env).status, 1);
   assert.equal(cli("ledger.ts", ["find", "--handle", "+15551234567"], env).json.request.status, "asked");
 });
 

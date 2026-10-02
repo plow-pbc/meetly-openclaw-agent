@@ -222,7 +222,6 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
     if (!PATCH_KEYS.includes(key)) throw new Error(`unknown key: ${key} (allowed: ${PATCH_KEYS.join(", ")})`);
   }
   if (patch.status !== undefined && !STATUSES.includes(patch.status)) throw new Error(`bad status: ${patch.status}`);
-  if (patch.status === "asked") throw new Error("a request is only asked when saved; offer it with save");
   if (patch.offered !== undefined) checkOffers(patch.offered);
   const pending = patch.pendingOwner;
   if (pending) {
@@ -253,7 +252,6 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
     delete updated.meetUrl;
   }
   if (patch.offered !== undefined) updated.offeredAt = at;
-  if (updated.status === "offered" && updated.offered.length === 0) throw new Error("an offered request needs offered times; offer it with save");
   const requests = [...ledger.requests];
   requests[index] = updated;
   return { requests };
