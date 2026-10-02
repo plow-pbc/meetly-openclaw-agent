@@ -69,7 +69,36 @@ test("every script the prompt or a skill names exists", () => {
 
 test("the poll message is what the prompt keys on", () => {
   assert.ok(POLL_MESSAGE.startsWith("Meetly poll."));
-  assert.ok(readFileSync(join(SKILLS, "meetly-poll", "SKILL.md"), "utf8").includes("start-thread.ts"));
+});
+
+test("the poll never contacts anyone new: it saves the request as asked and asks the owner", () => {
+  const poll = pollSkill();
+  for (const opener of ["start-thread", "plow_start_thread", "Offer times"]) assert.ok(!poll.includes(opener), opener);
+  assert.ok(poll.includes("never contacts anyone new: it opens no group and messages no one who wrote to the owner"));
+  assert.ok(poll.includes("`ledger.ts save --json` with `status: \"asked\"`"));
+  assert.ok(poll.includes("No holds, no group, no message to them."));
+  assert.ok(poll.includes("For each request from `ledger.ts asked --unnotified`, send the owner one line in their DM"));
+  assert.ok(poll.includes("also when delivery is unknown. If the send fails, leave it: the next poll asks again."));
+});
+
+test("the owner's yes or no in their DM decides an asked request", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("## Asked requests"));
+  assert.ok(group.includes("Nobody is contacted until the owner says yes there"));
+  assert.ok(group.includes("if it could be more than one, ask which and end the turn"));
+  assert.ok(group.includes("**Yes:** follow \"Offer times\" with `origin: inbound`"));
+  assert.ok(group.includes("**No:** run `ledger.ts update --id <id> --json '{\"status\":\"dropped\"}'`. Send nothing to the person."));
+  assert.ok(flat(prompt).includes("the owner answers Meetly's \"Want me to offer times?\" → `meetly-group`, \"Asked requests\""));
+});
+
+test("a group only ever resolves to an offered request by its sender", () => {
+  const texts = [groupSkill(), flat(prompt)];
+  for (const text of texts) {
+    for (const m of text.matchAll(/`ledger\.ts find --handle <(?:sender|contact|their sender) handle>[^`]*`/g)) {
+      assert.ok(m[0].endsWith("--status offered`"), m[0]);
+    }
+  }
+  assert.equal(texts.flatMap((t) => [...t.matchAll(/--status offered/g)]).length, 4);
 });
 
 test("Meetly introduces itself as Meetly, never by the configured name, as the owner or as a Plow assistant", () => {
@@ -127,7 +156,7 @@ test("meeting notifications and approvals stay in the meeting thread", () => {
 test("a group pick re-reads the current request and never substitutes pending", () => {
   const group = flat(readFileSync(join(SKILLS, "meetly-group", "SKILL.md"), "utf8"));
   assert.ok(group.includes("re-read the ledger in this turn before interpreting it"));
-  assert.ok(group.includes("Re-run both `ledger.ts find --chat <this chat uid>` and `ledger.ts find --handle <sender handle>` now"));
+  assert.ok(group.includes("Re-run both `ledger.ts find --chat <this chat uid>` and `ledger.ts find --handle <sender handle> --status offered` now"));
   assert.ok(group.includes("A closed chat request does not count as a disagreement"));
   assert.ok(group.includes("both lookups identify different open requests"));
   assert.ok(group.includes("follow **No matching request** and do not use `ledger.ts pending` as a substitute"));

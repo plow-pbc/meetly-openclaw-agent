@@ -1,8 +1,8 @@
 # Meetly
 
 Your scheduling assistant, on a text thread. When someone asks to meet you,
-Meetly opens a group with them, offers your free times, holds them on your
-calendar and books the one they pick. You receive the confirmation in the same group.
+Meetly asks you first; when you say yes, it opens a group with them, offers
+your free times, holds them on your calendar and books the one they pick. You receive the confirmation in the same group.
 
 An [OpenClaw](https://github.com/openclaw/openclaw) agent on
 [Plow Chat](https://howto.plow.co/). It is one person's assistant: your days,
@@ -16,7 +16,8 @@ your hours, your calendars, set once in a short chat.
 
 Every five minutes Meetly reads your new iMessages on your Mac, through
 [Latch](https://howto.plow.co/latch). When someone is trying to set something
-up with you — "coffee next week?" — it:
+up with you — "coffee next week?" — it asks you in your DM whether to offer
+times. Nobody hears from Meetly until you say yes. Then it:
 
 1. opens a Plow group with you and that person,
 2. offers three free times from your Google Calendar, inside the days and
@@ -29,7 +30,8 @@ up with you — "coffee next week?" — it:
 6. posts the Meet link in the group 10 minutes before the start,
 7. confirms in the group, where both you and the other person receive it.
 
-It does not wait for you. If you are busy, the meeting still gets booked.
+Once you say yes, it does not wait for you: if you are busy, the meeting
+still gets booked.
 
 You can also ask it directly: *"set up lunch with Patrick next week — it can go
 over Weekly Claw"*. Meetly finds Patrick in your contacts, respects what you

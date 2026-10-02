@@ -1,6 +1,6 @@
 ---
 name: meetly-group
-description: Offer and hold the owner's free times, open or reuse the group, handle owner requests and owner confirmations, and run a Meetly group through to a booked meeting.
+description: Offer and hold the owner's free times, open or reuse the group, handle owner requests, asked requests and owner confirmations, and run a Meetly group through to a booked meeting.
 ---
 # Meetly group
 
@@ -30,11 +30,9 @@ free there.
 
 ## Offer times
 
-1. Resolve the person. For an inbound request, run `contact.ts --handle
-   <the handle they wrote from>`: that handle is theirs, and `name` is their
-   name (when `found` is false, or `name` is null, go on with the handle; a
-   missing card never stops the request). For an owner request, resolve them
-   with `contacts`: name and every phone (E.164) and email; then run
+1. Resolve the person. For an approved inbound request, use the `asked`
+   request's `handle` and `name` (a missing name never stops the request).
+   For an owner request, resolve them with `contacts`: name and every phone (E.164) and email; then run
    `reachable-handle.ts --handle <each phone and email>` and use the `handle`
    it returns: the one the owner reaches them on over iMessage.
    - `reason: "not-on-imessage"`: tell the owner in one line that <name> is
@@ -73,8 +71,8 @@ free there.
    - An open request that already has a `chatUid`: post the new times there.
    - Otherwise open a group with the person's handle and the opener: run
      `start-thread.ts --member <handle> --body <opener> --key <key>`, with key
-     `rowid:<sourceRowid>` in the poll and `owner:<handle>:<first offered
-     start>` for an owner request. Never the `plow_start_thread` tool: it
+     `rowid:<sourceRowid>` for an approved inbound request and
+     `owner:<handle>:<first offered start>` for an owner request. Never the `plow_start_thread` tool: it
      gives Plow 10 s, and a group Plow takes longer to open reads as an
      unknown delivery that withholds the rest of the turn, the owner's reply
      included.
@@ -120,6 +118,21 @@ In the owner's DM:
    ("Offer times" step 5).
 5. Follow "Offer times" with `origin: owner`.
 6. Reply to the owner in one line: group opened, times offered and held.
+
+## Asked requests
+
+The poll saves a meeting request it finds in the owner's messages as
+`asked` and asks the owner about it in the owner's DM. Nobody is contacted
+until the owner says yes there. When the owner answers, run `ledger.ts
+asked` and match their answer to a request; if it could be more than one,
+ask which and end the turn.
+
+- **Yes:** follow "Offer times" with `origin: inbound`, the request's
+  `sourceRowid`, `topic`, `format` and `locale`, and its `constraints`
+  narrowed by anything the owner adds. Saving the offer turns the request
+  into `offered` under the same id.
+- **No:** run `ledger.ts update --id <id> --json '{"status":"dropped"}'`.
+  Send nothing to the person.
 
 ## Meeting format
 
@@ -215,7 +228,7 @@ the meeting thread to answer there, and make no calendar changes.
 waiting for the owner's answer to an out-of-hours time. It does not find a
 contact's open offer. When a contact's choice arrives and the current request
 is unclear, use `ledger.ts find --chat <this chat uid>` and
-`ledger.ts find --handle <contact handle>`; the handle lookup returns the
+`ledger.ts find --handle <contact handle> --status offered`; the handle lookup returns the
 current open (`offered`) request. Never use `pending` to look up a contact's
 offer.
 
@@ -228,7 +241,7 @@ offer.
   and do not alert the owner. Only handle scheduling-related messages below.
 - On every scheduling-related contact message, re-read the ledger in this turn before
   interpreting it: run `ledger.ts find --chat <this chat uid>` and
-  `ledger.ts find --handle <sender handle>`. A previous turn's request object
+  `ledger.ts find --handle <sender handle> --status offered`. A previous turn's request object
   or status is stale. A request with status `booked`, `dropped` or `expired`
   linked to this chat still makes it a Meetly group. Prefer the open
   (`offered`) handle match as the current request, even when the chat lookup
@@ -253,7 +266,7 @@ offer.
   create, change, or delete holds until the request is identified.
 - **Pick** (a time, or "the first one works"):
   1. Re-run both `ledger.ts find --chat <this chat uid>` and
-     `ledger.ts find --handle <sender handle>` now, even if either command
+     `ledger.ts find --handle <sender handle> --status offered` now, even if either command
      already ran earlier in this turn. Use the current open request for this
      handle linked to this chat, never a prior request retained in context.
      If neither lookup identifies that request, follow **No matching

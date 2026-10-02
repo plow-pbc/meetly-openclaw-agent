@@ -1,6 +1,6 @@
 ---
 name: meetly-poll
-description: The scheduled Meetly poll. Read the owner's new iMessages, open groups for people who want to meet, and expire stale holds.
+description: The scheduled Meetly poll. Read the owner's new iMessages, ask the owner about people who want to meet, and expire stale holds.
 ---
 # Meetly poll
 
@@ -12,10 +12,12 @@ Mac's own `plow-messages`, `contacts` and `google-workspace` skills for their
 exact argument arrays, and always pass `read_paths: ["~/Library/Messages"]`
 to `plow-messages`.
 
-This unattended turn has no current conversation. Send meeting notifications
-with `message` (action `send`, channel `plow`, accountId `chat`, target the
-meeting's `chatUid`); the owner is in that thread. For an operational warning
-with no meeting thread, use `owner-chat.ts` and target the printed `chatUid`.
+This unattended turn has no current conversation and never contacts anyone
+new: it opens no group and messages no one who wrote to the owner. Send
+meeting notifications with `message` (action `send`, channel `plow`,
+accountId `chat`, target the meeting's `chatUid`); the owner is in that
+thread. For a message to the owner with no meeting thread, use
+`owner-chat.ts` and target the printed `chatUid`.
 
 1. Run `setup-status.ts`. If it is not `READY`, or `config.paused` is true, end.
    (Pausing disables this job, so a paused Meetly sends no reminders either.)
@@ -60,27 +62,34 @@ with no meeting thread, use `owner-chat.ts` and target the printed `chatUid`.
       marketing, automated senders, mentions of something already booked,
       and anything unclear.
    3. If the owner replied after the request, skip: the owner is handling it.
-   4. If `ledger.ts find --handle <sender>` has an open request, skip.
+   4. If `ledger.ts find --handle <sender>` has a request, skip.
    5. Run `cursor.ts hold <the request's rowid>` (the same rowid you pass as
       `sourceRowid`) before anything else. Until the ledger records a request
       with that `sourceRowid`, `cursor.ts set` stops just below it, so a run
       that fails part-way retries it.
       If you decide after all that it is not a request, run `cursor.ts
       release`.
-   6. Follow `meetly-group` "Offer times" with `origin: inbound`,
-      `sourceRowid` = the request's rowid, the topic, any times they
-      proposed, the format if their words say it (`meetly-group` "Meeting
-      format"; otherwise `unknown`), and their `locale`. Open the group with `start-thread.ts` (key
-      `rowid:<sourceRowid>`), not `plow_start_thread`.
-   7. If that fails before the group started, stop processing senders. Run
-      `cursor.ts set <the rowid just below this sender's first row in the
-      batch>` and go to step 6.
+   6. Run `contact.ts --handle <sender>` for their name, then `ledger.ts save
+      --json` with `status: "asked"`, `origin: "inbound"`, `handle`, `name`,
+      `sourceRowid` = the request's rowid, `topic`, `durationMin` from the
+      config, `constraints` for any times they proposed, their `locale`, and
+      `format`: the format if their words say it (`meetly-group` "Meeting
+      format"; otherwise `unknown`). No holds, no group, no message to them.
+   7. If the save fails, stop processing senders. Run `cursor.ts set <the
+      rowid just below this sender's first row in the batch>` and go to
+      step 6.
 5. Run `cursor.ts set <highest rowid in the batch>`.
-6. Maintenance:
+6. For each request from `ledger.ts asked --unnotified`, send the owner one
+   line in their DM, in their language: "<name or handle> asked about
+   <topic> <when>. Want me to offer times?" Then run `ledger.ts update --id
+   <id> --json '{"notifiedAt":"<now ISO>"}'`, also when delivery is unknown.
+   If the send fails, leave it: the next poll asks again.
+7. Maintenance:
    - For each request from `ledger.ts expired`: delete its holds ("Holds" in
      `meetly-group`), then `ledger.ts update --id <id> --json
      '{"status":"expired","pendingOwner":null}'`. If it has a `chatUid`, tell
      the group the held times were released; this also notifies the owner.
+     An `asked` request has neither holds nor a group.
    - For each request from `ledger.ts cleanup`: retry each delete, then
      update `holdCleanup` to what is still left (`[]` when none).
-7. If nothing happened, end silently.
+8. If nothing happened, end silently.

@@ -257,6 +257,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   if (index < 0) throw new Error(`no request ${id}`);
   const at = new Date(now).toISOString();
   const updated: Request = { ...ledger.requests[index]!, updatedAt: at };
+  if (updated.status === "asked" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
   for (const [key, value] of Object.entries(patch)) {
     if (value === null && (NULLABLE as readonly string[]).includes(key)) delete updated[key as (typeof NULLABLE)[number]];
     else if (value !== undefined) (updated as Record<string, unknown>)[key] = value;
@@ -279,6 +280,12 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
 export function expiredRequests(ledger: Ledger, hours: number, now: number): Request[] {
   return ledger.requests.filter((r) => OPEN.includes(r.status)
     && now - Date.parse(r.status === "asked" ? r.createdAt : r.offeredAt!) >= hours * 3600_000);
+}
+
+// Requests waiting for the owner's yes; `unnotified` keeps those the owner
+// has not been told about yet.
+export function askedList(ledger: Ledger, unnotified = false): Request[] {
+  return ledger.requests.filter((r) => r.status === "asked" && !(unnotified && r.notifiedAt));
 }
 
 // Open requests waiting for the owner to confirm an out-of-hours time.
@@ -323,6 +330,8 @@ if (isMain(import.meta.url)) {
         "json-file": { type: "string" },
         hours: { type: "string" },
         "lead-min": { type: "string" },
+        status: { type: "string" },
+        unnotified: { type: "boolean" },
       },
     });
     const path = file("ledger.json");
@@ -331,8 +340,11 @@ if (isMain(import.meta.url)) {
       case "find": {
         const ledger = readJson<Ledger>(path, EMPTY);
         if (values.chat !== undefined) return { request: findByChat(ledger, values.chat, values.handle) ?? null };
-        if (values.handle !== undefined) return { request: findOpenByHandle(ledger, values.handle) ?? null };
-        throw new Error("usage: ledger.ts find --handle H | --chat U");
+        if (values.handle !== undefined) {
+          if (values.status !== undefined && !OPEN.includes(values.status as Status)) throw new Error(`--status must be ${OPEN.join(" or ")}`);
+          return { request: findOpenByHandle(ledger, values.handle, values.status ? [values.status as Status] : OPEN) ?? null };
+        }
+        throw new Error("usage: ledger.ts find --handle H [--status asked|offered] | --chat U");
       }
       case "add": {
         const input = jsonArg(values);
@@ -357,6 +369,8 @@ if (isMain(import.meta.url)) {
         if (!Number.isFinite(hours) || hours < 0) throw new Error(`--hours must be a number >= 0, got ${values.hours}`);
         return { requests: expiredRequests(readJson<Ledger>(path, EMPTY), hours, now) };
       }
+      case "asked":
+        return { requests: askedList(readJson<Ledger>(path, EMPTY), values.unnotified) };
       case "pending":
         return { requests: pendingOwnerList(readJson<Ledger>(path, EMPTY)) };
       case "cleanup":
@@ -367,7 +381,7 @@ if (isMain(import.meta.url)) {
         return { requests: dueReminders(readJson<Ledger>(path, EMPTY), now, lead) };
       }
       default:
-        throw new Error("usage: ledger.ts find | add | save | update | expired | pending | cleanup | reminders");
+        throw new Error("usage: ledger.ts find | add | save | update | expired | asked | pending | cleanup | reminders");
     }
   });
 }

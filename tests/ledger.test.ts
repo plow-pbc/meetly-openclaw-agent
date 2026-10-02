@@ -163,9 +163,6 @@ test("find by handle or phone returns an asked request; asking again changes not
   assert.equal(findOpenByHandle(l, "(555) 123-4567")?.id, "r_1");
   assert.equal(saveRequest(l, asked({ handle: "+15551234567", topic: "lunch" }), T0 + HOUR, "r_2"), l);
   assert.equal(findByChat(l, "c1", "+15551234567"), undefined);
-  l = updateRequest(l, "r_1", { chatUid: "c1" }, T0);
-  assert.equal(findByChat(l, "c1"), undefined);
-  assert.equal(findByChat(l, "c1", "ana@example.com"), undefined);
 });
 
 test("asked becomes offered by saving the offer over it, keeping the request", () => {
@@ -208,6 +205,32 @@ test("CLI saves an asked request, finds it by handle but never by chat", () => {
   assert.deepEqual(cli("ledger.ts", ["find", "--chat", "c1", "--handle", "+15551234567"], env).json, { request: null });
   const again = cli("ledger.ts", ["save", "--json", JSON.stringify(asked({ topic: "lunch" }))], env);
   assert.deepEqual([again.json.request.id, again.json.request.topic], [saved.json.request.id, "coffee"]);
+});
+
+test("CLI lists an asked request for the owner's DM until notifiedAt is recorded", () => {
+  const env = { MEETLY_HOME: tmpHome() };
+  const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(asked())], env).json.request;
+  const unnotified = () => cli("ledger.ts", ["asked", "--unnotified"], env).json.requests.map((r: { id: string }) => r.id);
+  // A send that failed records nothing, so the next poll lists it again.
+  assert.deepEqual([unnotified(), unnotified()], [[id], [id]]);
+  cli("ledger.ts", ["update", "--id", id, "--json", JSON.stringify({ notifiedAt: new Date(T0).toISOString() })], env);
+  assert.deepEqual(unnotified(), []);
+  assert.deepEqual(cli("ledger.ts", ["asked"], env).json.requests.map((r: { id: string }) => r.id), [id]);
+});
+
+test("a guest replying in an older group can neither find, link nor advance their asked request", () => {
+  const env = { MEETLY_HOME: tmpHome() };
+  const old = cli("ledger.ts", ["add", "--json", JSON.stringify(input({ chatUid: "c_old" }))], env).json.request;
+  cli("ledger.ts", ["update", "--id", old.id, "--json", '{"status":"booked"}'], env);
+  const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(asked())], env).json.request;
+
+  assert.equal(cli("ledger.ts", ["find", "--chat", "c_old", "--handle", "+15551234567"], env).json.request.id, old.id);
+  assert.deepEqual(cli("ledger.ts", ["find", "--handle", "+15551234567", "--status", "offered"], env).json, { request: null });
+  const link = cli("ledger.ts", ["update", "--id", id, "--json", '{"chatUid":"c_old"}'], env);
+  assert.equal(link.status, 1);
+  assert.match(link.stderr, /no chat until the owner says yes/);
+  assert.equal(cli("ledger.ts", ["update", "--id", id, "--json", '{"status":"offered"}'], env).status, 1);
+  assert.equal(cli("ledger.ts", ["find", "--handle", "+15551234567"], env).json.request.status, "asked");
 });
 
 test("cleanup lists only requests with pending hold deletes", () => {
