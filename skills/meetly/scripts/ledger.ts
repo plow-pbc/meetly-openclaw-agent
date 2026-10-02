@@ -30,8 +30,6 @@ export type Request = {
   id: string;
   origin: "inbound" | "owner";
   handle: string;
-  // The phone a thread is opened on, when `handle` is not one.
-  phone?: string;
   name?: string;
   sourceRowid?: number;
   chatUid?: string;
@@ -53,10 +51,6 @@ export type Request = {
   booked?: Booked;
   meetUrl?: string;
   reminder?: Reminder;
-  // When the owner was told about an `asked` request.
-  notifiedAt?: string;
-  // When opening its thread began; with no chatUid, the delivery is unknown.
-  startedAt?: string;
   offeredAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -65,13 +59,12 @@ export type Request = {
 export type Ledger = { requests: Request[] };
 
 export type NewRequest = Omit<Request,
-  "id" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder" | "notifiedAt" | "startedAt"
+  "id" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
   "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale"
-  | "phone" | "notifiedAt" | "proposed">> & {
+  | "proposed">> & {
   pendingOwner?: PendingOwner | null;
-  startedAt?: string | null;
   booked?: Booked | null;
   meetUrl?: string | null;
   reminder?: Reminder | null;
@@ -83,17 +76,12 @@ const FORMATS: readonly Format[] = ["meet", "in_person", "phone", "unknown"];
 const OUTCOMES: readonly Reminder["outcome"][] = ["sent", "cancelled", "no-link"];
 const PATCH_KEYS = [
   "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "topic", "pendingOwner",
-  "format", "locale", "booked", "meetUrl", "reminder", "phone", "notifiedAt", "startedAt", "proposed",
+  "format", "locale", "booked", "meetUrl", "reminder", "proposed",
 ];
 // Keys a patch can clear with null.
-const NULLABLE = ["pendingOwner", "booked", "meetUrl", "reminder", "startedAt"] as const;
+const NULLABLE = ["pendingOwner", "booked", "meetUrl", "reminder"] as const;
 
 const isDate = (t: unknown) => typeof t === "string" && !Number.isNaN(Date.parse(t));
-const E164 = /^\+[1-9][0-9]{1,14}$/;
-
-function checkPhone(phone: unknown): void {
-  if (typeof phone !== "string" || !E164.test(phone)) throw new Error(`phone must be in E.164 (like +15551234567), got ${JSON.stringify(phone)}`);
-}
 
 function checkFormat(format: unknown): void {
   if (!FORMATS.includes(format as Format)) throw new Error(`format must be one of ${FORMATS.join(", ")}, got ${JSON.stringify(format)}`);
@@ -140,16 +128,9 @@ export function sameHandle(a: string, b: string): boolean {
   return short.length >= 7 && long.endsWith(short);
 }
 
-const isPerson = (r: Request, handle: string) => sameHandle(r.handle, handle) || (r.phone !== undefined && sameHandle(r.phone, handle));
-
 // The person's `asked` or `offered` request; `statuses` narrows it.
 export function findOpenByHandle(ledger: Ledger, handle: string, statuses: readonly Status[] = OPEN): Request | undefined {
-  return ledger.requests.find((r) => statuses.includes(r.status) && isPerson(r, handle));
-}
-
-// The open request a new one would duplicate: same handle, or same phone.
-function findOpenFor(ledger: Ledger, input: Pick<NewRequest, "handle" | "phone">): Request | undefined {
-  return findOpenByHandle(ledger, input.handle) ?? (input.phone !== undefined ? findOpenByHandle(ledger, input.phone) : undefined);
+  return ledger.requests.find((r) => statuses.includes(r.status) && sameHandle(r.handle, handle));
 }
 
 export function findByChat(ledger: Ledger, chatUid: string, handle?: string): Request | undefined {
@@ -187,17 +168,15 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   if (status === "offered") checkOffers(input.offered);
   else if (status !== "asked") throw new Error(`a new request is asked or offered, got ${status}`);
   else if (input.offered?.length || input.chatUid !== undefined) throw new Error("an asked request has no offered times or chat yet");
-  if (input.phone !== undefined) checkPhone(input.phone);
   const format = input.format === undefined ? "unknown" : input.format;
   checkFormat(format);
   if (input.locale !== undefined) checkLocale(input.locale);
-  const open = findOpenFor(ledger, input);
+  const open = findOpenByHandle(ledger, input.handle);
   if (open) throw new Error(`open request ${open.id} already exists for this person; update it instead`);
   const at = new Date(now).toISOString();
   // A new offer is never booked: a booking, its link and its reminder are
   // only ever set through update, where they are validated.
-  const { booked: _b, meetUrl: _m, reminder: _r, notifiedAt: _n, startedAt: _s, ...fields } =
-    input as NewRequest & Partial<Pick<Request, "booked" | "meetUrl" | "reminder" | "notifiedAt" | "startedAt">>;
+  const { booked: _b, meetUrl: _m, reminder: _r, ...fields } = input as NewRequest & Partial<Pick<Request, "booked" | "meetUrl" | "reminder">>;
   const request: Request = status === "asked"
     ? { ...fields, offered: [], format, id, status, createdAt: at, updatedAt: at }
     : { ...fields, format, id, status, offeredAt: at, createdAt: at, updatedAt: at };
@@ -210,7 +189,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
 // `asked` request turns it into `offered`; asking again while one is open
 // leaves the ledger as it is.
 export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
-  const existing = findOpenFor(ledger, input);
+  const existing = findOpenByHandle(ledger, input.handle);
   if (!existing) return addRequest(ledger, input, now, id);
   if (input.status === "asked") return ledger;
 
@@ -227,9 +206,6 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
     ...existing,
     ...validated,
     id: existing.id,
-    // The person may be saved under their phone; the request keeps the handle it began with.
-    handle: existing.handle,
-    phone: input.phone ?? existing.phone,
     chatUid: input.chatUid ?? existing.chatUid,
     // A new offer that does not name a format keeps the one already answered.
     format: validated.format === "unknown" ? existing.format ?? "unknown" : validated.format,
@@ -256,10 +232,6 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   }
   if (patch.format !== undefined) checkFormat(patch.format);
   if (patch.locale !== undefined) checkLocale(patch.locale);
-  if (patch.phone !== undefined) checkPhone(patch.phone);
-  for (const key of ["notifiedAt", "startedAt"] as const) {
-    if (patch[key] !== undefined && patch[key] !== null && !isDate(patch[key])) throw new Error(`${key} must be a date, got ${JSON.stringify(patch[key])}`);
-  }
   if (patch.booked) checkBooked(patch.booked);
   if (patch.reminder) checkReminder(patch.reminder);
   if (patch.meetUrl !== undefined && patch.meetUrl !== null && !isMeetUrl(patch.meetUrl)) {
@@ -270,11 +242,6 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   const at = new Date(now).toISOString();
   const updated: Request = { ...ledger.requests[index]!, updatedAt: at };
   if (updated.status === "asked" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
-  // A second start could open a second group: only clearing startedAt, on the
-  // owner's say-so, allows one.
-  if (patch.startedAt && updated.startedAt) {
-    throw new Error(`opening this request's group began at ${updated.startedAt}; only the owner can retry, by clearing startedAt with null first`);
-  }
   for (const [key, value] of Object.entries(patch)) {
     if (value === null && (NULLABLE as readonly string[]).includes(key)) delete updated[key as (typeof NULLABLE)[number]];
     else if (value !== undefined) (updated as Record<string, unknown>)[key] = value;
@@ -299,10 +266,9 @@ export function expiredRequests(ledger: Ledger, hours: number, now: number): Req
     && now - Date.parse(r.status === "asked" ? r.createdAt : r.offeredAt!) >= hours * 3600_000);
 }
 
-// Requests waiting for the owner's yes; `unnotified` keeps those the owner
-// has not been told about yet.
-export function askedList(ledger: Ledger, unnotified = false): Request[] {
-  return ledger.requests.filter((r) => r.status === "asked" && !(unnotified && r.notifiedAt));
+// Requests waiting for the owner's yes.
+export function askedList(ledger: Ledger): Request[] {
+  return ledger.requests.filter((r) => r.status === "asked");
 }
 
 // Open requests waiting for the owner to confirm an out-of-hours time.
@@ -348,7 +314,6 @@ if (isMain(import.meta.url)) {
         hours: { type: "string" },
         "lead-min": { type: "string" },
         status: { type: "string" },
-        unnotified: { type: "boolean" },
       },
     });
     const path = file("ledger.json");
@@ -373,7 +338,7 @@ if (isMain(import.meta.url)) {
         const input = jsonArg(values);
         const id = `r_${randomBytes(4).toString("hex")}`;
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
-        return { request: findOpenFor(ledger, input) };
+        return { request: findOpenByHandle(ledger, input.handle) };
       }
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
@@ -387,7 +352,7 @@ if (isMain(import.meta.url)) {
         return { requests: expiredRequests(readJson<Ledger>(path, EMPTY), hours, now) };
       }
       case "asked":
-        return { requests: askedList(readJson<Ledger>(path, EMPTY), values.unnotified) };
+        return { requests: askedList(readJson<Ledger>(path, EMPTY)) };
       case "pending":
         return { requests: pendingOwnerList(readJson<Ledger>(path, EMPTY)) };
       case "cleanup":

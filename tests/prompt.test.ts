@@ -77,10 +77,7 @@ test("the poll never contacts anyone new: it saves the request as asked and asks
   assert.ok(poll.includes("never contacts anyone new: it opens no group and messages no one who wrote to the owner"));
   assert.ok(poll.includes("`ledger.ts save --json` with `status: \"asked\"`"));
   assert.ok(poll.includes("No holds, no group, no message to them."));
-  assert.ok(poll.includes("request from `ledger.ts asked --unnotified`, send the owner one line in their DM"));
-  // An overdue request expires before the owner could be asked about it.
-  assert.ok(poll.indexOf("For each request from `ledger.ts expired`") < poll.indexOf("`ledger.ts asked --unnotified`"));
-  assert.ok(poll.includes("also when delivery is unknown. If the send fails, leave it: the next poll asks again."));
+  assert.ok(poll.includes("Send the owner one line in their DM, in their language: \"<name or handle> asked about <topic> <when>. Want me to offer times?\""));
   assert.ok(poll.includes("give https://plow.co/download/latch. Go to step 6: it needs no message reads."));
 });
 
@@ -137,17 +134,11 @@ test("setup fills the owner's name and time zone by itself and asks only when th
   assert.ok(setup.includes("translated into the owner's language"));
 });
 
-test("every Meetly group is opened with plow_start_thread on a phone, from the owner's DM, and never started twice", () => {
+test("every Meetly group is opened with plow_start_thread from the owner's DM", () => {
   const group = groupSkill();
   assert.ok(flat(prompt).includes("Meetly opens a group only with plow_start_thread, from the owner's main DM"));
-  assert.ok(group.includes("Resolve the person and the phone (E.164) their group opens on"));
-  assert.ok(group.includes("when that handle is an email, take a phone from `contact.ts --handle <it>`"));
-  assert.ok(group.includes("With no phone, ask the owner for one and end the turn."));
-  assert.ok(group.includes("then call `plow_start_thread` with `members: [\"<phone>\"]` and the opener as `body`"));
-  assert.ok(group.includes("run `ledger.ts update --id <id> --json '{\"startedAt\":\"<now ISO>\"}'`, then call `plow_start_thread`"));
-  assert.ok(group.includes("A request with `startedAt` and no `chatUid` may already have a group (delivery unknown): do not open another"));
-  assert.ok(group.includes("Only when the owner explicitly says to try again"));
-  assert.ok(group.includes("Never start it again on your own"));
+  assert.ok(group.includes("Otherwise, in the owner's DM, call `plow_start_thread` with `members: [\"<handle>\"]` and the opener as `body`."));
+  assert.ok(group.includes("If delivery is unknown, continue without `chatUid` and tell the owner. Never resend."));
   assert.ok(flat(prompt).includes("Never send through the owner's Messages app or any iMessage tool on their Mac."));
   const all = [prompt, ...skillFiles.map((s) => readFileSync(s.path, "utf8"))].map(flat).join(" ");
   assert.doesNotMatch(all, /start[-]thread|reachable[-]handle|not[-]on[-]imessage|10 s\b|over iMessage/);

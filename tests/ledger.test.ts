@@ -148,18 +148,16 @@ test("expired: 48 hours after the offer, open requests only", () => {
 const asked = (over: Record<string, unknown> = {}) => input({ status: "asked", offered: undefined, sourceRowid: 42, locale: "pt-BR", ...over });
 
 test("save as asked records the request with no offer, holds or chat", () => {
-  const l = saveRequest(empty(), asked({ phone: "+15551234567", handle: "ana@example.com" }), T0, "r_1");
+  const l = saveRequest(empty(), asked(), T0, "r_1");
   const r = l.requests[0]!;
   assert.deepEqual([r.status, r.offered, r.sourceRowid, r.locale, r.offeredAt, r.chatUid], ["asked", [], 42, "pt-BR", undefined, undefined]);
   assert.throws(() => saveRequest(empty(), asked({ offered: [offer] }), T0, "x"), /no offered times or chat/);
   assert.throws(() => saveRequest(empty(), asked({ chatUid: "c1" }), T0, "x"), /no offered times or chat/);
-  assert.throws(() => saveRequest(empty(), asked({ phone: "555 123 4567" }), T0, "x"), /E\.164/);
   assert.throws(() => saveRequest(empty(), input({ status: "booked" }), T0, "x"), /asked or offered/);
 });
 
-test("find by handle or phone returns an asked request; asking again changes nothing; no chat resolves to it", () => {
-  let l = saveRequest(empty(), asked({ handle: "ana@example.com", phone: "+15551234567" }), T0, "r_1");
-  assert.equal(findOpenByHandle(l, "ana@example.com")?.id, "r_1");
+test("find by handle returns an asked request; asking again changes nothing; no chat resolves to it", () => {
+  const l = saveRequest(empty(), asked(), T0, "r_1");
   assert.equal(findOpenByHandle(l, "(555) 123-4567")?.id, "r_1");
   assert.equal(saveRequest(l, asked({ handle: "+15551234567", topic: "lunch" }), T0 + HOUR, "r_2"), l);
   assert.equal(findByChat(l, "c1", "+15551234567"), undefined);
@@ -167,33 +165,15 @@ test("find by handle or phone returns an asked request; asking again changes not
 
 test("asked becomes offered by saving the offer over it, keeping the request", () => {
   let l = saveRequest(empty(), asked({ handle: "ana@example.com" }), T0, "r_1");
-  l = updateRequest(l, "r_1", { notifiedAt: new Date(T0).toISOString(), phone: "+15551234567" }, T0);
   assert.throws(() => updateRequest(l, "r_1", { status: "offered" }, T0), /needs offered times/);
   l = saveRequest(l, input({ handle: "ana@example.com" }), T0 + HOUR, "r_2");
   const r = l.requests[0]!;
   assert.equal(l.requests.length, 1);
-  assert.deepEqual([r.id, r.status, r.sourceRowid, r.phone, r.notifiedAt], ["r_1", "offered", 42, "+15551234567", new Date(T0).toISOString()]);
+  assert.deepEqual([r.id, r.status, r.handle, r.sourceRowid, r.locale], ["r_1", "offered", "ana@example.com", 42, "pt-BR"]);
   assert.deepEqual(r.offered, [offer]);
   assert.deepEqual(r.holdCleanup, []);
   assert.equal(r.offeredAt, new Date(T0 + HOUR).toISOString());
   assert.throws(() => updateRequest(l, "r_1", { status: "asked" }, T0), /only asked when saved/);
-  l = updateRequest(l, "r_1", { startedAt: new Date(T0 + HOUR).toISOString() }, T0 + HOUR);
-  assert.equal(l.requests[0]!.startedAt, new Date(T0 + HOUR).toISOString());
-  assert.throws(() => updateRequest(l, "r_1", { startedAt: "now" }, T0), /startedAt must be a date/);
-});
-
-test("saving through the phone alias keeps the request's source handle", () => {
-  let l = saveRequest(empty(), asked({ handle: "ana@example.com", phone: "+15551234567" }), T0, "r_1");
-  l = saveRequest(l, input({ handle: "+15551234567" }), T0 + HOUR, "r_2");
-  assert.deepEqual(l.requests.map((r) => [r.id, r.status, r.handle, r.phone]), [["r_1", "offered", "ana@example.com", "+15551234567"]]);
-});
-
-test("a request whose phone matches an open request is the same person", () => {
-  const l = saveRequest(empty(), asked({ handle: "+15551234567" }), T0, "r_1");
-  assert.throws(() => addRequest(l, input({ handle: "ana@example.com", phone: "+15551234567" }), T0, "r_2"), /open request r_1 already exists/);
-  assert.equal(saveRequest(l, asked({ handle: "ana@example.com", phone: "+15551234567" }), T0, "r_2"), l);
-  const offered = saveRequest(l, input({ handle: "ana@example.com", phone: "+15551234567" }), T0 + HOUR, "r_2");
-  assert.deepEqual(offered.requests.map((r) => [r.id, r.status, r.handle]), [["r_1", "offered", "+15551234567"]]);
 });
 
 test("the owner's conditions from the yes survive a later offer; the person's proposed times are kept apart", () => {
@@ -207,26 +187,6 @@ test("the owner's conditions from the yes survive a later offer; the person's pr
   const r = l.requests[0]!;
   assert.deepEqual([l.requests.length, r.id, r.origin, r.constraints, r.proposed], [1, "r_1", "inbound", owner, proposed]);
   assert.deepEqual(updateRequest(l, "r_1", { proposed: { days: ["mon"] } }, T0).requests[0]!.proposed, { days: ["mon"] });
-});
-
-test("a request whose group start is unknown is never started again until the owner clears it", () => {
-  const started = new Date(T0).toISOString();
-  let l = updateRequest(addRequest(empty(), input(), T0, "r_1"), "r_1", { startedAt: started }, T0);
-  assert.throws(() => updateRequest(l, "r_1", { startedAt: new Date(T0 + HOUR).toISOString() }, T0 + HOUR), /only the owner can retry/);
-  // The guest's reply in that group still links it.
-  l = updateRequest(l, "r_1", { chatUid: "c1" }, T0 + HOUR);
-  assert.equal(findByChat(l, "c1", "+15551234567")?.id, "r_1");
-  l = updateRequest(l, "r_1", { startedAt: null }, T0 + HOUR);
-  assert.equal(updateRequest(l, "r_1", { startedAt: started }, T0).requests[0]!.startedAt, started);
-});
-
-test("approving an email-origin request opens on its resolved phone and keeps the request", () => {
-  let l = saveRequest(empty(), asked({ handle: "ana@icloud.com" }), T0, "r_1");
-  l = saveRequest(l, input({ handle: "ana@icloud.com", phone: "+15551234567" }), T0 + HOUR, "r_2");
-  const r = l.requests[0]!;
-  assert.deepEqual([l.requests.length, r.id, r.status, r.handle, r.phone, r.sourceRowid], [1, "r_1", "offered", "ana@icloud.com", "+15551234567", 42]);
-  // The person replies from that phone in the new group: the request is theirs.
-  assert.equal(findByChat(l, "c_new", "+1 (555) 123-4567")?.id, "r_1");
 });
 
 test("asked becomes dropped when the owner says no", () => {
@@ -252,17 +212,6 @@ test("CLI saves an asked request, finds it by handle but never by chat", () => {
   assert.deepEqual(cli("ledger.ts", ["find", "--chat", "c1", "--handle", "+15551234567"], env).json, { request: null });
   const again = cli("ledger.ts", ["save", "--json", JSON.stringify(asked({ topic: "lunch" }))], env);
   assert.deepEqual([again.json.request.id, again.json.request.topic], [saved.json.request.id, "coffee"]);
-});
-
-test("CLI lists an asked request for the owner's DM until notifiedAt is recorded", () => {
-  const env = { MEETLY_HOME: tmpHome() };
-  const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(asked())], env).json.request;
-  const unnotified = () => cli("ledger.ts", ["asked", "--unnotified"], env).json.requests.map((r: { id: string }) => r.id);
-  // A send that failed records nothing, so the next poll lists it again.
-  assert.deepEqual([unnotified(), unnotified()], [[id], [id]]);
-  cli("ledger.ts", ["update", "--id", id, "--json", JSON.stringify({ notifiedAt: new Date(T0).toISOString() })], env);
-  assert.deepEqual(unnotified(), []);
-  assert.deepEqual(cli("ledger.ts", ["asked"], env).json.requests.map((r: { id: string }) => r.id), [id]);
 });
 
 test("a guest replying in an older group can neither find, link nor advance their asked request", () => {

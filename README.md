@@ -175,9 +175,8 @@ message is skipped.
 - **Chat.** Your phone DM is the main session and runs setup. A group Meetly
   opened is recognized from its ledger and handled as that one meeting.
 - **Opening groups.** Only in the owner's DM, with the base's
-  `plow_start_thread` on the contact's phone; the image makes every group
-  trusted. An uncertain delivery is recorded without a chat and never
-  started again unless the owner says so. Meeting confirmations and
+  `plow_start_thread`; the image makes every group trusted. An uncertain
+  delivery is recorded without a chat and never resent. Meeting confirmations and
   approval asks stay in that group; the owner is a participant.
 - **Scripts.** Small TypeScript CLIs in `skills/meetly/scripts/`, run directly
   by the image's Node (`node <script>.ts`, no build): setup, the message

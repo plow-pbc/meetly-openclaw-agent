@@ -83,8 +83,8 @@ Shortcuts:
      `m/ledger.ts pending` is empty.
 8. [ ] **Email-only sender.** iMessage from an Apple ID with no phone in
    Contacts.
-   - Expect: after the owner's yes, no group, and the owner is asked for a
-     phone number.
+   - Expect: after the owner's yes, a group on that email, or the owner is
+     told why it could not open.
 9. [ ] **Expiry.** Set `MEETLY_HOLD_HOURS=0.1` in compose, then make a request
    and don't answer.
    - Expect: within ~15 min the holds are deleted, the status is `expired`,
