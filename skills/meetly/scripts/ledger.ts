@@ -69,8 +69,9 @@ export type NewRequest = Omit<Request,
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
   "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale"
-  | "phone" | "notifiedAt" | "startedAt" | "proposed">> & {
+  | "phone" | "notifiedAt" | "proposed">> & {
   pendingOwner?: PendingOwner | null;
+  startedAt?: string | null;
   booked?: Booked | null;
   meetUrl?: string | null;
   reminder?: Reminder | null;
@@ -85,7 +86,7 @@ const PATCH_KEYS = [
   "format", "locale", "booked", "meetUrl", "reminder", "phone", "notifiedAt", "startedAt", "proposed",
 ];
 // Keys a patch can clear with null.
-const NULLABLE = ["pendingOwner", "booked", "meetUrl", "reminder"] as const;
+const NULLABLE = ["pendingOwner", "booked", "meetUrl", "reminder", "startedAt"] as const;
 
 const isDate = (t: unknown) => typeof t === "string" && !Number.isNaN(Date.parse(t));
 const E164 = /^\+[1-9][0-9]{1,14}$/;
@@ -257,7 +258,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   if (patch.locale !== undefined) checkLocale(patch.locale);
   if (patch.phone !== undefined) checkPhone(patch.phone);
   for (const key of ["notifiedAt", "startedAt"] as const) {
-    if (patch[key] !== undefined && !isDate(patch[key])) throw new Error(`${key} must be a date, got ${JSON.stringify(patch[key])}`);
+    if (patch[key] !== undefined && patch[key] !== null && !isDate(patch[key])) throw new Error(`${key} must be a date, got ${JSON.stringify(patch[key])}`);
   }
   if (patch.booked) checkBooked(patch.booked);
   if (patch.reminder) checkReminder(patch.reminder);
@@ -269,6 +270,11 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   const at = new Date(now).toISOString();
   const updated: Request = { ...ledger.requests[index]!, updatedAt: at };
   if (updated.status === "asked" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
+  // A second start could open a second group: only clearing startedAt, on the
+  // owner's say-so, allows one.
+  if (patch.startedAt && updated.startedAt) {
+    throw new Error(`opening this request's group began at ${updated.startedAt}; only the owner can retry, by clearing startedAt with null first`);
+  }
   for (const [key, value] of Object.entries(patch)) {
     if (value === null && (NULLABLE as readonly string[]).includes(key)) delete updated[key as (typeof NULLABLE)[number]];
     else if (value !== undefined) (updated as Record<string, unknown>)[key] = value;

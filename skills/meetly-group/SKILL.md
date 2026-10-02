@@ -30,16 +30,12 @@ free there.
 
 ## Offer times
 
-1. Resolve the person. For an approved inbound request, use the `asked`
-   request's `handle` and `name` (a missing name never stops the request).
-   For an owner request, resolve them with `contacts`: name and every phone (E.164) and email; then run
-   `reachable-handle.ts --handle <each phone and email>` and use the `handle`
-   it returns: the one the owner reaches them on over iMessage.
-   - `reason: "not-on-imessage"`: tell the owner in one line that <name> is
-     not on iMessage at any of their numbers or emails, so Meetly cannot reach
-     them, then stop.
-   - `reason: "mac-unavailable"`: tell the owner the Mac could not be reached
-     to check, then stop.
+1. Resolve the person and the phone (E.164) their group opens on. For an
+   approved inbound request, use the `asked` request's `handle` and `name`
+   (a missing name never stops the request); when that handle is an email,
+   take a phone from `contact.ts --handle <it>`. For an owner request, use
+   the phone `contacts` gives. With no phone, ask the owner for one and end
+   the turn.
 2. Read the calendar.
 3. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
@@ -59,26 +55,28 @@ free there.
    conflict. If none are left, tell the owner and stop.
 5. Persist the offer immediately after the holds exist, before sending or
    opening a group. Run `ledger.ts save --json '<request>'` with every field:
-   `origin`, `handle` (the intended contact handle), `name`, `sourceRowid`,
-   `chatUid` if already known, `topic`, `location`, `durationMin`,
-   `constraints` (the owner's conditions only, unchanged on a new offer),
-   `proposed`, `allowOverlap`, `format` and `locale` (see "Meeting
-   format"), and `offered[]` with each `start`/`end`/`holdId`/`account`. `save` creates a request or updates the
+   `origin`, `handle` (the intended contact handle), `phone` (when `handle`
+   is not that phone), `name`, `sourceRowid`, `chatUid` if already known,
+   `topic`, `location`, `durationMin`, `constraints` (the owner's
+   conditions only, unchanged on a new offer), `proposed`, `allowOverlap`,
+   `format` and `locale` (see "Meeting format"), and `offered[]` with each
+   `start`/`end`/`holdId`/`account`. `save` creates a request or updates the
    existing open request for that person, preserving its id and existing
    `chatUid` when the new value is absent. Holds from the replaced offer are
    moved to `holdCleanup` automatically so the cleanup poll can delete them.
-   If it fails, delete each hold just
-   created, stop and report the ledger error to the owner; do not send an
-   offer. If any deletion fails, report those hold ids too.
+   If it fails, delete each hold just created, stop and report the ledger
+   error to the owner; do not send an offer. If any deletion fails, report
+   those hold ids too.
 6. Deliver the times:
    - An open request that already has a `chatUid`: post the new times there.
-   - Otherwise open a group with the person's handle and the opener: run
-     `start-thread.ts --member <handle> --body <opener> --key <key>`, with key
-     `rowid:<sourceRowid>` for an approved inbound request and
-     `owner:<handle>:<first offered start>` for an owner request. Never the `plow_start_thread` tool: it
-     gives Plow 10 s, and a group Plow takes longer to open reads as an
-     unknown delivery that withholds the rest of the turn, the owner's reply
-     included.
+   - A request with `startedAt` and no `chatUid` may already have a group
+     (delivery unknown): do not open another, and tell the owner. Only when
+     the owner explicitly says to try again, run `ledger.ts update --id <id>
+     --json '{"startedAt":null}'` and open it as below.
+   - Otherwise, in the owner's DM, run `ledger.ts update --id <id> --json
+     '{"startedAt":"<now ISO>"}'`, then call `plow_start_thread` with
+     `members: ["<phone>"]` and the opener as `body`. If the update is
+     refused, the group was already started: follow the bullet above.
    - The opener: third person, in their language. Say who Meetly is and whose
      assistant, the topic, and the slot labels, then ask which works. For
      inbound requests, never claim the owner asked.
@@ -86,19 +84,20 @@ free there.
      like to meet: Google Meet or in person. When it is `in_person` with no
      `location`, it asks where. Always in that one message, never a second
      one.
-   - If `start-thread.ts` fails, tell the owner what it printed and stop:
-     never fall back to `plow_start_thread` and never edit a script. Delete
-     the new holds and mark the saved request `dropped`; if a hold cannot be
-     deleted, record its id and account in `holdCleanup` so cleanup can retry.
+   - If `plow_start_thread` fails, tell the owner what it said and stop.
+     Delete the new holds and mark the saved request `dropped`; if a hold
+     cannot be deleted, record its id and account in `holdCleanup` so
+     cleanup can retry.
    - In a normal (untrusted) chat, guest turns are reply-only: do not run
      scripts or use the owner's calendar. Explain in the thread that the
      owner must approve there. If full guest tools are needed, the owner
      must ask in their main DM to make the group trusted; only there can
      `plow_set_thread_trust` change the group's trust.
-   - If delivery is unknown (`deliveryUnknown`), continue without `chatUid`
-     and tell the owner. Never resend.
+   - If delivery is unknown, continue without `chatUid` and tell the owner
+     once. Never start it again on your own: when the person replies in the
+     group, the group is linked to the request.
    - After a group opens, run `ledger.ts update --id <saved request id>
-     --json '{"chatUid":"<chat uid>"}'` immediately. If that update fails,
+     --json '{"chatUid":"<chat_uid>"}'` immediately. If that update fails,
      report the error and the chat uid to the owner; do not claim the group is
      linked.
 7. The group opener also notifies the owner of who, the topic and the held
@@ -109,7 +108,7 @@ free there.
 In the owner's DM:
 
 1. Look the person up with `contacts`, including all their handles. If more
-   than one contact matches, or there is no phone or email, ask the owner and end the
+   than one contact matches, or there is no phone, ask the owner and end the
    turn.
 2. Extract the topic, days or dates, time range, duration, location, the
    format ("Meeting format"), and any events the owner says may be

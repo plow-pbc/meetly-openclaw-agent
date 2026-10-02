@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { contactQuery, lookupContact, parseContacts } from "../skills/meetly/scripts/contact.ts";
+import { contactQuery, isHandle, lookupContact, parseContacts } from "../skills/meetly/scripts/contact.ts";
+
+test("a handle is a phone in E.164 or an email", () => {
+  for (const h of ["+5511999990000", "ana@example.com"]) assert.equal(isHandle(h), true, h);
+  for (const h of ["11 99999-0000", "ana", "a@b", "x' or 1=1 --@a.b"]) assert.equal(isHandle(h), false, h);
+});
 
 test("the query filters on the handle's last eight digits and never reads notes or addresses", () => {
   const q = contactQuery("+5547992547532");

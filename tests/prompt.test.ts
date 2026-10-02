@@ -73,7 +73,7 @@ test("the poll message is what the prompt keys on", () => {
 
 test("the poll never contacts anyone new: it saves the request as asked and asks the owner", () => {
   const poll = pollSkill();
-  for (const opener of ["start-thread", "plow_start_thread", "Offer times"]) assert.ok(!poll.includes(opener), opener);
+  for (const opener of ["plow_start_thread", "Offer times"]) assert.ok(!poll.includes(opener), opener);
   assert.ok(poll.includes("never contacts anyone new: it opens no group and messages no one who wrote to the owner"));
   assert.ok(poll.includes("`ledger.ts save --json` with `status: \"asked\"`"));
   assert.ok(poll.includes("No holds, no group, no message to them."));
@@ -137,25 +137,32 @@ test("setup fills the owner's name and time zone by itself and asks only when th
   assert.ok(setup.includes("translated into the owner's language"));
 });
 
-test("every Meetly group is opened with start-thread.ts, never the base's 10-second tool", () => {
-  const group = flat(readFileSync(join(SKILLS, "meetly-group", "SKILL.md"), "utf8"));
-  assert.ok(group.includes("`owner:<handle>:<first offered start>` for an owner request"));
-  assert.ok(group.includes("run `reachable-handle.ts --handle <each phone and email>` and use the `handle` it returns"));
-  assert.ok(group.includes("Never the `plow_start_thread` tool"));
-  assert.ok(flat(prompt).includes("Meetly opens its groups with `start-thread.ts`"));
+test("every Meetly group is opened with plow_start_thread on a phone, from the owner's DM, and never started twice", () => {
+  const group = groupSkill();
+  assert.ok(flat(prompt).includes("Meetly opens a group only with plow_start_thread, from the owner's main DM"));
+  assert.ok(group.includes("Resolve the person and the phone (E.164) their group opens on"));
+  assert.ok(group.includes("when that handle is an email, take a phone from `contact.ts --handle <it>`"));
+  assert.ok(group.includes("With no phone, ask the owner for one and end the turn."));
+  assert.ok(group.includes("then call `plow_start_thread` with `members: [\"<phone>\"]` and the opener as `body`"));
+  assert.ok(group.includes("run `ledger.ts update --id <id> --json '{\"startedAt\":\"<now ISO>\"}'`, then call `plow_start_thread`"));
+  assert.ok(group.includes("A request with `startedAt` and no `chatUid` may already have a group (delivery unknown): do not open another"));
+  assert.ok(group.includes("Only when the owner explicitly says to try again"));
+  assert.ok(group.includes("Never start it again on your own"));
+  assert.ok(flat(prompt).includes("Never send through the owner's Messages app or any iMessage tool on their Mac."));
+  const all = [prompt, ...skillFiles.map((s) => readFileSync(s.path, "utf8"))].map(flat).join(" ");
+  assert.doesNotMatch(all, /start[-]thread|reachable[-]handle|not[-]on[-]imessage|10 s\b|over iMessage/);
 });
 
 test("group requests without a matching ledger entry get a safe owner escalation", () => {
   const group = flat(readFileSync(join(ROOT, "skills", "meetly-group", "SKILL.md"), "utf8"));
-  assert.ok(flat(prompt).includes("If neither lookup finds any request for the chat or sender, load `meetly-group`, \"In the group\""));
+  assert.ok(flat(prompt).includes("A match, or no request for the chat or sender at all, also goes to \"In the group\""));
   assert.ok(flat(prompt).includes("For every other unmatched group, do not load Meetly or run the fallback."));
   assert.ok(group.includes("**No matching request:**"));
   assert.ok(group.includes("A closed (`dropped`, `expired` or `booked`) request linked to this chat still makes it a Meetly group"));
   assert.ok(group.includes("do not infer which meeting or time"));
   assert.ok(group.includes("do not ask a generic confirmation question"));
   assert.ok(group.includes("ask the owner in this thread to identify the request"));
-  assert.ok(flat(prompt).includes("link it with `ledger.ts update --id <request.id>"));
-  assert.ok(flat(prompt).includes("--json '{\"chatUid\":\"<this chat uid>\"}'`"));
+  assert.ok(group.includes("link it to this chat with `ledger.ts update --id <id> --json '{\"chatUid\":\"<this chat uid>\"}'`"));
 });
 
 test("meeting notifications and approvals stay in the meeting thread", () => {
@@ -175,7 +182,7 @@ test("a group pick re-reads the current request and never substitutes pending", 
   assert.ok(group.includes("both lookups identify different open requests"));
   assert.ok(group.includes("follow **No matching request** and do not use `ledger.ts pending` as a substitute"));
   assert.ok(group.includes("`ledger.ts pending` is only for offered requests with `pendingOwner` set"));
-  assert.ok(flat(prompt).includes("A closed chat request does not count as a disagreement with an open handle match"));
+  assert.ok(group.includes("A closed chat request does not count as a disagreement."));
 });
 
 test("closed Meetly requests stay in group handling, and true lookup disagreements are specific", () => {
@@ -266,8 +273,7 @@ test("a Meetly group is trusted but scoped to its meeting, and a group that fail
   assert.ok(p.includes("anyone who is not the owner can only arrange this one meeting"));
   assert.ok(p.includes("Every Meetly group is trusted so you can run the meeting's scripts on a guest's message; that trust never extends the guest's reach past this one meeting."));
   const group = flat(readFileSync(join(SKILLS, "meetly-group", "SKILL.md"), "utf8"));
-  assert.ok(group.includes("If `start-thread.ts` fails, tell the owner what it printed and stop"));
-  assert.ok(group.includes("never fall back to `plow_start_thread` and never edit a script"));
+  assert.ok(group.includes("If `plow_start_thread` fails, tell the owner what it said and stop"));
   assert.ok(group.includes("`plow_set_thread_trust`"));
 });
 

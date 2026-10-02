@@ -5,7 +5,13 @@
 import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
 import { runOnMac, type BridgeOptions } from "./mac.ts";
-import { isHandle } from "./reachable-handle.ts";
+
+const E164 = /^\+[1-9][0-9]{1,14}$/;
+const EMAIL = /^[^\s@'"]+@[^\s@'"]+\.[^\s@'"]+$/;
+
+export function isHandle(h: string): boolean {
+  return E164.test(h) || EMAIL.test(h);
+}
 
 export type Person = { name: string | null; phones: string[]; emails: string[] };
 export type Lookup =

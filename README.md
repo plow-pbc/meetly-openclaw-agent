@@ -174,10 +174,10 @@ message is skipped.
   volume and survives restarts and rebuilds.
 - **Chat.** Your phone DM is the main session and runs setup. A group Meetly
   opened is recognized from its ledger and handled as that one meeting.
-- **Opening groups.** Meetly uses `start-thread.ts` for owner requests and
-  the scheduled poll. It calls `POST /v1/chats` with the owner plus the
-  contact, trusted, and an idempotency key. An uncertain delivery is
-  recorded without a chat and never resent. Meeting confirmations and
+- **Opening groups.** Only in the owner's DM, with the base's
+  `plow_start_thread` on the contact's phone; the image makes every group
+  trusted. An uncertain delivery is recorded without a chat and never
+  started again unless the owner says so. Meeting confirmations and
   approval asks stay in that group; the owner is a participant.
 - **Scripts.** Small TypeScript CLIs in `skills/meetly/scripts/`, run directly
   by the image's Node (`node <script>.ts`, no build): setup, the message
@@ -279,9 +279,7 @@ Pick a newer `base-<sha>` tag and its digest from the
    fails on a base step preboot does not have. Drop `boot/mcp.ts` once the
    base sets the relay's `requestTimeoutMs` itself.
 4. Re-check `compose.yml` and `dev/Caddyfile` against the base.
-5. Re-read the base's `plugin/index.ts` for `plow_start_thread`:
-   `start-thread.ts` mirrors its `POST /v1/chats`.
-6. Run `npm test`.
+5. Run `npm test`.
 
 ## License
 

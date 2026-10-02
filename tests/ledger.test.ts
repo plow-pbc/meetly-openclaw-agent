@@ -209,6 +209,26 @@ test("the owner's conditions from the yes survive a later offer; the person's pr
   assert.deepEqual(updateRequest(l, "r_1", { proposed: { days: ["mon"] } }, T0).requests[0]!.proposed, { days: ["mon"] });
 });
 
+test("a request whose group start is unknown is never started again until the owner clears it", () => {
+  const started = new Date(T0).toISOString();
+  let l = updateRequest(addRequest(empty(), input(), T0, "r_1"), "r_1", { startedAt: started }, T0);
+  assert.throws(() => updateRequest(l, "r_1", { startedAt: new Date(T0 + HOUR).toISOString() }, T0 + HOUR), /only the owner can retry/);
+  // The guest's reply in that group still links it.
+  l = updateRequest(l, "r_1", { chatUid: "c1" }, T0 + HOUR);
+  assert.equal(findByChat(l, "c1", "+15551234567")?.id, "r_1");
+  l = updateRequest(l, "r_1", { startedAt: null }, T0 + HOUR);
+  assert.equal(updateRequest(l, "r_1", { startedAt: started }, T0).requests[0]!.startedAt, started);
+});
+
+test("approving an email-origin request opens on its resolved phone and keeps the request", () => {
+  let l = saveRequest(empty(), asked({ handle: "ana@icloud.com" }), T0, "r_1");
+  l = saveRequest(l, input({ handle: "ana@icloud.com", phone: "+15551234567" }), T0 + HOUR, "r_2");
+  const r = l.requests[0]!;
+  assert.deepEqual([l.requests.length, r.id, r.status, r.handle, r.phone, r.sourceRowid], [1, "r_1", "offered", "ana@icloud.com", "+15551234567", 42]);
+  // The person replies from that phone in the new group: the request is theirs.
+  assert.equal(findByChat(l, "c_new", "+1 (555) 123-4567")?.id, "r_1");
+});
+
 test("asked becomes dropped when the owner says no", () => {
   let l = saveRequest(empty(), asked(), T0, "r_1");
   l = updateRequest(l, "r_1", { status: "dropped" }, T0 + HOUR);
