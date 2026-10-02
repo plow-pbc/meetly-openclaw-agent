@@ -55,7 +55,8 @@ free there.
    opening a group. Run `ledger.ts save --json '<request>'` with every field:
    `origin`, `handle` (the intended contact handle), `name`, `sourceRowid`,
    `chatUid` if already known, `topic`, `location`, `durationMin`,
-   `constraints` (the owner's conditions only, unchanged on a new offer),
+   `constraints` (only the owner's words set them; on a guest's turn, pass
+   the request's `constraints` unchanged),
    `proposed`, `allowOverlap`, `format` and `locale` (see "Meeting
    format"), and `offered[]` with each `start`/`end`/`holdId`/`account`. `save` creates a request or updates the
    existing open request for that person, preserving its id and existing

@@ -96,7 +96,7 @@ test("the owner's conditions hold for every offer of a request; the person's pro
   assert.ok(group.includes("`constraints` set to any conditions the owner gave with the yes"));
   assert.ok(group.includes("with the request's `constraints` (the owner's) and, on its first offer, its `proposed` times"));
   assert.ok(group.includes("run again without them, keeping `constraints`, and say those times don't work"));
-  assert.ok(group.includes("`constraints` (the owner's conditions only, unchanged on a new offer)"));
+  assert.ok(group.includes("`constraints` (only the owner's words set them; on a guest's turn, pass the request's `constraints` unchanged)"));
   assert.ok(group.includes("narrowed to what they said plus the request's `constraints`"));
   assert.ok(!group.includes("for `origin: owner`"));
   assert.ok(pollSkill().includes("`proposed` for any times they proposed"));
