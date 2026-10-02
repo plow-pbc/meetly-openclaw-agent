@@ -79,6 +79,7 @@ test("the poll never contacts anyone new: it saves the request as asked and asks
   assert.ok(poll.includes("No holds, no group, no message to them."));
   assert.ok(poll.includes("For each request from `ledger.ts asked --unnotified`, send the owner one line in their DM"));
   assert.ok(poll.includes("also when delivery is unknown. If the send fails, leave it: the next poll asks again."));
+  assert.ok(poll.includes("give https://plow.co/download/latch. Go to step 6: it needs no message reads."));
 });
 
 test("the owner's yes or no in their DM decides an asked request", () => {

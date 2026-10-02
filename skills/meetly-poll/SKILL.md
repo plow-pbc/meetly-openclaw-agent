@@ -52,7 +52,8 @@ thread. For a message to the owner with no meeting thread, use
      true, send the owner one DM saying Meetly can't read their messages;
      if the Mac gave an `owner_action`, include it word for word. If the Mac
      is not connected at all, say Meetly needs Plow Latch on their Mac and
-     give https://plow.co/download/latch. End.
+     give https://plow.co/download/latch. Go to step 6: it needs no
+     message reads.
    - Empty: run `cursor.ts ok` and go to step 6.
 4. Keep inbound rows (`is_from_me` false) from direct chats only. Group them by
    `sender`, in rowid order. For each sender:
