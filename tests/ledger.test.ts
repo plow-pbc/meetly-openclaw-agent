@@ -182,6 +182,20 @@ test("asked becomes offered by saving the offer over it, keeping the request", (
   assert.throws(() => updateRequest(l, "r_1", { startedAt: "now" }, T0), /startedAt must be a date/);
 });
 
+test("saving through the phone alias keeps the request's source handle", () => {
+  let l = saveRequest(empty(), asked({ handle: "ana@example.com", phone: "+15551234567" }), T0, "r_1");
+  l = saveRequest(l, input({ handle: "+15551234567" }), T0 + HOUR, "r_2");
+  assert.deepEqual(l.requests.map((r) => [r.id, r.status, r.handle, r.phone]), [["r_1", "offered", "ana@example.com", "+15551234567"]]);
+});
+
+test("a request whose phone matches an open request is the same person", () => {
+  const l = saveRequest(empty(), asked({ handle: "+15551234567" }), T0, "r_1");
+  assert.throws(() => addRequest(l, input({ handle: "ana@example.com", phone: "+15551234567" }), T0, "r_2"), /open request r_1 already exists/);
+  assert.equal(saveRequest(l, asked({ handle: "ana@example.com", phone: "+15551234567" }), T0, "r_2"), l);
+  const offered = saveRequest(l, input({ handle: "ana@example.com", phone: "+15551234567" }), T0 + HOUR, "r_2");
+  assert.deepEqual(offered.requests.map((r) => [r.id, r.status, r.handle]), [["r_1", "offered", "+15551234567"]]);
+});
+
 test("asked becomes dropped when the owner says no", () => {
   let l = saveRequest(empty(), asked(), T0, "r_1");
   l = updateRequest(l, "r_1", { status: "dropped" }, T0 + HOUR);

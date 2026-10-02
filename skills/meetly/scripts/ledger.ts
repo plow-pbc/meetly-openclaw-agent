@@ -143,6 +143,11 @@ export function findOpenByHandle(ledger: Ledger, handle: string, statuses: reado
   return ledger.requests.find((r) => statuses.includes(r.status) && isPerson(r, handle));
 }
 
+// The open request a new one would duplicate: same handle, or same phone.
+function findOpenFor(ledger: Ledger, input: Pick<NewRequest, "handle" | "phone">): Request | undefined {
+  return findOpenByHandle(ledger, input.handle) ?? (input.phone !== undefined ? findOpenByHandle(ledger, input.phone) : undefined);
+}
+
 export function findByChat(ledger: Ledger, chatUid: string, handle?: string): Request | undefined {
   // Resolve an open request for the sender even when it has not been linked
   // yet. This lets a replacement offer supersede a closed request in the chat.
@@ -182,7 +187,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   const format = input.format === undefined ? "unknown" : input.format;
   checkFormat(format);
   if (input.locale !== undefined) checkLocale(input.locale);
-  const open = findOpenByHandle(ledger, input.handle);
+  const open = findOpenFor(ledger, input);
   if (open) throw new Error(`open request ${open.id} already exists for this person; update it instead`);
   const at = new Date(now).toISOString();
   // A new offer is never booked: a booking, its link and its reminder are
@@ -201,7 +206,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
 // `asked` request turns it into `offered`; asking again while one is open
 // leaves the ledger as it is.
 export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
-  const existing = findOpenByHandle(ledger, input.handle);
+  const existing = findOpenFor(ledger, input);
   if (!existing) return addRequest(ledger, input, now, id);
   if (input.status === "asked") return ledger;
 
@@ -218,6 +223,9 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
     ...existing,
     ...validated,
     id: existing.id,
+    // The person may be saved under their phone; the request keeps the handle it began with.
+    handle: existing.handle,
+    phone: input.phone ?? existing.phone,
     chatUid: input.chatUid ?? existing.chatUid,
     // A new offer that does not name a format keeps the one already answered.
     format: validated.format === "unknown" ? existing.format ?? "unknown" : validated.format,
@@ -356,7 +364,7 @@ if (isMain(import.meta.url)) {
         const input = jsonArg(values);
         const id = `r_${randomBytes(4).toString("hex")}`;
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
-        return { request: findOpenByHandle(ledger, input.handle) };
+        return { request: findOpenFor(ledger, input) };
       }
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
