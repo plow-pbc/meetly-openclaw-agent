@@ -145,6 +145,71 @@ test("expired: 48 hours after the offer, open requests only", () => {
   assert.deepEqual(expiredRequests(l, 48, T0 + 48 * HOUR).map((r) => r.id), ["r_1"]);
 });
 
+const asked = (over: Record<string, unknown> = {}) => input({ status: "asked", offered: undefined, sourceRowid: 42, locale: "pt-BR", ...over });
+
+test("save as asked records the request with no offer, holds or chat", () => {
+  const l = saveRequest(empty(), asked({ phone: "+15551234567", handle: "ana@example.com" }), T0, "r_1");
+  const r = l.requests[0]!;
+  assert.deepEqual([r.status, r.offered, r.sourceRowid, r.locale, r.offeredAt, r.chatUid], ["asked", [], 42, "pt-BR", undefined, undefined]);
+  assert.throws(() => saveRequest(empty(), asked({ offered: [offer] }), T0, "x"), /no offered times or chat/);
+  assert.throws(() => saveRequest(empty(), asked({ chatUid: "c1" }), T0, "x"), /no offered times or chat/);
+  assert.throws(() => saveRequest(empty(), asked({ phone: "555 123 4567" }), T0, "x"), /E\.164/);
+  assert.throws(() => saveRequest(empty(), input({ status: "booked" }), T0, "x"), /asked or offered/);
+});
+
+test("find by handle or phone returns an asked request; asking again changes nothing; no chat resolves to it", () => {
+  let l = saveRequest(empty(), asked({ handle: "ana@example.com", phone: "+15551234567" }), T0, "r_1");
+  assert.equal(findOpenByHandle(l, "ana@example.com")?.id, "r_1");
+  assert.equal(findOpenByHandle(l, "(555) 123-4567")?.id, "r_1");
+  assert.equal(saveRequest(l, asked({ handle: "+15551234567", topic: "lunch" }), T0 + HOUR, "r_2"), l);
+  assert.equal(findByChat(l, "c1", "+15551234567"), undefined);
+  l = updateRequest(l, "r_1", { chatUid: "c1" }, T0);
+  assert.equal(findByChat(l, "c1"), undefined);
+  assert.equal(findByChat(l, "c1", "ana@example.com"), undefined);
+});
+
+test("asked becomes offered by saving the offer over it, keeping the request", () => {
+  let l = saveRequest(empty(), asked({ handle: "ana@example.com" }), T0, "r_1");
+  l = updateRequest(l, "r_1", { notifiedAt: new Date(T0).toISOString(), phone: "+15551234567" }, T0);
+  assert.throws(() => updateRequest(l, "r_1", { status: "offered" }, T0), /needs offered times/);
+  l = saveRequest(l, input({ handle: "ana@example.com" }), T0 + HOUR, "r_2");
+  const r = l.requests[0]!;
+  assert.equal(l.requests.length, 1);
+  assert.deepEqual([r.id, r.status, r.sourceRowid, r.phone, r.notifiedAt], ["r_1", "offered", 42, "+15551234567", new Date(T0).toISOString()]);
+  assert.deepEqual(r.offered, [offer]);
+  assert.deepEqual(r.holdCleanup, []);
+  assert.equal(r.offeredAt, new Date(T0 + HOUR).toISOString());
+  assert.throws(() => updateRequest(l, "r_1", { status: "asked" }, T0), /only asked when saved/);
+  l = updateRequest(l, "r_1", { startedAt: new Date(T0 + HOUR).toISOString() }, T0 + HOUR);
+  assert.equal(l.requests[0]!.startedAt, new Date(T0 + HOUR).toISOString());
+  assert.throws(() => updateRequest(l, "r_1", { startedAt: "now" }, T0), /startedAt must be a date/);
+});
+
+test("asked becomes dropped when the owner says no", () => {
+  let l = saveRequest(empty(), asked(), T0, "r_1");
+  l = updateRequest(l, "r_1", { status: "dropped" }, T0 + HOUR);
+  assert.equal(l.requests[0]!.status, "dropped");
+  assert.equal(findOpenByHandle(l, "+15551234567"), undefined);
+});
+
+test("an asked request expires 48 hours after it was saved, with no holds to delete", () => {
+  const l = saveRequest(empty(), asked(), T0, "r_1");
+  assert.deepEqual(expiredRequests(l, 48, T0 + 47 * HOUR), []);
+  const [expired] = expiredRequests(l, 48, T0 + 48 * HOUR);
+  assert.deepEqual([expired?.id, expired?.offered, cleanupList(l)], ["r_1", [], []]);
+});
+
+test("CLI saves an asked request, finds it by handle but never by chat", () => {
+  const env = { MEETLY_HOME: tmpHome() };
+  const saved = cli("ledger.ts", ["save", "--json", JSON.stringify(asked())], env);
+  assert.equal(saved.status, 0, saved.stderr);
+  assert.equal(saved.json.request.status, "asked");
+  assert.equal(cli("ledger.ts", ["find", "--handle", "5551234567"], env).json.request.id, saved.json.request.id);
+  assert.deepEqual(cli("ledger.ts", ["find", "--chat", "c1", "--handle", "+15551234567"], env).json, { request: null });
+  const again = cli("ledger.ts", ["save", "--json", JSON.stringify(asked({ topic: "lunch" }))], env);
+  assert.deepEqual([again.json.request.id, again.json.request.topic], [saved.json.request.id, "coffee"]);
+});
+
 test("cleanup lists only requests with pending hold deletes", () => {
   let l = addRequest(empty(), input(), T0, "r_1");
   l = addRequest(l, input({ handle: "+15559999999" }), T0, "r_2");
