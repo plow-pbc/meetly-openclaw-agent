@@ -27,6 +27,16 @@ export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
 // One question or out-of-hours time waiting for the owner's answer.
 export const OWNER_QUESTION_LIMIT = 500;
 export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ start: string; end: string } | { question: string });
+export function intersectConstraints(owner: Constraints = {}, guest: Constraints = {}): Constraints {
+  return {
+    days: owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
+    after: [owner.after, guest.after].filter(Boolean).sort().at(-1),
+    before: [owner.before, guest.before].filter(Boolean).sort()[0],
+    from: [owner.from, guest.from].filter(Boolean).sort().at(-1),
+    to: [owner.to, guest.to].filter(Boolean).sort()[0],
+  };
+}
+
 // How the meeting happens. `unknown` until the request or an answer says it.
 export type Format = "meet" | "in_person" | "phone" | "unknown";
 // The booked event's time, and the Google account it lives on.
@@ -37,6 +47,8 @@ export type Reminder = { at: string; outcome: "sent" | "cancelled" | "no-link" }
 export type Request = {
   id: string;
   origin: "inbound" | "owner";
+  // The owner started this request in its group and supplies missing details.
+  startedInGroup?: boolean;
   handle: string;
   name?: string;
   sourceRowid?: number;
@@ -151,7 +163,7 @@ export function findByChat(ledger: Ledger, chatUid: string, handle?: string): Re
   // An `asked` request has no group yet, so no chat ever resolves to one.
   if (handle !== undefined) {
     const openForHandle = findOpenByHandle(ledger, handle, ["offered"]);
-    if (openForHandle && (openForHandle.chatUid === undefined || openForHandle.chatUid === chatUid)) {
+    if (openForHandle && ((!openForHandle.startedInGroup && openForHandle.chatUid === undefined) || openForHandle.chatUid === chatUid)) {
       return openForHandle;
     }
   }
@@ -178,6 +190,8 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
     if (key in input) throw new Error(`${key} is managed by ledger.ts delivery`);
   }
   if (input.origin !== "inbound" && input.origin !== "owner") throw new Error(`origin must be inbound or owner, got ${input.origin}`);
+  if (input.startedInGroup !== undefined && typeof input.startedInGroup !== "boolean") throw new Error("startedInGroup must be a boolean");
+  if (input.startedInGroup && (input.origin !== "owner" || !input.chatUid)) throw new Error("an owner-group request requires its chat uid");
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
   if (!Number.isInteger(input.durationMin) || input.durationMin <= 0) throw new Error("durationMin must be a positive whole number");
   const status = input.status ?? "offered";
@@ -215,6 +229,8 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
 
   // Reuse addRequest's validation and timestamp behavior, then apply its new
   // offer to the existing record. An absent chatUid must not erase the link.
+  if (existing.startedInGroup && input.chatUid !== undefined && input.chatUid !== existing.chatUid) throw new Error("an owner-group request cannot move to another chat");
+  input = { ...input, startedInGroup: existing.startedInGroup ?? input.startedInGroup, chatUid: input.chatUid ?? existing.chatUid };
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   const newHolds = new Set(validated.offered.flatMap((offer) => offer.holdId ? [`${offer.account}\0${offer.holdId}`] : []));
   const replacedHolds = existing.offered.flatMap((offer) => offer.holdId && !newHolds.has(`${offer.account}\0${offer.holdId}`)
@@ -262,6 +278,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   const at = new Date(now).toISOString();
   const updated: Request = { ...ledger.requests[index]!, updatedAt: at };
   if (updated.status === "asked" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
+  if (updated.startedInGroup && patch.chatUid !== undefined && patch.chatUid !== updated.chatUid) throw new Error("an owner-group request cannot move to another chat");
   for (const [key, value] of Object.entries(patch)) {
     if (value === null && (NULLABLE as readonly string[]).includes(key)) delete updated[key as (typeof NULLABLE)[number]];
     else if (value !== undefined) (updated as Record<string, unknown>)[key] = value;

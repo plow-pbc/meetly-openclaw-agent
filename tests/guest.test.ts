@@ -3,6 +3,8 @@ import { test, type TestContext } from "node:test";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { registerGuestTools } from "../plugin/guest-tools.js";
+import { offerOwnerGroup } from "../skills/meetly/scripts/owner-group.ts";
+import { registerOwnerGroupTool } from "../plugin/owner-tools.js";
 import plugin from "../plugin/index.js";
 import { calendarAction } from "../skills/meetly/scripts/calendar.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
@@ -189,7 +191,7 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
   const hooks: string[] = [];
   plugin.register({ on(name: string) { hooks.push(name); }, registerTool(factory: (ctx: object) => { name: string; parameters: { properties: object } }) {
     const tool = factory(context); names.push(tool.name);
-    assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap", "constraints"].includes(k)));
+    if (tool.name !== "meetly_offer_owner_group") assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap", "constraints"].includes(k)));
   } });
   assert.deepEqual(names, JSON.parse(readFileSync(new URL("../plugin/openclaw.plugin.json", import.meta.url), "utf8")).contracts.tools);
   assert.deepEqual(hooks, ["before_prompt_build"]);
@@ -657,4 +659,47 @@ test("a blank question cannot store a time approval on a booked meeting", async 
   const next = await f.act(context, "ask_owner", { question: "Which entrance?" });
   assert.ok(!("error" in next));
   assert.equal(f.ownerLines.length, 1);
+});
+
+// Older owner-group records without a chat must never use first-reply linking.
+test("an unlinked owner-group request cannot be claimed from another group", async t => {
+  const f = fixture(t);
+  const ledger = f.read();
+  Object.assign(ledger.requests[0]!, { startedInGroup: true });
+  delete ledger.requests[0]!.chatUid;
+  f.save(ledger);
+  assert.ok("error" in await guestAction({ ...context, nativeChannelId: "other-group" }, "view"));
+  assert.deepEqual(f.read(), ledger);
+});
+
+
+test("the owner tool records the runtime chat uid and refuses another group's claim", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  f.events.clear();
+  let tool: any;
+  const ctx = { ...context, senderIsOwner: true, requesterSenderId: "plow-owner",
+    sessionKey: "agent:main:plow:group:cht_mixed", nativeChannelId: "cht_MiXeD" };
+  registerOwnerGroupTool({ registerTool(factory: any) { tool = factory(ctx); } }, offerOwnerGroup);
+  assert.equal(tool.parameters.properties.chatUid, undefined);
+  const args = { ...f.ledger.requests[0], offered: offers.map(({ holdId, ...slot }) => slot), chatUid: "other-group" };
+  const result = await tool.execute("offer", args);
+  assert.equal(result.isError, false, JSON.stringify(result));
+  assert.equal(f.request().chatUid, "cht_MiXeD");
+  assert.equal(f.request().startedInGroup, true);
+  assert.ok("error" in await guestAction({ ...context, nativeChannelId: "other-group" }, "view"));
+  assert.ok("error" in await guestAction({ ...context, nativeChannelId: "cht_mixed" }, "view"));
+  assert.ok(!("error" in await guestAction({ ...context, nativeChannelId: "cht_MiXeD" }, "view")));
+});
+
+test("the owner-group tool refuses guests, DMs and requests already linked elsewhere", async t => {
+  const f = fixture(t);
+  const args = { ...f.ledger.requests[0]!, offered: offers.map(({ holdId, ...slot }) => slot) };
+  const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
+  for (const invalid of [{ ...ctx, senderIsOwner: false }, { ...ctx, sessionKey: "agent:main:main" },
+    { ...ctx, nativeChannelId: undefined }, { ...ctx, agentAccountId: "email" }, { ...ctx, nativeChannelId: "elsewhere" }]) {
+    assert.ok("error" in await offerOwnerGroup(invalid, args));
+  }
+  assert.deepEqual(f.read(), f.ledger);
+  assert.equal(f.commands.length, 0);
 });

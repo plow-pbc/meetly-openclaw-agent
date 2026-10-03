@@ -43,19 +43,24 @@ free there.
    stop. Only if the owner explicitly asks to clear the attempt and retry,
    run `ledger.ts delivery --id <id> --kind start --action clear` before continuing.
 2. Read the calendar.
-3. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
+3. For a replacement offer, pass `--request <id>` to preserve conditions and
+   exclude this request's own holds. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
    first offer, its `proposed` times: `--days`, `--after`, `--before`,
    `--from`/`--to`, `--duration`, `--allow-overlap`. Slots stay inside the
    owner's days and window; constraints only narrow them.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
+     For an owner-started request here, say "<ownerName> isn't free then"
+     without details and search nearby dates within the saved constraints.
      If `constraints` block it, tell the owner which one and suggest
      loosening it; stop.
    - **`degraded` is not empty:** never claim the owner is free on those
      accounts. Tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
-4. Run `calendar.ts offer --json '<request>'` with `origin`, `handle` (the
+4. For a new owner request in this group, call `meetly_offer_owner_group`
+   with the fields below (no `origin` or `chatUid`); it records the exact runtime
+   chat uid and writes the holds. Otherwise run `calendar.ts offer --json '<request>'` with `origin`, `handle` (the
    resolved phone), `name`, `sourceRowid`, `chatUid` if already known, `topic`,
    `location`, `durationMin`, `constraints` (the owner's conditions), `proposed`,
    `allowOverlap`, `format`, `locale`, and `offered[]` with each slot's
@@ -77,7 +82,7 @@ free there.
    - The opener: third person, in their language. Say who Meetly is and whose
      assistant, the topic, and the slot labels, then ask which works. For
      inbound requests, never claim the owner asked.
-   - When `format` is `unknown`, the same opener also asks how they would
+   - Following "Meeting format", when `format` is `unknown`, the same opener also asks how they would
      like to meet: Google Meet or in person. When it is `in_person` with no
      `location`, it asks where. Always in that one message, never a second
      one.
@@ -160,6 +165,11 @@ An answer that arrives before booking is recorded with
 one. Never ask about the format twice in a row: once in the opener, and once
 after booking if the pick did not answer it.
 
+For a request with `startedInGroup: true`, never ask the guest for missing
+details. Use the thread context for format and place; otherwise leave them
+unknown and let the owner supply them. This overrides every format question
+in the offering and booking flows; missing details do not block scheduling.
+
 ## Book the event
 
 Used by "Owner confirms" and "Owner in the group".
@@ -221,9 +231,22 @@ disclose private information.
 ## Owner in the group
 
 Read `ledger.ts find --chat <this chat uid>` for the current request, including
-booked or closed ones. If no request matches, ask the owner which meeting they
-mean before changing the calendar. For a pending question or time approval, follow
-"Owner confirms".
+booked or closed ones. For a pending question or time approval, follow
+"Owner confirms". Never lowercase a chat uid.
+
+If no request matches and the group is exactly the owner, one other member
+and Meetly, the owner's scheduling ask is a request for that member. Read
+`setup-status.ts`; use the member's handle and known name from the conversation,
+the owner's words for topic and conditions, and thread context for format and
+place. Use the configured duration unless specified. Preferred dates/times go
+in `proposed`; explicit non-relaxable conditions go in `constraints`. Follow
+"Offer times" from step 2, using `meetly_offer_owner_group` to record and hold
+this request. Reply here, never open a new thread or DM the owner. An existing
+request for this person elsewhere must not be moved here.
+
+Without an owner scheduling ask, a friendly introduction is enough. Never
+ask the guest to identify a request or show internal confusion. Larger groups
+are out of scope. A booked or closed request is not a no-match.
 
 - **Book a time:** read the calendar and select the requested slot, following
   "Book the event". Supply the format or place the owner gave and the person's

@@ -180,7 +180,7 @@ test("the format is read only from explicit words, and ambiguous ones are asked"
   assert.ok(group.includes("Anything else is `unknown`, including \"call\", \"ligação\""));
   assert.ok(group.includes("\"coffee\" or \"lunch\" with no place"));
   assert.ok(group.includes("Never guess from the topic"));
-  assert.ok(group.includes("When `format` is `unknown`, the same opener also asks how they would like to meet"));
+  assert.ok(group.includes("when `format` is `unknown`, the same opener also asks how they would like to meet"));
   assert.ok(group.includes("Always in that one message, never a second one"));
   assert.ok(group.includes("Never ask about the format twice in a row"));
   assert.ok(pollSkill().includes("the format if their words say it"));

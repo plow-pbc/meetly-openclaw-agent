@@ -12,7 +12,7 @@ export const GATE_ROOT = "/var/lib/plow/extensions/meetly";
 /** Owner tools need an explicit profile grant; guest grants remain separate. */
 export function allowOwnerTools(config: Record<string, any>): void {
   config.tools ??= {};
-  config.tools.alsoAllow = [...new Set([...(config.tools.alsoAllow ?? []), "meetly_answer_owner"])];
+  config.tools.alsoAllow = [...new Set([...(config.tools.alsoAllow ?? []), "meetly_answer_owner", "meetly_offer_owner_group"])];
 }
 
 export async function installGate(source = GATE_SOURCE, target = GATE_ROOT): Promise<void> {
