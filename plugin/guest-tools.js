@@ -9,10 +9,10 @@ const definitions = [
     after: text("Earliest time, HH:MM."), before: text("Latest end time, HH:MM."),
     from: text("First date, YYYY-MM-DD."), to: text("Last date, YYYY-MM-DD."),
   })],
-  ["meetly_set_format", "format", "Record how or where to meet; also updates the calendar after booking. Use meet only for an explicit Google Meet or video request, in_person for a place, phone for a phone call, otherwise unknown. If format is unknown, or in_person has no place, use meetly_ask_owner to clarify privately. A supplied external link is a location, not a Google Meet link.", object({
+  ["meetly_set_format", "format", "Record how or where to meet; also updates the calendar after booking. Use meet only for an explicit Google Meet or video request, in_person for a place, phone for a phone call, otherwise unknown. If format is unknown, or in_person has no place, ask once in the thread. A supplied external link is a location, not a Google Meet link.", object({
     format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] }, location: text("Meeting place or guest-supplied external link, when applicable."),
   }, ["format"])],
-  ["meetly_ask_owner", "ask_owner", "Ask the owner privately when something about this meeting is unclear, or request approval for an out-of-hours time. Supply exactly one of question (the guest's words) or start. Sends to the owner's DM and records one open question; a second ask is refused. On success, tell the guest you will check with the owner. This never books; only the owner's own answer can approve.", object({ start, question: text("The guest's question about this meeting; quoted and capped at 500 characters.") })],
+  ["meetly_ask_owner", "ask_owner", "Ask the owner privately when the guest asks a meeting question you cannot resolve, or request approval for an out-of-hours time. Supply exactly one of question (the guest's words) or start. Sends to the owner's DM and records one open question; a second ask is refused. On success, tell the guest you will check with the owner. This never books; only the owner's own answer can approve.", object({ start, question: text("The guest's question about this meeting; quoted and capped at 500 characters.") })],
   ["meetly_decline", "decline", "Decline this open request, release its holds and clear pending approval. Confirm once in this thread so the owner hears too. A booked meeting can only be cancelled by the owner.", object()],
 ];
 

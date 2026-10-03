@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { addRequest, updateRequest, type Ledger, type NewRequest } from "../skills/meetly/scripts/ledger.ts";
+import { addRequest, pendingOwnerList, updateRequest, type Ledger, type NewRequest } from "../skills/meetly/scripts/ledger.ts";
 import { parseEvent, type EventInfo } from "../skills/meetly/scripts/event.ts";
 import { recordBooking } from "../skills/meetly/scripts/record-booking.ts";
 import { cli, tmpHome } from "./helpers.ts";
@@ -48,11 +48,22 @@ test("an in-person, phone or unknown meeting never keeps a link, even when the e
   }
 });
 
-test("booking clears a pending owner question", () => {
+test("booking clears a pending owner time approval", () => {
   let l = offered("meet");
   const pending = { start: offer.start, end: offer.end, askedAt: new Date(T0).toISOString() };
   l = updateRequest(l, "r_1", { pendingOwner: pending }, T0);
   assert.equal("pendingOwner" in recordBooking(l, "r_1", meetEvent(), ACCOUNT, T0).ledger.requests[0]!, false);
+});
+
+for (const status of ["offered", "booked"] as const) test(`recording a request with status ${status} preserves its open owner question`, () => {
+  let l = offered("unknown");
+  if (status === "booked") l = recordBooking(l, "r_1", plainEvent(), ACCOUNT, T0).ledger;
+  const pendingOwner = { question: "Which project should we discuss?", askedAt: new Date(T0).toISOString() };
+  l = updateRequest(l, "r_1", { pendingOwner, format: "meet" }, T0);
+  const { ledger } = recordBooking(l, "r_1", meetEvent(), ACCOUNT, T0);
+  assert.equal(ledger.requests[0]!.status, "booked");
+  assert.deepEqual(ledger.requests[0]!.pendingOwner, pendingOwner);
+  assert.deepEqual(pendingOwnerList(ledger).map(r => r.pendingOwner), [pendingOwner]);
 });
 
 test("a format answered after booking: recording the updated event adds the link", () => {

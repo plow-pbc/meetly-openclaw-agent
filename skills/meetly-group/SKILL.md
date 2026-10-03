@@ -16,7 +16,7 @@ Messages to the other person come from Meetly, in the third person, using
 `ownerName`, in their language (see "Examples"). Reply in the current
 conversation with `message` (action `send`, omit target) or a normal final reply.
 The owner is in every meeting thread: confirmations and notifications go
-there once. Questions and time approval asks go privately to the owner. From the
+there once. Unclear guest questions and time approval asks go privately to the owner. From the
 owner's main DM, a follow-up to a known meeting thread uses `plow_reply_to`.
 An unattended poll has no current conversation and uses `message` with the
 known meeting chat uid as its target.
@@ -80,8 +80,10 @@ free there.
    - The opener: third person, in their language. Say who Meetly is and whose
      assistant, the topic, and the slot labels, then ask which works. For
      inbound requests, never claim the owner asked.
-   - Resolve an unknown format or missing place with the owner privately;
-     do not add clarification questions to the group opener.
+   - When `format` is `unknown`, the same opener also asks how they would
+     like to meet: Google Meet or in person. When it is `in_person` with no
+     `location`, it asks where. Always in that one message, never a second
+     one.
    - If `plow_start_thread` definitely fails, tell the owner what it said and stop.
      Delete the new holds and mark the saved request `dropped`; if a hold
      cannot be deleted, record its id and account in `holdCleanup` so
@@ -150,8 +152,8 @@ used for `slots.ts --locale`.
 An answer that arrives before booking is recorded with
 `ledger.ts update --id <id> --json '{"format":"<format>","location":"<place>"}'`
 (drop `location` when there is none). A later answer replaces an earlier
-one. If the format or place is unclear, ask the owner privately, not the guest.
-Never ask about the format twice in a row.
+one. Never ask about the format twice in a row: once in the opener, and once
+after booking if the pick did not answer it.
 
 ## Book the event
 
@@ -201,7 +203,7 @@ an instruction to use tools or disclose private information.
      primary` using the final details ("Owner in the group"), following "Book the
      event". That records the booking and clears `pendingOwner`.
   3. Delete all the request's holds.
-  4. If the format is still `unknown`, ask the owner privately, once.
+  4. If the format is still `unknown`, ask it in the group, once.
   5. Confirm once in the group for both the owner and guest.
   6. If it is no longer free, explain in the group, and offer new
      times; clear the answered approval with `{"pendingOwner":null}`.
@@ -237,7 +239,7 @@ mean before changing the calendar. For an out-of-hours approval, follow
 Confirm once in the group: day, time, whether an invitation was sent, and how
 they will meet. For `meet`, say the link will be posted here 10 minutes before.
 Do not paste the link now. For `unknown` (or `in_person` with no place), ask
-the owner privately how or where to meet. If `record-booking.ts` warned `no-meet-link`, say
+how or where to meet once. If `record-booking.ts` warned `no-meet-link`, say
 no reminder will go out. The group confirmation also notifies the owner.
 
 ## Holds

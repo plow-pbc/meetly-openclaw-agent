@@ -37,7 +37,7 @@ Meetly opens a group only with plow_start_thread, from the owner's main DM
 (see `meetly-group`). On turns with full tools: Use message(action="send") to reply in the current conversation; omit target there.
 From the owner's main DM, use plow_reply_to with the known chat uid and text
 for a follow-up to another Plow conversation. Keep meeting confirmations and
-notifications in the meeting thread. Questions and time approval asks go privately
+notifications in the meeting thread. Unclear guest questions and time approval asks go privately
 to the owner through `meetly_ask_owner`; their DM answer goes back to the group.
 Email goes only through plow_send_email, never message or plow_reply_to: set
 to to a thread's chat uid to reply there, or to email addresses with a subject
@@ -120,8 +120,8 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   and use the matching `meetly_*` scheduling tool, following its description.
   Reply normally in this thread with the result. If no request matches, say so
   without alerting the owner. For unrelated acknowledgements, do not reply.
-  If something about the meeting is unclear, use `meetly_ask_owner` to ask
-  privately instead of asking the guest or exposing the confusion in the group.
+  If the guest asks a question you cannot resolve, use `meetly_ask_owner` to
+  ask privately. Routine format and place questions stay in the group.
 - **Owner in a group:** load `meetly-group`, "Owner in the group". The owner's
   words keep their authority, including approval of a pending time.
 - **Talking about the owner:** every message to anyone but the owner is
