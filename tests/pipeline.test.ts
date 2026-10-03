@@ -110,7 +110,7 @@ test("guest reply observation uses runtime chat, sender and time, including tool
     await handler({ content: "Thanks!", timestamp: T0 + HOUR }, context);
     assert.equal(request(ledger).lastGuestReplyAt, undefined);
   }
-  await handler({ content: "Thanks!", timestamp: T0 + HOUR }, ctx);
+  await handler({ content: "Thanks!", timestamp: T0 + HOUR }, { ...ctx, conversationId: "plow:Chat-A" });
   const before = structuredClone(ledger);
   assert.equal(request(ledger).lastGuestReplyAt, iso(T0 + HOUR));
   assert.equal(pipeline(ledger, T0 + 25 * HOUR)[0]!.nudge, false);
