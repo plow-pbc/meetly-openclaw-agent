@@ -3,7 +3,7 @@ import { fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { parseEvent, type EventInfo } from "./event.ts";
-import { findByChat, findOpenByHandle, OWNER_QUESTION_LIMIT, resolveChatUid, sameHandle, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Offer, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { findByChat, findOpenByHandle, intersectConstraints, OWNER_QUESTION_LIMIT, sameHandle, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Offer, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { runOnMac } from "./mac.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
@@ -24,14 +24,14 @@ function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
   const linked = findByChat(ledger, chat);
   if (linked?.status === "booked" && sameHandle(linked.handle, sender)) return linked;
   const open = findOpenByHandle(ledger, sender, ["offered"]);
-  if (open && ((open.chatUid && open.chatUid !== resolveChatUid(ledger, chat)) || (linked?.status === "offered" && linked.id !== open.id))) return;
+  if (open && ((open.chatUid && open.chatUid !== chat) || (linked?.status === "offered" && linked.id !== open.id))) return;
   const request = open ?? linked;
   return request && sameHandle(request.handle, sender) && request.status !== "asked" ? request : undefined;
 }
 
 function resolveRequest(ctx: GuestContext): Request | undefined {
   const request = current(readJson<Ledger>(file("ledger.json"), EMPTY), ctx);
-  if (!request || request.chatUid === (ctx.nativeChannelId ?? ctx.deliveryContext?.to)?.replace(/^plow:/i, "")) return request;
+  if (!request || request.chatUid) return request;
   const ledger = updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
     const latest = current(l, ctx);
     if (!latest || latest.id !== request.id) throw new Error("request changed");
@@ -83,16 +83,6 @@ async function busyFor(request: Request, config: Config, from: string, to: strin
   const result = await fetchBusy(config, { from, to });
   if (result.degraded.length) throw new Error("calendar unavailable");
   return { ...result, busy: result.busy.filter(b => !holds(request).some(h => h.holdId === b.id && h.account === b.account)) };
-}
-
-function intersection(owner: Constraints = {}, guest: Constraints = {}): Constraints {
-  return {
-    days: owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
-    after: [owner.after, guest.after].filter(Boolean).sort().at(-1),
-    before: [owner.before, guest.before].filter(Boolean).sort()[0],
-    from: [owner.from, guest.from].filter(Boolean).sort().at(-1),
-    to: [owner.to, guest.to].filter(Boolean).sort()[0],
-  };
 }
 
 function preferences(args: GuestArgs): Constraints {
@@ -147,8 +137,7 @@ async function pick(request: Request, config: Config, start: string) {
   const offer = request.offered.find(o => Date.parse(o.start) === Date.parse(start));
   if (!offer) return { error: "Choose one of the currently offered start times." };
   const checked = await check(request, config, offer.start);
-  const ownerGroupAlternative = request.origin === "owner" && request.startedInGroup === true && offer.alternative === true;
-  if (!checked.free || checked.outsideHours || (!ownerGroupAlternative && !withinConditions(request, offer.start, config))) return { error: "That time is no longer available. Ask for other times." };
+  if (!checked.free || checked.outsideHours || !withinConditions(request, offer.start, config)) return { error: "That time is no longer available. Ask for other times." };
   let holdId = offer.holdId;
   if (holdId) {
     const existing = await calendar(["event", "primary", holdId, "--account", offer.account, "--json"]);
@@ -176,15 +165,13 @@ async function pick(request: Request, config: Config, start: string) {
 async function otherTimes(request: Request, config: Config, args: GuestArgs) {
   const now = Date.now();
   const busy = await busyFor(request, config, localIso(now, config.timezone), localIso(now + (config.horizonDays + 1) * 86_400_000, config.timezone));
-  const ownerGroupAlternative = request.origin === "owner" && request.startedInGroup === true && request.offered.some(o => o.alternative === true);
-  const conditions = ownerGroupAlternative ? { ...request.constraints, from: undefined, to: undefined } : request.constraints;
-  const narrowed = intersection(conditions, preferences(args));
+  const narrowed = intersectConstraints(request.constraints, preferences(args));
   const query: SlotQuery = { ...busy, ...narrowed, days: narrowed.days as Day[] | undefined, now, config,
     durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
   let { slots } = findSlots(query);
   const preferencesUnavailable = slots.length === 0;
   if (preferencesUnavailable) {
-    slots = findSlots({ ...query, ...intersection(conditions), days: conditions?.days as Day[] | undefined }).slots;
+    slots = findSlots({ ...query, ...intersectConstraints(request.constraints), days: request.constraints?.days as Day[] | undefined }).slots;
   }
   if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
   request = await cleanup(request, holds(request));
@@ -198,8 +185,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs) {
         ...(checked.overlap ? ["--confirm-conflict"] : [])]);
       if (output === undefined) continue;
       const event = parseEvent(output);
-      offered.push({ start: event.start, end: event.end, holdId: event.id, account: config.defaultAccount,
-        ...(ownerGroupAlternative ? { alternative: true } : {}) });
+      offered.push({ start: event.start, end: event.end, holdId: event.id, account: config.defaultAccount });
     }
     if (!offered.length) return { error: "No replacement holds could be created. The previous times need rechecking before booking." };
     request = patch(request, { offered });

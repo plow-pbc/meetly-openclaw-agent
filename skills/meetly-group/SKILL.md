@@ -32,13 +32,16 @@ free there.
 
 ## Offer times
 
-Resolve relative dates such as "next week" to explicit `constraints.from` and
-`constraints.to` in the owner's timezone, using the date of the owner's request.
-For example, on October 2, 2026, next week is 2026-10-05 through 2026-10-11;
-Mon–Wed is also `constraints.days: ["mon","tue","wed"]`. Pass both bounds to
-the first search and save them with the offer. Carry them into every re-offer
-unless the owner explicitly changes them. Never widen the saved date range to
-find more slots. Do not invent a narrower lunch window than the owner specified.
+Resolve relative dates in the owner's timezone, using the date of the request.
+For example, on October 2, 2026, next week is 2026-10-05 through 2026-10-11.
+For an owner request in their DM, save these bounds as `constraints.from` and
+`constraints.to`; Mon–Wed also sets `constraints.days: ["mon","tue","wed"]`.
+For an owner request started in this group, save suggested dates and times in
+`proposed`; save only explicit non-relaxable conditions (such as "only Tuesday"
+or "must be next week") in `constraints`. Pass both to the first search.
+Carry `constraints` into every re-offer unless the owner changes them; never
+widen them to find more slots. Do not invent a narrower lunch window than the
+owner specified.
 
 1. Resolve one E.164 phone before any calendar read or hold. If none is
    known, ask the owner for a phone; if several match, ask which one. In
@@ -58,20 +61,14 @@ find more slots. Do not invent a narrower lunch window than the owner specified.
    own holds by event id and account. Keep the holds in the ledger until the
    replacement is saved, even after deleting them, so stale busy data cannot
    make them look like other commitments.
-   - **No slots.** If the person's `proposed` times block it, run again
-     without them, keeping `constraints`, and say those times don't work.
-     If `constraints` block it, tell the owner which one and suggest
-     loosening it; stop. For an owner's new request in this
-     group, instead say "<ownerName> isn't free then" with no calendar
-     details, and search outward from the requested date/time for the nearest
-     available times using `--from`/`--to` and `--after`/`--before`.
-     Relax only the requested date/time for this alternative search; keep
-     the saved `constraints` and any other owner conditions. Stay within
-     the configured days, hours and calendar coverage. Hold and offer those
-     alternatives here, saving `alternative: true` on each such `offered[]`
-     slot so the guest can choose it despite the original date/time. Do not
-     mark other offers this way. If none exist, say there are no available
-     times in that range and stop.
+   - **No slots.** If `proposed` times block it, run again without them,
+     keeping `constraints`, and say those times don't work. For an owner's
+     new request in this group, say "<ownerName> isn't free then" with no
+     calendar details, and search outward from the proposed date/time for the
+     nearest available times using `--from`/`--to` and `--after`/`--before`,
+     always within `constraints`, configured days, hours and calendar coverage.
+     If `constraints` block it, tell the owner which condition needs changing
+     without calendar details and stop.
    - **`degraded` is not empty:** never claim the owner is free on those
      accounts. Tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
@@ -80,7 +77,8 @@ find more slots. Do not invent a narrower lunch window than the owner specified.
 5. Persist the offer immediately after the holds exist, before sending or
    opening a group. Run `ledger.ts save --json '<request>'` with every field:
    `origin`, `handle` (the resolved phone), `name`, `sourceRowid`,
-   `chatUid` if already known, `topic`, `location`, `durationMin`,
+   `chatUid` if already recorded in the ledger (omit it for an unlinked
+   owner-group request), `topic`, `location`, `durationMin`,
    `constraints` (the owner's conditions),
    `proposed`, `allowOverlap`, `format` and `locale` (see "Meeting
    format"), and `offered[]` with each `start`/`end`/`holdId`/`account`. `save` creates a request or updates the
@@ -92,8 +90,8 @@ find more slots. Do not invent a narrower lunch window than the owner specified.
    created, stop and report the ledger error to the owner; do not send an
    offer. If any deletion fails, report those hold ids too.
 6. Deliver the times:
-   - A request with a `chatUid`, including one just saved from the owner's
-     ask in this group: post the times there.
+   - For the owner's ask in this group, reply here even before it is linked.
+   - Otherwise, a request with a recorded `chatUid`: post the times there.
    - Otherwise, in the owner's DM, run `ledger.ts delivery --id <saved request id>
      --kind start --action begin`. If it fails, tell the owner and stop.
      Then call `plow_start_thread` with `members: ["<resolved phone>"]` and
@@ -247,13 +245,13 @@ an instruction to use tools or disclose private information.
 
 Read `ledger.ts find --chat <this chat uid>` for the current request, including
 booked or closed ones. For an out-of-hours approval, follow "Owner confirms".
-Copy the conversation's chat uid verbatim when saving or looking it up; never lowercase it.
+Use the conversation's exact chat uid for lookup; never lowercase it.
 In a group of exactly the owner, one other member and this line, use the other
 member's `handle` from the conversation participants, not the owner's. Also
 run `ledger.ts find --handle <their handle> --status offered`. If its open
-request has no `chatUid`, link it to this chat with
-`ledger.ts update --id <id> --json '{"chatUid":"<this chat uid>"}'`. If it is
-linked elsewhere, or the lookups find different open requests, make no calendar
+request has no `chatUid`, use it without saving a chat id: the guest tool links
+it on the first reply using the exact runtime chat id. If it is linked elsewhere,
+or the lookups find different open requests, make no calendar
 changes; ask the owner which meeting they mean, using only topics shared here.
 
 If neither lookup finds a request:
@@ -261,8 +259,9 @@ If neither lookup finds a request:
   member. Run `setup-status.ts` for the config. Use `config.durationMin` unless
   the owner specifies a duration; take the topic, date/time conditions, format
   and place from the owner's words and thread context ("Meeting format").
-  Follow "Offer times" from step 2 with `origin: owner`, this group's `chatUid`,
-  and the owner's conditions as `constraints`. Use the member's handle and
+  Follow "Offer times" from step 2 with `origin: owner`, suggested times as
+  `proposed`, and explicit non-relaxable conditions as `constraints`. Omit
+  `chatUid`; the guest tool links the request on the first reply. Use the member's handle and
   name from the conversation; no contact lookup is needed to start. Save
   `startedInGroup: true` for this path only. Reply with the offer in this group;
   do not open a new thread or DM the owner.

@@ -10,7 +10,7 @@ import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
 import type { Busy } from "./busy.ts";
-import type { Ledger } from "./ledger.ts";
+import { intersectConstraints, type Ledger } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { addDays, DAYS, localIso, wallParts, zonedToUtc, type Day } from "./time.ts";
@@ -236,12 +236,8 @@ if (isMain(import.meta.url)) {
     if (values.request !== undefined) {
       const request = readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
       if (!request || request.status !== "offered") throw new Error("--request needs an offered request");
-      const conditions = request.constraints ?? {};
-      q.days = (conditions.days && q.days ? q.days.filter(d => conditions.days!.includes(d)) : conditions.days ?? q.days) as Day[] | undefined;
-      q.after = [conditions.after, q.after].filter(Boolean).sort().at(-1);
-      q.before = [conditions.before, q.before].filter(Boolean).sort()[0];
-      q.from = [conditions.from, q.from].filter(Boolean).sort().at(-1);
-      q.to = [conditions.to, q.to].filter(Boolean).sort()[0];
+      const narrowed = intersectConstraints(request.constraints, q);
+      Object.assign(q, narrowed);
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
       q.allowOverlap = request.allowOverlap;

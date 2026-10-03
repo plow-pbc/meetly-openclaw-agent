@@ -302,10 +302,11 @@ test("a guest replying in an older group can neither find nor link their asked r
   assert.equal(cli("ledger.ts", ["find", "--handle", "+15551234567"], env).json.request.status, "asked");
 });
 
-test("chat lookup accepts one case-only match but never conflates distinct recorded chats", () => {
+test("chat lookup requires exact identity even with only one recorded spelling", () => {
   let l = addRequest(empty(), input({ chatUid: "cht_abc" }), T0, "r_1");
-  assert.equal(findByChat(l, "cht_AbC")?.id, "r_1");
-  assert.equal(findByChat(l, "cht_AbC", "+15551234567")?.id, "r_1");
+  assert.equal(findByChat(l, "cht_abc")?.id, "r_1");
+  assert.equal(findByChat(l, "cht_AbC"), undefined);
+  assert.equal(findByChat(l, "cht_AbC", "+15551234567"), undefined);
   l = addRequest(l, input({ handle: "+15559999999", chatUid: "cht_ABC" }), T0, "r_2");
   assert.equal(findByChat(l, "cht_ABC")?.id, "r_2");
   assert.equal(findByChat(l, "cht_AbC"), undefined);

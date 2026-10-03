@@ -13,12 +13,22 @@ import { readJson, updateJson } from "./store.ts";
 // `asked`: a request seen in the owner's messages, waiting for the owner's
 // yes before anyone is contacted. It has no offered times, holds or chat.
 export type Status = "asked" | "offered" | "booked" | "dropped" | "expired";
-export type Offer = { start: string; end: string; holdId?: string; account: string; alternative?: boolean };
+export type Offer = { start: string; end: string; holdId?: string; account: string };
 export type HoldRef = { holdId: string; account: string };
 // One question or out-of-hours time waiting for the owner's answer.
 export const OWNER_QUESTION_LIMIT = 500;
 export type PendingOwner = { askedAt: string } & ({ start: string; end: string } | { question: string });
 export type Constraints = { days?: string[]; after?: string; before?: string; from?: string; to?: string };
+export function intersectConstraints(owner: Constraints = {}, guest: Constraints = {}): Constraints {
+  return {
+    days: owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
+    after: [owner.after, guest.after].filter(Boolean).sort().at(-1),
+    before: [owner.before, guest.before].filter(Boolean).sort()[0],
+    from: [owner.from, guest.from].filter(Boolean).sort().at(-1),
+    to: [owner.to, guest.to].filter(Boolean).sort()[0],
+  };
+}
+
 // How the meeting happens. `unknown` until the request or an answer says it.
 export type Format = "meet" | "in_person" | "phone" | "unknown";
 // The booked event's time, and the Google account it lives on.
@@ -40,7 +50,7 @@ export type Request = {
   durationMin: number;
   // The owner's conditions, kept for every offer of this request.
   constraints?: Constraints;
-  // Times the person proposed; only the first offer uses them.
+  // Preferred times from the guest or owner; only the first offer uses them.
   proposed?: Constraints;
   allowOverlap?: string[];
   offered: Offer[];
@@ -145,14 +155,7 @@ function findOpenBySource(ledger: Ledger, input: NewRequest): Request | undefine
     : undefined;
 }
 
-export function resolveChatUid(ledger: Ledger, chatUid: string): string {
-  const matches = [...new Set(ledger.requests.flatMap(r => r.chatUid?.toLowerCase() === chatUid.toLowerCase() ? [r.chatUid] : []))];
-  // Prefer an exact identity; repair spelling only when the stored link is unambiguous.
-  return matches.includes(chatUid) || matches.length !== 1 ? chatUid : matches[0]!;
-}
-
 export function findByChat(ledger: Ledger, chatUid: string, handle?: string): Request | undefined {
-  chatUid = resolveChatUid(ledger, chatUid);
   // Resolve an open request for the sender even when it has not been linked
   // yet. This lets a replacement offer supersede a closed request in the chat.
   // An `asked` request has no group yet, so no chat ever resolves to one.

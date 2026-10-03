@@ -142,11 +142,13 @@ for (const [action, args] of actions) test(`${action} refuses missing or mismatc
 for (const [action, args] of actions) test(`${action} links the sender's unlinked offer and touches only that request`, async t => {
   const f = fixture(t);
   delete f.ledger.requests[0]!.chatUid;
+  f.ledger.requests[0]!.startedInGroup = true;
   f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "other", chatUid: "other-chat", handle: "+15557654321" });
   f.save(f.ledger);
-  const result = await f.act(context, action, args);
+  const runtime = { ...context, nativeChannelId: "chat-MixedCase" };
+  const result = await f.act(runtime, action, args);
   assert.ok(!("error" in result), JSON.stringify(result));
-  assert.equal(f.request().chatUid, context.nativeChannelId);
+  assert.equal(f.request().chatUid, runtime.nativeChannelId);
   assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE|owner@example.com|hold-one|hold-two|approved/);
 });
@@ -178,16 +180,18 @@ test("pick books the chosen hold with fixed arguments, records the event, and de
   assert.deepEqual(f.commands.filter(c => c[2] === "delete"), [["plow-gog", "calendar", "delete", "primary", "hold-two", "--send-updates", "none", "--force", "--account", "owner@example.com"]]);
 });
 
-test("owner-group pick repairs a lowercased chat link from the runtime identity", async t => {
+for (const status of ["offered", "booked"] as const) test(`guest tools reject a case-only chat mismatch for a ${status} request`, async t => {
   const f = fixture(t);
-  const chat = "cht_-CKlWPPl1W6OdcwwglDx1g";
-  f.ledger.requests[0]!.chatUid = chat.toLowerCase();
-  f.ledger.requests[0]!.startedInGroup = true;
+  f.ledger.requests[0]!.chatUid = "chat-ABC";
+  f.ledger.requests[0]!.status = status;
   f.save(f.ledger);
-  const result = await guestAction({ ...context, nativeChannelId: chat }, "pick", { start: offers[0]!.start });
-  assert.ok(!("error" in result), JSON.stringify(result));
-  assert.equal(f.request().status, "booked");
-  assert.equal(f.request().chatUid, chat);
+  for (const [action, args] of [...actions, ["ask_owner", { question: "Which entrance?" }]] as [GuestAction, GuestArgs][]) {
+    const result = await f.act({ ...context, nativeChannelId: "chat-abc" }, action, args);
+    assert.match(JSON.stringify(result), /No scheduling request matches/);
+  }
+  assert.deepEqual(f.read(), f.ledger);
+  assert.deepEqual(f.commands, []);
+  assert.deepEqual(f.ownerLines, []);
 });
 
 test("guest tool results retain the owner-in-group detail policy through booking", async t => {
@@ -198,32 +202,6 @@ test("guest tool results retain the owner-in-group detail policy through booking
   assert.equal(result.startedInGroup, true);
   assert.equal(result.format, "unknown");
   assert.equal(f.request().status, "booked");
-});
-
-for (const alternative of [true, false]) test(`a guest can pick only an explicitly offered owner-group alternative: ${alternative}`, async t => {
-  const f = fixture(t);
-  const request = f.ledger.requests[0]!;
-  request.startedInGroup = true;
-  request.constraints = { from: "2026-10-06", to: "2026-10-06" };
-  request.offered = request.offered.map((offer, i) => i === 0 ? { ...offer, alternative } : offer);
-  f.save(f.ledger);
-  const result = await guestAction(context, "pick", { start: offers[0]!.start });
-  assert.equal("error" in result, !alternative);
-  assert.equal(f.request().status, alternative ? "booked" : "offered");
-});
-
-for (const blockedBy of ["busy", "hours"]) test(`owner-group alternatives still respect ${blockedBy}`, async t => {
-  const f = fixture(t);
-  const request = f.ledger.requests[0]!;
-  request.startedInGroup = true;
-  const start = blockedBy === "hours" ? "2026-10-05T20:00:00Z" : offers[0]!.start;
-  const end = blockedBy === "hours" ? "2026-10-05T20:30:00Z" : offers[0]!.end;
-  request.offered = [{ ...offers[0]!, start, end, alternative: true }];
-  if (blockedBy === "busy") f.events.set("conflict", event("private", start, end));
-  f.save(f.ledger);
-  assert.ok("error" in await guestAction(context, "pick", { start }));
-  assert.equal(f.request().status, "offered");
-  assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
 for (const allowed of [true, false]) test(`pick rechecks conflicts; owner-approved=${allowed}`, async t => {
@@ -238,47 +216,26 @@ for (const allowed of [true, false]) test(`pick rechecks conflicts; owner-approv
   else assert.deepEqual(writes, []);
 });
 
-for (const scenario of ["owner-group alternative", "owner-group original", "owner-DM alternative", "inbound alternative"]) {
-  test(`other times relax the requested date only for an ${scenario}`, async t => {
-    const f = fixture(t);
-    const request = f.ledger.requests[0]!;
-    request.origin = scenario === "inbound alternative" ? "inbound" : "owner";
-    request.startedInGroup = scenario !== "owner-DM alternative";
-    request.constraints = { days: ["mon", "tue"], after: "10:00", before: "12:30", from: "2026-10-06", to: "2026-10-06" };
-    request.offered = request.offered.map(offer => ({ ...offer, alternative: scenario !== "owner-group original" }));
-    f.events.set("busy", event("busy", "2026-10-05T10:30:00Z", "2026-10-05T11:00:00Z"));
-    f.save(f.ledger);
-    const args = { days: ["mon", "wed"], after: "09:00", before: "12:00", from: "2026-10-05", to: "2026-10-07" };
-    const result = await guestAction(context, "other_times", args);
-    if (scenario !== "owner-group alternative") {
-      assert.ok(!("error" in result), JSON.stringify(result));
-      assert.ok(f.request().offered.length > 0);
-      for (const offer of f.request().offered) {
-        assert.equal(offer.start.slice(0, 10), "2026-10-06");
-        assert.notEqual(offer.alternative, true);
-      }
-      return;
-    }
-    assert.ok(!("error" in result), JSON.stringify(result));
-    assert.ok(f.request().offered.length > 0);
-    for (const offer of f.request().offered) {
-      assert.equal(offer.start.slice(0, 10), "2026-10-05");
-      assert.ok(offer.start.slice(11, 16) >= "11:00" && offer.end.slice(11, 16) <= "12:00");
-      assert.equal(offer.alternative, true);
-    }
-    const next = await guestAction(context, "other_times", { ...args, before: "15:00" });
-    assert.ok(!("error" in next), JSON.stringify(next));
-    assert.ok(f.request().offered.length > 0);
-    for (const offer of f.request().offered) {
-      assert.equal(offer.start.slice(0, 10), "2026-10-05");
-      assert.ok(offer.start.slice(11, 16) >= "10:00" && offer.end.slice(11, 16) <= "12:30");
-      assert.equal(offer.alternative, true);
-    }
-    const picked = await guestAction(context, "pick", { start: f.request().offered[0]!.start });
-    assert.ok(!("error" in picked), JSON.stringify(picked));
-    assert.equal(f.request().status, "booked");
-  });
-}
+test("owner-group re-offers can leave proposed dates while preserving hard conditions through booking", async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.startedInGroup = true;
+  request.proposed = { from: "2026-10-06", to: "2026-10-06" };
+  request.constraints = { days: ["mon", "tue"], after: "10:00", before: "12:30", from: "2026-10-05", to: "2026-10-06" };
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { days: ["mon", "wed"], after: "09:00", before: "12:00" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.ok(f.request().offered.length > 0);
+  for (const offer of f.request().offered) {
+    assert.equal(offer.start.slice(0, 10), "2026-10-05");
+    assert.ok(offer.start.slice(11, 16) >= "10:00" && offer.end.slice(11, 16) <= "12:00");
+  }
+  const picked = await guestAction(context, "pick", { start: f.request().offered[0]!.start });
+  assert.ok(!("error" in picked), JSON.stringify(picked));
+  assert.equal(f.request().status, "booked");
+  assert.deepEqual(f.request().constraints, request.constraints);
+  assert.deepEqual(f.request().proposed, request.proposed);
+});
 
 test("other times intersect guest preferences with owner conditions and replace holds with a cleanup retry record", async t => {
   const f = fixture(t); f.fail.add("hold-two");

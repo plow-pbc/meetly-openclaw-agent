@@ -97,7 +97,7 @@ test("the owner's yes or no in their DM decides an asked request", () => {
   assert.ok(flat(prompt).includes("the owner answers Meetly's \"Want me to offer times?\" → `meetly-group`, \"Asked requests\""));
 });
 
-test("the owner's conditions hold for every offer of a request; the person's proposed times only for the first", () => {
+test("hard conditions hold for every offer; proposed times only for the first", () => {
   const group = groupSkill();
   assert.ok(group.includes("`constraints` set to any conditions the owner gave with the yes"));
   assert.ok(group.includes("with the request's `constraints` (the owner's) and, on its first offer, its `proposed` times"));
@@ -109,10 +109,10 @@ test("the owner's conditions hold for every offer of a request; the person's pro
 
 test("owner offers persist relative date bounds and re-offers use the request-aware search", () => {
   const group = groupSkill();
-  assert.ok(group.includes('Resolve relative dates such as "next week" to explicit `constraints.from` and `constraints.to`'));
+  assert.ok(group.includes('save these bounds as `constraints.from` and `constraints.to`'));
   assert.ok(group.includes("2026-10-05 through 2026-10-11"));
   assert.ok(group.includes("add `--request <id>` to `slots.ts`"));
-  assert.ok(group.includes("Never widen the saved date range to find more slots"));
+  assert.ok(group.includes("never widen them to find more slots"));
   assert.ok(group.includes("do not drop Tuesday merely because its old holds appear busy"));
 });
 
@@ -199,19 +199,20 @@ test("an owner's scheduling ask without a matching request starts in the existin
   const group = flat(readFileSync(join(ROOT, "skills", "meetly-group", "SKILL.md"), "utf8"));
   assert.ok(flat(prompt).includes("the owner's scheduling ask starts a request for the other member in this chat"));
   assert.ok(group.includes("**The owner asks to schedule:**"));
-  assert.ok(group.includes("`origin: owner`, this group's `chatUid`, and the owner's conditions as `constraints`"));
+  assert.ok(group.includes("`origin: owner`, suggested times as `proposed`, and explicit non-relaxable conditions as `constraints`"));
   assert.ok(group.includes("Use `config.durationMin` unless the owner specifies a duration"));
   assert.ok(group.includes("Follow \"Offer times\" from step 2"));
   assert.ok(group.includes("Reply with the offer in this group; do not open a new thread or DM the owner"));
-  assert.ok(group.includes("link it to this chat with `ledger.ts update --id <id> --json '{\"chatUid\":\"<this chat uid>\"}'`"));
+  assert.ok(group.includes("Omit `chatUid`; the guest tool links the request on the first reply"));
+  assert.ok(group.includes("the guest tool links it on the first reply using the exact runtime chat id"));
 });
 
 test("an unavailable owner ask in an existing group gets nearby alternatives without private details", () => {
   const group = groupSkill();
-  assert.ok(group.includes("For an owner's new request in this group, instead say \"<ownerName> isn't free then\""));
-  assert.ok(group.includes("search outward from the requested date/time for the nearest available times"));
-  assert.ok(group.includes("Relax only the requested date/time for this alternative search; keep the saved `constraints`"));
-  assert.ok(group.includes("Stay within the configured days, hours and calendar coverage"));
+  assert.ok(group.includes("For an owner's new request in this group, say \"<ownerName> isn't free then\""));
+  assert.ok(group.includes("search outward from the proposed date/time for the nearest available times"));
+  assert.ok(group.includes("save suggested dates and times in `proposed`; save only explicit non-relaxable conditions"));
+  assert.ok(group.includes("always within `constraints`, configured days, hours and calendar coverage"));
 });
 
 test("a group without an owner ask gets no confusion or request-identification question", () => {
