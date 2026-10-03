@@ -4,7 +4,7 @@ const start = text("An offered ISO start time; for an owner approval request, IS
 const definitions = [
   ["meetly_view_request", "view", "Read your scheduling request in this conversation and its current times or booked status. If no request matches, say so without alerting the owner.", object()],
   ["meetly_pick_time", "pick", "Book one of this request's currently offered start times and release its other holds. Read the current offer first. Report the result once in this thread for both people; never claim an invitation was sent unless invitationSent is true. For a Meet, say the link will be posted shortly before the meeting; reminderAvailable says whether a link exists.", object({ start }, ["start"])],
-  ["meetly_other_times", "other_times", "Find and hold other times for this request, narrowed by the guest's preferences and the owner's conditions. Return the offer in this thread. Times use the owner's timezone; no owner conditions can be loosened.", object({
+  ["meetly_other_times", "other_times", "Find and hold other times for this request, narrowed by the guest's preferences and the owner's conditions. If those preferences have no slots, returns new times within the owner's conditions instead; explain the refusal and offer those times. Times use the owner's timezone; no owner conditions can be loosened.", object({
     days: { type: "array", items: { type: "string", enum: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] } },
     after: text("Earliest time, HH:MM."), before: text("Latest end time, HH:MM."),
     from: text("First date, YYYY-MM-DD."), to: text("Last date, YYYY-MM-DD."),
