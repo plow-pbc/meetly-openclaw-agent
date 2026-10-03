@@ -268,14 +268,8 @@ image.
 
 ### Bumping the base image
 
-The temporary base is `plow-openclaw:base-5d4d2c6312f545b52de4de9e5b0b44020c7d5256`,
-built locally from that commit of `feat/guest-tool-allowlist`. Before building
-Meetly, check out that base commit and run in the base checkout:
-
-```sh
-docker build --build-arg PLOW_REVISION=5d4d2c6312f545b52de4de9e5b0b44020c7d5256 \
-  -t plow-openclaw:base-5d4d2c6312f545b52de4de9e5b0b44020c7d5256 .
-```
+The image pins the published Plow base by digest in `Dockerfile`; no local
+base build is needed.
 
 For a published base pin, pick a newer `base-<sha>` tag and its digest from the
 [gallery](https://gallery.ecr.aws/e1h7x4a2/plow-cloud-agents) and update the
