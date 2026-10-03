@@ -3,7 +3,7 @@
 import { parseArgs } from "node:util";
 import { pendingCalendarWrites } from "./calendar.ts";
 import { isMain, run } from "./cli.ts";
-import { appendLog, doNotContact, setDoNotContact, type Ledger, type Request } from "./ledger.ts";
+import { nudgeFingerprint, appendLog, doNotContact, setDoNotContact, type Ledger, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 
@@ -50,7 +50,7 @@ export function pipeline(ledger: Ledger, now: number, unresolved: readonly strin
         : replied ? "Guest replied; waiting for a time choice." : "Waiting for a reply to the offered times.";
     }
     return [{ id: request.id, name: line(request.name ?? request.handle), topic: line(request.topic), status: request.status,
-      state, reason, since, detail, fingerprint: JSON.stringify([reason, since]), nudge, doNotContact: blocked, log: request.log }];
+      state, reason, since, detail, fingerprint: nudgeFingerprint(reason, since), nudge, doNotContact: blocked, log: request.log }];
   });
 }
 

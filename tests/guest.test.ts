@@ -7,6 +7,7 @@ import { offerOwnerGroup } from "../skills/meetly/scripts/owner-group.ts";
 import { registerOwnerGroupTool } from "../plugin/owner-tools.js";
 import plugin from "../plugin/index.js";
 import { calendarAction } from "../skills/meetly/scripts/calendar.ts";
+import { reserveNudges } from "../skills/meetly/scripts/pipeline.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
 import { addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
@@ -1086,3 +1087,19 @@ test("an incomplete guest cancellation names the guest and keeps cleanup pending
   assert.match(f.ownerLines[0]!, /^Guest requested cancellation of Lunch on .*calendar cleanup is pending/);
   t.diagnostic(`Owner DM: ${f.ownerLines[0]}`);
 });
+for (const args of [{ question: "Should I bring the budget?" }, { start: "2026-10-05T20:00" }]) {
+  test(`owner ask reserves its monitor fingerprint before sending: ${JSON.stringify(args)}`, async t => {
+    const f = fixture(t);
+    let sends = 0;
+    let duringSend: string | null = null;
+    const result = await guestAction(context, "ask_owner", args, async () => {
+      sends++;
+      duringSend = reserveNudges(f.read(), now).text;
+    });
+    assert.equal("ownerAskSent" in result && result.ownerAskSent, true);
+    assert.equal(sends, 1);
+    assert.equal(duringSend, null, "a concurrent poll must not duplicate this DM");
+    assert.equal(reserveNudges(f.read(), now + 5 * 60_000).text, null);
+    assert.ok(f.request().lastNudge);
+  });
+}

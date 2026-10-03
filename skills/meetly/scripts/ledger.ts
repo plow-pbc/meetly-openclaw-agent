@@ -173,6 +173,8 @@ export function checkContact(ledger: Ledger, handle: string, confirmed = false):
   if (doNotContact(ledger, handle) && !confirmed) throw new ContactConfirmationRequired();
 }
 
+export const nudgeFingerprint = (reason: string, since: string): string => JSON.stringify([reason, since]);
+
 const LOG_LIMIT = 20;
 export function appendLog(request: Request, text: string, now: number): Request {
   return { ...request, log: [...(request.log ?? []), { at: new Date(now).toISOString(), text }].slice(-LOG_LIMIT) };

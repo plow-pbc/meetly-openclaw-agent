@@ -3,7 +3,7 @@ import { fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
-import { sameRequest, currentOffers, requestEvents, findByChat, meetingTopic, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findByChat, meetingTopic, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { checkTime, findSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -174,7 +174,16 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     pendingOwner = { start: checked.slot.start, end: checked.slot.end, askedAt };
     question = `Can we meet ${localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(checked.slot.start))} (${config.timezone}), outside the meeting window?`;
   }
-  patch(request, { pendingOwner });
+  // Save the question and its notification together so the poll cannot send a
+  // second owner ask while this DM is in flight or its delivery is uncertain.
+  updateJson<Ledger>(file("ledger.json"), EMPTY, ledger => {
+    unchanged(request, ledger.requests.find(r => r.id === request.id)!);
+    const next = updateRequest(ledger, request.id, { pendingOwner }, Date.now());
+    return { requests: next.requests.map(r => r.id === request.id ? { ...r, lastNudge: {
+      fingerprint: nudgeFingerprint("question" in pendingOwner ? "owner-question" : "time-approval", pendingOwner.askedAt),
+      at: new Date(Date.now()).toISOString(),
+    } } : r) };
+  });
   // Keep the slot on an uncertain send so another turn cannot duplicate it.
   try {
     const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
