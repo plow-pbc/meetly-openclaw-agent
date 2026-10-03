@@ -1,7 +1,7 @@
 import { cp, mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
-// Meetly's setup gate plugin (plugin/). The base owns plugins.load, so the
+// Meetly's scheduling and setup gate plugin (plugin/). The base owns plugins.load, so the
 // plugin sits in the state volume's global plugin root, where OpenClaw
 // discovers it. The image holds the real copy, root-owned; preboot replaces
 // the volume's copy on every boot, so an edit made there does not survive a

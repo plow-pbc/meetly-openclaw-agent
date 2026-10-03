@@ -7,8 +7,8 @@
 //  - the model (llm.ts) and the setup gate (gate.ts), in agents.defaults and
 //    plugins.entries, the part of openclaw.json the base leaves to the owner.
 //
-// A failure in Meetly's own additions leaves them out and still boots; the
-// base's steps fail exactly as the base's boot does.
+// The scheduling plugin is required: installation must succeed before boot.
+// The base's steps fail exactly as the base's boot does.
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -22,6 +22,9 @@ const INCLUDES = "/etc/plow/openclaw";
 const load = (path: string) => import(path);
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+// Do not start a gateway that advertises guest tools it cannot provide.
+await installGate().catch(error => { throw new Error(`meetly-boot: required plugin install failed: ${message(error)}`); });
 
 try {
   const { installBootLog } = await load("/opt/plow/boot/log.js");
@@ -49,30 +52,21 @@ try {
   const prompt = await readFile("/opt/plow/prompt/AGENTS.md", "utf8");
   await writeFile("/var/lib/plow/workspace/AGENTS.md", await renderPrompt(prompt, identity.mcp_url, process.env.PLOW_AGENT_TOKEN, config.channels.plow.threadTrust, identity.agent?.web_url));
 
+  const { route, problem } = llmRoute();
+  if (problem) console.error(`meetly-boot: llm: ${problem}`);
+  const JSON5 = createRequire("/opt/plow/package.json")("json5");
+  let owner: Record<string, unknown>;
   try {
-    await installGate();
+    owner = JSON5.parse(await readFile(CONFIG, "utf8"));
   } catch (error) {
-    console.error(`meetly-boot: setup gate not installed, the prompt fallback applies: ${message(error)}`);
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    // A fresh volume: seed it as the base would, so the first gateway already runs on Luna.
+    owner = structuredClone(config);
   }
-  try {
-    const { route, problem } = llmRoute();
-    if (problem) console.error(`meetly-boot: llm: ${problem}`);
-    const JSON5 = createRequire("/opt/plow/package.json")("json5");
-    let owner: Record<string, unknown>;
-    try {
-      owner = JSON5.parse(await readFile(CONFIG, "utf8"));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      // A fresh volume: seed it as the base would, so the first gateway already runs on Luna.
-      owner = structuredClone(config);
-    }
-    applyGate(applyRoute(owner, route, base));
-    await writeFile(`${CONFIG}.tmp`, JSON.stringify(owner, null, 2) + "\n", { mode: 0o600 });
-    await rename(`${CONFIG}.tmp`, CONFIG);
-    console.log(`meetly-boot: llm ${route.provider} ${route.primary}${route.fallbacks.length ? ` (fallback ${route.fallbacks.join(", ")})` : ""}`);
-  } catch (error) {
-    console.error(`meetly-boot: llm config left as it was: ${message(error)}`);
-  }
+  applyGate(applyRoute(owner, route, base));
+  await writeFile(`${CONFIG}.tmp`, JSON.stringify(owner, null, 2) + "\n", { mode: 0o600 });
+  await rename(`${CONFIG}.tmp`, CONFIG);
+  console.log(`meetly-boot: llm ${route.provider} ${route.primary}${route.fallbacks.length ? ` (fallback ${route.fallbacks.join(", ")})` : ""}`);
 
   await syncConfig(config, CONFIG, INCLUDES);
   console.log(`plow-boot: identity resolved to ${identity.line.uid}`);

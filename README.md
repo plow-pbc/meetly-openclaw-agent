@@ -166,8 +166,9 @@ message is skipped.
   never depends on the model remembering to check. The base owns
   `plugins.load`, so the plugin sits in the state volume's global plugin root
   (`/var/lib/plow/extensions/meetly`), copied there from the image on every
-  boot. The owner's name comes from their Plow profile and the time zone from
-  their Mac through Latch; setup asks only what neither can answer.
+  boot. The scheduling plugin is required: installation or configuration
+  failure prevents gateway startup. The owner's name comes from their Plow
+  profile and the time zone from their Mac through Latch; setup asks only what neither can answer.
 - **Schedule.** One OpenClaw scheduler job (`openclaw cron`), `meetly-poll`:
   an isolated agent turn every five minutes with no automatic delivery,
   registered by `register-crons.ts` when setup finishes. It lives in the state
@@ -175,15 +176,19 @@ message is skipped.
 - **Chat.** Your phone DM is the main session and runs setup. A group Meetly
   opened is recognized from its ledger and handled as that one meeting.
 - **Opening groups.** Only in the owner's DM, with the base's
-  `plow_start_thread`; the image makes every group trusted. An uncertain
+  `plow_start_thread`; new groups are untrusted. Guests receive the six
+  scheduling tools in `PLOW_GUEST_TOOLS`; owner turns keep full tools. Existing
+  trusted groups keep their grants until the owner changes them. An uncertain
   delivery is recorded without a chat and never retried automatically; Meetly
   may retry after the owner explicitly clears the recorded attempt. Meeting
   confirmations and approval asks stay in that group; the owner is a participant.
 - **Scripts.** Small TypeScript CLIs in `skills/meetly/scripts/`, run directly
   by the image's Node (`node <script>.ts`, no build): setup, the message
   cursor, the request ledger, busy/free-slot math in your time zone, cron
-  registration and the owner-DM lookup. The model
-  decides; the scripts count.
+  registration and the owner-DM lookup. Guest tools use the same request-locked
+  calendar writer as owner and poll flows. Guest identity uses exact canonical
+  phone/email and chat matching; contact lookup can still match phone suffixes.
+  The model decides; the scripts count.
 - **State.** `/var/lib/plow/meetly`: `config.json` (your setup),
   `cursor.json` (last message read), `ledger.json` (requests, offered times,
   hold ids). Writes are atomic and locked.
@@ -262,7 +267,7 @@ npm test            # node --test
 ```
 
 Node 24.16 or newer. The OpenClaw runtime (`2026.9.6`) comes from the base
-image, pinned by digest.
+image, pinned by digest (`1cf8e57e` in `Dockerfile`).
 
 ### Bumping the base image
 
