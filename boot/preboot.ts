@@ -73,8 +73,6 @@ try {
   await writeFile(`${CONFIG}.tmp`, JSON.stringify(owner, null, 2) + "\n", { mode: 0o600 });
   await rename(`${CONFIG}.tmp`, CONFIG);
 
-  // TODO: Migrate existing trusted Meetly groups before gateway startup once policy is decided.
-
   await syncConfig(config, CONFIG, INCLUDES);
   console.log(`plow-boot: identity resolved to ${identity.line.uid}`);
   startAgentIndex(300_000, writeLog);

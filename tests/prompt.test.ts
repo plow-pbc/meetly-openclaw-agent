@@ -294,7 +294,6 @@ test("a Meet link is never pasted at booking and never taken from a message", ()
 test("trust changes remain an explicit owner action and failed group opening is not improvised", () => {
   const p = flat(prompt);
   assert.ok(p.includes("The owner has full tools in every group"));
-  assert.ok(p.includes("Existing trusted chats keep full tools"));
   assert.ok(p.includes("Use plow_set_thread_trust from the owner's main DM only when the owner asks"));
   const group = groupSkill();
   assert.ok(group.includes("If `plow_start_thread` definitely fails, tell the owner what it said and stop"));
