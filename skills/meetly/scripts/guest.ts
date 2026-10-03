@@ -106,8 +106,13 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
   let { slots } = exact ? { slots: [exact] } : findSlots(query);
   const preferencesUnavailable = slots.length === 0;
-  if (preferencesUnavailable) slots = findSlots({ ...query, ...intersectConstraints(request.constraints),
-    from: narrowed.from, to: narrowed.to, days: request.constraints?.days as Day[] | undefined }).slots;
+  if (preferencesUnavailable) {
+    const fallback = { ...query, ...intersectConstraints(request.constraints), days: request.constraints?.days as Day[] | undefined };
+    if (preferred.from && preferred.to && preferred.from < preferred.to) {
+      slots = findSlots({ ...fallback, from: narrowed.from, to: narrowed.to }).slots;
+    }
+    if (!slots.length) slots = findSlots(fallback).slots;
+  }
   if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
   const { origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {
