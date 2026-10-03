@@ -176,7 +176,9 @@ async function pick(request: Request, config: Config, start: string) {
 async function otherTimes(request: Request, config: Config, args: GuestArgs) {
   const now = Date.now();
   const busy = await busyFor(request, config, localIso(now, config.timezone), localIso(now + (config.horizonDays + 1) * 86_400_000, config.timezone));
-  const narrowed = intersection(request.constraints, preferences(args));
+  const ownerGroupAlternative = request.origin === "owner" && request.startedInGroup === true && request.offered.some(o => o.alternative === true);
+  const conditions = ownerGroupAlternative ? { ...request.constraints, from: undefined, to: undefined } : request.constraints;
+  const narrowed = intersection(conditions, preferences(args));
   const query: SlotQuery = { ...busy, ...narrowed, days: narrowed.days as Day[] | undefined, now, config,
     durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
   let { slots } = findSlots(query);
@@ -196,7 +198,8 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs) {
         ...(checked.overlap ? ["--confirm-conflict"] : [])]);
       if (output === undefined) continue;
       const event = parseEvent(output);
-      offered.push({ start: event.start, end: event.end, holdId: event.id, account: config.defaultAccount });
+      offered.push({ start: event.start, end: event.end, holdId: event.id, account: config.defaultAccount,
+        ...(ownerGroupAlternative ? { alternative: true } : {}) });
     }
     if (!offered.length) return { error: "No replacement holds could be created. The previous times need rechecking before booking." };
     request = patch(request, { offered });

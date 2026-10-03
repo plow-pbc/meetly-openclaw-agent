@@ -226,6 +226,45 @@ for (const allowed of [true, false]) test(`pick rechecks conflicts; owner-approv
   else assert.deepEqual(writes, []);
 });
 
+for (const scenario of ["owner-group alternative", "owner-group original", "owner-DM alternative", "inbound alternative"]) {
+  test(`other times relax the requested date only for an ${scenario}`, async t => {
+    const f = fixture(t);
+    const request = f.ledger.requests[0]!;
+    request.origin = scenario === "inbound alternative" ? "inbound" : "owner";
+    request.startedInGroup = scenario !== "owner-DM alternative";
+    request.constraints = { days: ["mon", "tue"], after: "10:00", before: "12:30", from: "2026-10-06", to: "2026-10-06" };
+    request.offered = request.offered.map(offer => ({ ...offer, alternative: scenario !== "owner-group original" }));
+    f.events.set("busy", event("busy", "2026-10-05T10:30:00Z", "2026-10-05T11:00:00Z"));
+    f.save(f.ledger);
+    const args = { days: ["mon", "wed"], after: "09:00", before: "12:00", from: "2026-10-05", to: "2026-10-07" };
+    const result = await guestAction(context, "other_times", args);
+    if (scenario !== "owner-group alternative") {
+      assert.ok("error" in result);
+      assert.deepEqual(f.read(), f.ledger);
+      assert.ok(f.commands.every(c => c[2] === "events"));
+      return;
+    }
+    assert.ok(!("error" in result), JSON.stringify(result));
+    assert.ok(f.request().offered.length > 0);
+    for (const offer of f.request().offered) {
+      assert.equal(offer.start.slice(0, 10), "2026-10-05");
+      assert.ok(offer.start.slice(11, 16) >= "11:00" && offer.end.slice(11, 16) <= "12:00");
+      assert.equal(offer.alternative, true);
+    }
+    const next = await guestAction(context, "other_times", { ...args, before: "15:00" });
+    assert.ok(!("error" in next), JSON.stringify(next));
+    assert.ok(f.request().offered.length > 0);
+    for (const offer of f.request().offered) {
+      assert.equal(offer.start.slice(0, 10), "2026-10-05");
+      assert.ok(offer.start.slice(11, 16) >= "10:00" && offer.end.slice(11, 16) <= "12:30");
+      assert.equal(offer.alternative, true);
+    }
+    const picked = await guestAction(context, "pick", { start: f.request().offered[0]!.start });
+    assert.ok(!("error" in picked), JSON.stringify(picked));
+    assert.equal(f.request().status, "booked");
+  });
+}
+
 test("other times intersect guest preferences with owner conditions and replace holds with a cleanup retry record", async t => {
   const f = fixture(t); f.fail.add("hold-two");
   const result = await guestAction(context, "other_times", { days: ["mon", "tue", "wed"], after: "09:00", before: "12:00", from: "2026-10-01", to: "2026-10-31" });
