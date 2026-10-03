@@ -178,6 +178,42 @@ test("pick books the chosen hold with fixed arguments, records the event, and de
   assert.deepEqual(f.commands.filter(c => c[2] === "delete"), [["plow-gog", "calendar", "delete", "primary", "hold-two", "--send-updates", "none", "--force", "--account", "owner@example.com"]]);
 });
 
+test("guest tool results retain the owner-in-group detail policy through booking", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.startedInGroup = true; f.save(f.ledger);
+  assert.equal((await guestAction(context, "view") as { startedInGroup?: boolean }).startedInGroup, true);
+  const result = await guestAction(context, "pick", { start: offers[0]!.start }) as { startedInGroup?: boolean; format?: string };
+  assert.equal(result.startedInGroup, true);
+  assert.equal(result.format, "unknown");
+  assert.equal(f.request().status, "booked");
+});
+
+for (const alternative of [true, false]) test(`a guest can pick only an explicitly offered owner-group alternative: ${alternative}`, async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.startedInGroup = true;
+  request.constraints = { from: "2026-10-06", to: "2026-10-06" };
+  request.offered = request.offered.map((offer, i) => i === 0 ? { ...offer, alternative } : offer);
+  f.save(f.ledger);
+  const result = await guestAction(context, "pick", { start: offers[0]!.start });
+  assert.equal("error" in result, !alternative);
+  assert.equal(f.request().status, alternative ? "booked" : "offered");
+});
+
+for (const blockedBy of ["busy", "hours"]) test(`owner-group alternatives still respect ${blockedBy}`, async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.startedInGroup = true;
+  const start = blockedBy === "hours" ? "2026-10-05T20:00:00Z" : offers[0]!.start;
+  const end = blockedBy === "hours" ? "2026-10-05T20:30:00Z" : offers[0]!.end;
+  request.offered = [{ ...offers[0]!, start, end, alternative: true }];
+  if (blockedBy === "busy") f.events.set("conflict", event("private", start, end));
+  f.save(f.ledger);
+  assert.ok("error" in await guestAction(context, "pick", { start }));
+  assert.equal(f.request().status, "offered");
+  assert.ok(f.commands.every(c => c[2] === "events"));
+});
+
 for (const allowed of [true, false]) test(`pick rechecks conflicts; owner-approved=${allowed}`, async t => {
   const f = fixture(t);
   f.events.set("conflict", event(allowed ? "approved" : "not-approved", offers[0]!.start, offers[0]!.end));

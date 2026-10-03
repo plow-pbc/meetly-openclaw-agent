@@ -13,7 +13,7 @@ import { readJson, updateJson } from "./store.ts";
 // `asked`: a request seen in the owner's messages, waiting for the owner's
 // yes before anyone is contacted. It has no offered times, holds or chat.
 export type Status = "asked" | "offered" | "booked" | "dropped" | "expired";
-export type Offer = { start: string; end: string; holdId?: string; account: string };
+export type Offer = { start: string; end: string; holdId?: string; account: string; alternative?: boolean };
 export type HoldRef = { holdId: string; account: string };
 // One question or out-of-hours time waiting for the owner's answer.
 export const OWNER_QUESTION_LIMIT = 500;

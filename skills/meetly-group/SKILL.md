@@ -55,8 +55,10 @@ free there.
      Relax only the requested date/time for this alternative search; keep
      the saved `constraints` and any other owner conditions. Stay within
      the configured days, hours and calendar coverage. Hold and offer those
-     alternatives here; if none exist, say there are no available times in
-     that range and stop.
+     alternatives here, saving `alternative: true` on each such `offered[]`
+     slot so the guest can choose it despite the original date/time. Do not
+     mark other offers this way. If none exist, say there are no available
+     times in that range and stop.
    - **`degraded` is not empty:** never claim the owner is free on those
      accounts. Tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.

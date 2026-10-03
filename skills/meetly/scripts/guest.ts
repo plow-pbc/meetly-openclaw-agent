@@ -50,6 +50,7 @@ function view(request: Request, config: Config) {
   const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });
   return {
     status: request.status, ownerName: config.ownerName, timezone: config.timezone,
+    startedInGroup: request.startedInGroup === true,
     topic: request.topic, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
     offered: request.status === "offered" ? request.offered.map(time) : [],
     ...(request.booked ? { booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
@@ -146,7 +147,8 @@ async function pick(request: Request, config: Config, start: string) {
   const offer = request.offered.find(o => Date.parse(o.start) === Date.parse(start));
   if (!offer) return { error: "Choose one of the currently offered start times." };
   const checked = await check(request, config, offer.start);
-  if (!checked.free || checked.outsideHours || !withinConditions(request, offer.start, config)) return { error: "That time is no longer available. Ask for other times." };
+  const ownerGroupAlternative = request.origin === "owner" && request.startedInGroup === true && offer.alternative === true;
+  if (!checked.free || checked.outsideHours || (!ownerGroupAlternative && !withinConditions(request, offer.start, config))) return { error: "That time is no longer available. Ask for other times." };
   let holdId = offer.holdId;
   if (holdId) {
     const existing = await calendar(["event", "primary", holdId, "--account", offer.account, "--json"]);
