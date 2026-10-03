@@ -22,6 +22,7 @@ function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
   const sender = ctx.requesterSenderId;
   if (ctx.messageChannel !== "plow" || ctx.agentAccountId !== "chat" || !chat || !sender) return;
   const linked = findByChat(ledger, chat);
+  if (linked?.status === "booked" && sameHandle(linked.handle, sender)) return linked;
   const open = findOpenByHandle(ledger, sender, ["offered"]);
   if (open && ((open.chatUid && open.chatUid !== chat) || (linked?.status === "offered" && linked.id !== open.id))) return;
   const request = open ?? linked;

@@ -320,14 +320,17 @@ test("ask-owner rejects malformed or unscoped questions without sending", async 
   assert.deepEqual(f.commands, []);
 });
 
-test("a booked meeting can have a general question without changing the booking", async t => {
+test("a booked meeting can ask the owner even when the guest has an offer in another chat", async t => {
   const f = fixture(t);
-  f.ledger.requests[0]!.status = "booked"; f.save(f.ledger);
+  f.ledger.requests[0]!.status = "booked";
+  f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "other", status: "offered", chatUid: "other-chat" });
+  f.save(f.ledger);
   const result = await f.tools.get("meetly_ask_owner")!.execute("ask", { question: "Which entrance?" });
   assert.doesNotMatch(result.content[0]!.text, /error/);
   assert.equal(f.request().status, "booked");
   assert.deepEqual(f.commands, []);
   assert.equal(f.deliveries.length, 1);
+  assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
 });
 
 test("format before and after booking updates the event and records only the backend Meet link", async t => {
@@ -366,7 +369,7 @@ for (const scenario of ["different open request in chat", "sender offer linked e
   if (scenario === "different open request in chat") f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "different", handle: "+15557654321" });
   else if (scenario === "sender offer linked elsewhere") {
     f.ledger.requests[0]!.chatUid = "another-chat";
-    f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "closed", status: "booked", chatUid: context.nativeChannelId });
+    f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "closed", status: "booked", chatUid: context.nativeChannelId, handle: "+15557654321" });
   } else { f.ledger.requests[0]!.status = "asked"; delete f.ledger.requests[0]!.chatUid; }
   f.save(f.ledger);
   for (const [action, args] of actions) assert.match(JSON.stringify(await guestAction(context, action, args)), /No scheduling request matches/);

@@ -330,20 +330,6 @@ test("pending questions validate, list for offered and booked meetings, and clea
   assert.deepEqual(pendingOwnerList(l), []);
 });
 
-test("CLI lists and clears a general owner question using the existing pending command", () => {
-  const home = tmpHome();
-  const env = { MEETLY_HOME: home };
-  const id = cli("ledger.ts", ["add", "--json", JSON.stringify(input({ chatUid: "chat_1" }))], env).json.request.id;
-  const pendingOwner = { question: "Which project?", askedAt: new Date(T0).toISOString() };
-  assert.equal(cli("ledger.ts", ["update", "--id", id, "--json", JSON.stringify({ pendingOwner })], env).status, 0);
-  const pending = cli("ledger.ts", ["pending"], env).json.requests;
-  assert.equal(pending.length, 1);
-  assert.equal(pending[0].chatUid, "chat_1");
-  assert.deepEqual(pending[0].pendingOwner, pendingOwner);
-  assert.equal(cli("ledger.ts", ["update", "--id", id, "--json", '{"pendingOwner":null}'], env).status, 0);
-  assert.deepEqual(cli("ledger.ts", ["pending"], env).json.requests, []);
-});
-
 test("CLI add, find, update, expired and cleanup round-trip", () => {
   const home = tmpHome();
   const env = { MEETLY_HOME: home };
@@ -362,9 +348,14 @@ test("CLI add, find, update, expired and cleanup round-trip", () => {
   assert.deepEqual(cli("ledger.ts", ["cleanup"], env).json, { requests: [] });
   cli("ledger.ts", ["update", "--id", id, "--json", '{"holdCleanup":[{"holdId":"h1","account":"a"}]}'], env);
   assert.deepEqual(cli("ledger.ts", ["cleanup"], env).json, { requests: [{ id, holdCleanup: [{ holdId: "h1", account: "a" }] }] });
-  const pend = { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T10:30:00-03:00", askedAt: "2026-09-28T12:00:00Z" };
+  const pend = { question: "Which project?", askedAt: "2026-09-28T12:00:00Z" };
   cli("ledger.ts", ["update", "--id", id, "--json", JSON.stringify({ pendingOwner: pend })], env);
-  assert.deepEqual(cli("ledger.ts", ["pending"], env).json.requests.map((r: { id: string }) => r.id), [id]);
+  const pending = cli("ledger.ts", ["pending"], env).json.requests;
+  assert.deepEqual(pending.map((r: { id: string }) => r.id), [id]);
+  assert.equal(pending[0].chatUid, "chat_1");
+  assert.deepEqual(pending[0].pendingOwner, pend);
+  assert.equal(cli("ledger.ts", ["update", "--id", id, "--json", '{"pendingOwner":null}'], env).status, 0);
+  assert.deepEqual(cli("ledger.ts", ["pending"], env).json.requests, []);
   const dup = cli("ledger.ts", ["add", "--json", JSON.stringify(input())], env);
   assert.equal(dup.status, 1);
   assert.match(dup.stderr, /already exists/);
