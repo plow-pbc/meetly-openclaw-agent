@@ -16,21 +16,15 @@ Source: `plow-openclaw-agent` @ `1e73c82`, `plugin/index.ts`.
   inbound Plow messages. `message send` also works outside a turn: `send()`
   does not need one, and target `plow-owner` resolves the owner's DM.
 
-**Decision (owner, 2026-09-26): option 1.** The poll opens groups with
-`skills/meetly/scripts/start-thread.ts`. Turns started by a Plow message
-keep using `plow_start_thread`.
+**Decision (2026-10-02): option 2.** The poll asks the owner first, and every
+group opens with `plow_start_thread` in the owner's DM. (Until then, option
+1 was used: a Meetly script that made the same `POST /v1/chats` from the
+poll.)
 
 Options considered:
 
-1. **Script that calls the API `plow_start_thread` uses.** Add a
-   `start-thread.ts` that does the same call:
-   `POST {PLOW_API_BASE}/v1/chats`, with the bearer `PLOW_AGENT_TOKEN` and
-   `{ line_uid, members: [owner provider_key, phone], body, trusted: true, idempotency_key }`.
-   It takes `line_uid` and the owner's `provider_key` from `/v1/agents/me`,
-   like `owner-chat.ts`. This keeps "don't wait for me", but it copies base
-   plugin behaviour that could change under us, and it has no delivery-state
-   tracking. An uncertain result is treated as "uncertain delivery"
-   (§6: record without `chatUid`, never resend).
+1. **Script that calls the API `plow_start_thread` uses**, from the poll.
+   It copies base plugin behaviour that could change under us.
 2. **The poll asks the owner first.** The poll DMs the owner "X wants to set
    up Y; reply ok and I'll open the group". The owner's reply is an inbound
    message, so `plow_start_thread` works in that turn. This breaks the
@@ -39,11 +33,6 @@ Options considered:
    `plow-openclaw-agent`). This is outside this repo; the no-fork rule
    applies.
 
-Still to confirm in [LOCAL] L1 §3: the tools a cron turn
-can see, and whether `exec` gets `PLOW_API_BASE`/`PLOW_AGENT_TOKEN`.
-- `start-thread.ts` from a cron turn: the group opens with the owner and the
-  phone, `trusted: true`, and a retry with the same `--key` does not open a
-  second group.
 
 ## Meet link through Latch (local, 2026-09-29)
 

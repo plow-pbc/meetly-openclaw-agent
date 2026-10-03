@@ -46,7 +46,10 @@ Shortcuts:
    - Expect: running `m/register-crons.ts` again prints `"actions":[]`.
 3. [ ] **Inbound request.** From the second phone, iMessage the owner: "want
    to grab coffee next week?".
-   - Expect, within ~10 min: a Plow group with the owner and that phone.
+   - Expect, within ~10 min: one line in the owner's DM asking whether to
+     offer times, and nothing at all to that phone.
+   - Owner answers "yes" in the DM. Expect: a Plow group with the owner and
+     that phone.
    - Expect: the opener is in the third person, in the sender's language, and
      lists 3 labels in the sender's locale format.
    - Expect: 3 `Hold: …` events on the owner's primary calendar.
@@ -80,9 +83,10 @@ Shortcuts:
      `m/ledger.ts pending` is empty.
 8. [ ] **Email-only sender.** iMessage from an Apple ID with no phone in
    Contacts.
-   - Expect: no group, and the owner is told there is no phone number.
+   - Expect: after the owner's yes, Meetly asks for a phone in the owner's
+     DM, with no calendar read, holds or group yet.
 9. [ ] **Expiry.** Set `MEETLY_HOLD_HOURS=0.1` in compose, then make a request
-   and don't answer.
+   and approve it in the owner's DM. Leave the offered times unanswered.
    - Expect: within ~15 min the holds are deleted, the status is `expired`,
      the group is told the times were released, and the owner is told.
 10. [ ] **Mac asleep.** Put the Mac to sleep (or quit Latch) for 35 min, then

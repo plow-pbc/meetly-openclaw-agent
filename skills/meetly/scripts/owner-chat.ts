@@ -8,7 +8,6 @@ export type Participant = {
   type?: string;
   relationship?: string;
   role?: string;
-  provider_key?: string;
   display_name?: string | null;
   line?: { uid?: string };
 };

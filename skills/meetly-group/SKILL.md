@@ -1,6 +1,6 @@
 ---
 name: meetly-group
-description: Offer and hold the owner's free times, open or reuse the group, handle owner requests and owner confirmations, and run a Meetly group through to a booked meeting.
+description: Offer and hold the owner's free times, open or reuse the group, handle owner requests, asked requests and owner confirmations, and run a Meetly group through to a booked meeting.
 ---
 # Meetly group
 
@@ -30,26 +30,23 @@ free there.
 
 ## Offer times
 
-1. Resolve the person. For an inbound request, run `contact.ts --handle
-   <the handle they wrote from>`: that handle is theirs, and `name` is their
-   name (when `found` is false, or `name` is null, go on with the handle; a
-   missing card never stops the request). For an owner request, resolve them
-   with `contacts`: name and every phone (E.164) and email; then run
-   `reachable-handle.ts --handle <each phone and email>` and use the `handle`
-   it returns: the one the owner reaches them on over iMessage.
-   - `reason: "not-on-imessage"`: tell the owner in one line that <name> is
-     not on iMessage at any of their numbers or emails, so Meetly cannot reach
-     them, then stop.
-   - `reason: "mac-unavailable"`: tell the owner the Mac could not be reached
-     to check, then stop.
+1. Resolve one E.164 phone before any calendar read or hold. If none is
+   known, ask the owner for a phone; if several match, ask which one. In
+   either case, ask in the owner's main DM and end the turn.
+   Run `ledger.ts find --handle <resolved phone>`. If it has `startedAt`
+   but no `chatUid`, tell the owner a group start was already attempted and
+   stop. Only if the owner explicitly asks to clear the attempt and retry,
+   run `ledger.ts delivery --id <id> --kind start --action clear` before continuing.
 2. Read the calendar.
 3. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
-   locale>`, with the request's constraints: `--days`, `--after`, `--before`,
+   locale>`, with the request's `constraints` (the owner's) and, on its
+   first offer, its `proposed` times: `--days`, `--after`, `--before`,
    `--from`/`--to`, `--duration`, `--allow-overlap`. Slots stay inside the
    owner's days and window; constraints only narrow them.
-   - **No slots.** For an owner request, tell the owner which constraint
-     blocks it and suggest loosening it; stop. For an inbound request with
-     proposed times, run again without them and say those times don't work.
+   - **No slots.** If the person's `proposed` times block it, run again
+     without them, keeping `constraints`, and say those times don't work.
+     If `constraints` block it, tell the owner which one and suggest
+     loosening it; stop.
    - **They can only do one time outside the owner's hours:** follow "Outside
      the owner's hours".
    - **`degraded` is not empty:** never claim the owner is free on those
@@ -59,11 +56,14 @@ free there.
    conflict. If none are left, tell the owner and stop.
 5. Persist the offer immediately after the holds exist, before sending or
    opening a group. Run `ledger.ts save --json '<request>'` with every field:
-   `origin`, `handle` (the intended contact handle), `name`, `sourceRowid`,
+   `origin`, `handle` (the resolved phone), `name`, `sourceRowid`,
    `chatUid` if already known, `topic`, `location`, `durationMin`,
-   `constraints`, `allowOverlap`, `format` and `locale` (see "Meeting
+   `constraints` (only the owner's words set them; on a guest's turn, pass
+   the request's `constraints` unchanged),
+   `proposed`, `allowOverlap`, `format` and `locale` (see "Meeting
    format"), and `offered[]` with each `start`/`end`/`holdId`/`account`. `save` creates a request or updates the
-   existing open request for that person, preserving its id and existing
+   existing open request for that person; it re-keys an inbound request with
+   the same `sourceRowid` to that phone, preserving its id and existing
    `chatUid` when the new value is absent. Holds from the replaced offer are
    moved to `holdCleanup` automatically so the cleanup poll can delete them.
    If it fails, delete each hold just
@@ -71,13 +71,13 @@ free there.
    offer. If any deletion fails, report those hold ids too.
 6. Deliver the times:
    - An open request that already has a `chatUid`: post the new times there.
-   - Otherwise open a group with the person's handle and the opener: run
-     `start-thread.ts --member <handle> --body <opener> --key <key>`, with key
-     `rowid:<sourceRowid>` in the poll and `owner:<handle>:<first offered
-     start>` for an owner request. Never the `plow_start_thread` tool: it
-     gives Plow 10 s, and a group Plow takes longer to open reads as an
-     unknown delivery that withholds the rest of the turn, the owner's reply
-     included.
+   - Otherwise, in the owner's DM, run `ledger.ts delivery --id <saved request id>
+     --kind start --action begin`. If it fails, tell the owner and stop.
+     Then call `plow_start_thread` with `members: ["<resolved phone>"]` and
+     the opener as `body`.
+   - On success or unknown delivery, run `ledger.ts delivery --id <saved request id>
+     --kind start --action complete`. If that fails, tell the owner; the
+     attempt remains recorded, so never repeat the start automatically.
    - The opener: third person, in their language. Say who Meetly is and whose
      assistant, the topic, and the slot labels, then ask which works. For
      inbound requests, never claim the owner asked.
@@ -85,17 +85,18 @@ free there.
      like to meet: Google Meet or in person. When it is `in_person` with no
      `location`, it asks where. Always in that one message, never a second
      one.
-   - If `start-thread.ts` fails, tell the owner what it printed and stop:
-     never fall back to `plow_start_thread` and never edit a script. Delete
-     the new holds and mark the saved request `dropped`; if a hold cannot be
-     deleted, record its id and account in `holdCleanup` so cleanup can retry.
+   - If `plow_start_thread` definitely fails, tell the owner what it said and stop.
+     Delete the new holds and mark the saved request `dropped`; if a hold
+     cannot be deleted, record its id and account in `holdCleanup` so
+     cleanup can retry.
    - In a normal (untrusted) chat, guest turns are reply-only: do not run
      scripts or use the owner's calendar. Explain in the thread that the
      owner must approve there. If full guest tools are needed, the owner
      must ask in their main DM to make the group trusted; only there can
      `plow_set_thread_trust` change the group's trust.
-   - If delivery is unknown (`deliveryUnknown`), continue without `chatUid`
-     and tell the owner. Never resend.
+   - If delivery is unknown, continue without `chatUid` and tell the owner.
+     Never retry automatically; retry only after the owner explicitly clears
+     the recorded attempt (step 1).
    - After a group opens, run `ledger.ts update --id <saved request id>
      --json '{"chatUid":"<chat uid>"}'` immediately. If that update fails,
      report the error and the chat uid to the owner; do not claim the group is
@@ -107,9 +108,8 @@ free there.
 
 In the owner's DM:
 
-1. Look the person up with `contacts`, including all their handles. If more
-   than one contact matches, or there is no phone or email, ask the owner and end the
-   turn.
+1. Look the person up with `contacts` and resolve the recipient ("Offer
+   times" step 1). If more than one contact matches, ask the owner and end the turn.
 2. Extract the topic, days or dates, time range, duration, location, the
    format ("Meeting format"), and any events the owner says may be
    overlapped ("you can override Weekly Claw").
@@ -120,6 +120,21 @@ In the owner's DM:
    ("Offer times" step 5).
 5. Follow "Offer times" with `origin: owner`.
 6. Reply to the owner in one line: group opened, times offered and held.
+
+## Asked requests
+
+The poll saves a meeting request it finds in the owner's messages as
+`asked` and asks the owner about it in the owner's DM. Nobody is contacted
+until the owner says yes there. When the owner answers, run `ledger.ts
+asked` and match their answer to a request; if it could be more than one,
+ask which and end the turn.
+
+- **Yes:** follow "Offer times" with `origin: inbound`, the request's
+  `name`, `sourceRowid`, `topic`, `format`, `locale` and `proposed`, and
+  `constraints` set to any conditions the owner gave with the yes. Saving
+  the offer turns the request into `offered` under the same id.
+- **No:** run `ledger.ts update --id <id> --json '{"status":"dropped"}'`.
+  Send nothing to the person.
 
 ## Meeting format
 
@@ -215,7 +230,7 @@ the meeting thread to answer there, and make no calendar changes.
 waiting for the owner's answer to an out-of-hours time. It does not find a
 contact's open offer. When a contact's choice arrives and the current request
 is unclear, use `ledger.ts find --chat <this chat uid>` and
-`ledger.ts find --handle <contact handle>`; the handle lookup returns the
+`ledger.ts find --handle <contact handle> --status offered`; the handle lookup returns the
 current open (`offered`) request. Never use `pending` to look up a contact's
 offer.
 
@@ -228,7 +243,7 @@ offer.
   and do not alert the owner. Only handle scheduling-related messages below.
 - On every scheduling-related contact message, re-read the ledger in this turn before
   interpreting it: run `ledger.ts find --chat <this chat uid>` and
-  `ledger.ts find --handle <sender handle>`. A previous turn's request object
+  `ledger.ts find --handle <sender handle> --status offered`. A previous turn's request object
   or status is stale. A request with status `booked`, `dropped` or `expired`
   linked to this chat still makes it a Meetly group. Prefer the open
   (`offered`) handle match as the current request, even when the chat lookup
@@ -253,7 +268,7 @@ offer.
   create, change, or delete holds until the request is identified.
 - **Pick** (a time, or "the first one works"):
   1. Re-run both `ledger.ts find --chat <this chat uid>` and
-     `ledger.ts find --handle <sender handle>` now, even if either command
+     `ledger.ts find --handle <sender handle> --status offered` now, even if either command
      already ran earlier in this turn. Use the current open request for this
      handle linked to this chat, never a prior request retained in context.
      If neither lookup identifies that request, follow **No matching
@@ -276,8 +291,8 @@ offer.
      yet" when it is `unknown`, and that no reminder will go out when
      `record-booking.ts` warned `no-meet-link`.
 - **Another day or time:** delete the current holds. Run `slots.ts` narrowed
-  to what they said (plus the owner's original constraints for
-  `origin: owner`), hold again, offer again, and update `offered`.
+  to what they said plus the request's `constraints`, hold again, offer
+  again, and update `offered`.
 - **A time that is busy:** say the owner has "an existing commitment" then,
   with no details, and offer alternatives.
 - **Only a time outside the owner's hours:** follow "Outside the owner's

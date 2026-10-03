@@ -15,11 +15,12 @@ exits non-zero: report that line; never guess a result. State lives in
 | `record-setup.ts` | `--field F --value V` \| `--done` | before setup `{saved, next, question}`; after `{saved, config}`; `--done` → `{done, config, crons}` |
 | `register-crons.ts` | `[--pause \| --resume]` | `{paused, actions}` |
 | `cursor.ts` | `get` \| `set <rowid>` \| `hold <rowid>` \| `release` \| `fail` \| `ok` | the cursor `{rowid, held?, …}`; `set` stops below `held` until the ledger has a request with that `sourceRowid`; `fail` → `{failingSince, warn}` |
-| `ledger.ts` | `find --handle H` \| `find --chat U` | `{request}` or `{request:null}` |
+| `ledger.ts` | `find --handle H [--status asked\|offered]` \| `find --chat U` | `{request}` or `{request:null}` |
 | | `add --json '<obj>'` \| `--json-file F` | `{request}` (refused if the person already has an open request) |
-| | `save --json '<obj>'` \| `--json-file F` | `{request}` (creates, or replaces the current open offer for that handle while preserving its id and chat link) |
+| | `save --json '<obj>'` \| `--json-file F` | `{request}` (creates, or replaces the current open offer by handle or inbound `sourceRowid`, re-keying it to the supplied handle and preserving its id, chat link and delivery state; `status:"asked"` changes nothing if one is open) |
 | | `update --id X --json '<patch>'` | `{request}`; patch keys: `status, chatUid, eventId, offered, holdCleanup, name, location, allowOverlap, constraints, topic, pendingOwner, format, locale, booked, meetUrl, reminder` (`null` clears `pendingOwner`, `booked`, `meetUrl`, `reminder`) |
-| | `expired [--hours N]` \| `pending` \| `cleanup` | `{requests}` |
+| | `expired [--hours N]` \| `asked [--unnotified]` \| `pending` \| `cleanup` | `{requests}` (`--unnotified` selects asked requests without `notifiedAt`) |
+| | `delivery --id X --kind notify\|start --action begin\|complete\|clear` | `{request}`; `begin` records `notifyAttemptedAt`/`startedAt`; `complete` records `notifiedAt`/`startCompletedAt` after success or unknown delivery. Notices retry until completed; starts refuse a second attempt. `clear` is only for an unlinked start, on the owner's explicit instruction. Delivery fields cannot be set through `save` or `update`. |
 | | `reminders [--lead-min N]` | `{requests}`: booked Meets whose link is due (default 10 min before, until 5 min after the start) |
 | `event.ts` | `--in F` | `{id, status, start, end, meetUrl}` from a saved `plow-gog calendar create/update/event --json` output |
 | `record-booking.ts` | `--id X --event-file F --account A` | `{request, meetUrl, warning?:"no-meet-link"}`: marks the request booked from the event |
@@ -30,9 +31,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | `slots.ts` | `--in busy.json [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-overlap ID]… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], unknownAfter?, degraded}` |
 | | `--in busy.json --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--duration N] [--allow-overlap ID]… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
 | `owner-chat.ts` | | `{chatUid}`: the owner's DM |
-| `start-thread.ts` | `--member <+E164 or email> [--member …] --body TEXT --key K` | `{chatUid, messageSent:true}` or `{chatUid:null, deliveryUnknown:true}` |
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
-| `reachable-handle.ts` | `--handle <+E164 or email> [--handle …]` | `{handle, via:"iMessage"}`, `{handle:null, reason:"not-on-imessage", services}` or `{handle:null, reason:"mac-unavailable"}` |
 
 Notes:
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.
@@ -46,11 +45,3 @@ Notes:
   weekday yourself. Pass `--locale` for whoever reads the message (the other
   person's locale, like `pt-BR` or `en-US`, from their language or their
   phone's country code).
-- The line sends over iMessage only. A phone that is not on iMessage (an
-  Android, an RCS or SMS contact) gets nothing, and Plow still reports it as
-  sent. `reachable-handle.ts` asks the owner's Messages archive which of a
-  person's handles is on iMessage; use the handle it returns.
-- `start-thread.ts` opens every Meetly group, in the poll and for the owner.
-  It gives Plow 30 s and reports an unknown delivery without failing the
-  turn; the `plow_start_thread` tool gives it 10 s and, on a slow Plow,
-  withholds the turn's reply to the owner.

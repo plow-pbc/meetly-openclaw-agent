@@ -1,8 +1,8 @@
 # Meetly
 
 Your scheduling assistant, on a text thread. When someone asks to meet you,
-Meetly opens a group with them, offers your free times, holds them on your
-calendar and books the one they pick. You receive the confirmation in the same group.
+Meetly asks you first; when you say yes, it opens a group with them, offers
+your free times, holds them on your calendar and books the one they pick. You receive the confirmation in the same group.
 
 An [OpenClaw](https://github.com/openclaw/openclaw) agent on
 [Plow Chat](https://howto.plow.co/). It is one person's assistant: your days,
@@ -16,7 +16,8 @@ your hours, your calendars, set once in a short chat.
 
 Every five minutes Meetly reads your new iMessages on your Mac, through
 [Latch](https://howto.plow.co/latch). When someone is trying to set something
-up with you — "coffee next week?" — it:
+up with you — "coffee next week?" — it asks you in your DM whether to offer
+times. Nobody hears from Meetly until you say yes. Then it:
 
 1. opens a Plow group with you and that person,
 2. offers three free times from your Google Calendar, inside the days and
@@ -29,7 +30,8 @@ up with you — "coffee next week?" — it:
 6. posts the Meet link in the group 10 minutes before the start,
 7. confirms in the group, where both you and the other person receive it.
 
-It does not wait for you. If you are busy, the meeting still gets booked.
+Once you say yes, it does not wait for you: if you are busy, the meeting
+still gets booked.
 
 You can also ask it directly: *"set up lunch with Patrick next week — it can go
 over Weekly Claw"*. Meetly finds Patrick in your contacts, respects what you
@@ -172,15 +174,15 @@ message is skipped.
   volume and survives restarts and rebuilds.
 - **Chat.** Your phone DM is the main session and runs setup. A group Meetly
   opened is recognized from its ledger and handled as that one meeting.
-- **Opening groups.** Meetly uses `start-thread.ts` for owner requests and
-  the scheduled poll. It calls `POST /v1/chats` with the owner plus the
-  contact, trusted, and an idempotency key. An uncertain delivery is
-  recorded without a chat and never resent. Meeting confirmations and
-  approval asks stay in that group; the owner is a participant.
+- **Opening groups.** Only in the owner's DM, with the base's
+  `plow_start_thread`; the image makes every group trusted. An uncertain
+  delivery is recorded without a chat and never retried automatically; Meetly
+  may retry after the owner explicitly clears the recorded attempt. Meeting
+  confirmations and approval asks stay in that group; the owner is a participant.
 - **Scripts.** Small TypeScript CLIs in `skills/meetly/scripts/`, run directly
   by the image's Node (`node <script>.ts`, no build): setup, the message
   cursor, the request ledger, busy/free-slot math in your time zone, cron
-  registration, the owner-DM lookup and the poll's group start. The model
+  registration and the owner-DM lookup. The model
   decides; the scripts count.
 - **State.** `/var/lib/plow/meetly`: `config.json` (your setup),
   `cursor.json` (last message read), `ledger.json` (requests, offered times,
@@ -223,8 +225,8 @@ Meetly reads your messages, so use it on an install only you talk to.
 
 - Only direct iMessage chats; group chats and email requests are not read.
 - One person per request.
-- A sender known only by an email (no phone number) cannot get a group; Meetly
-  tells you instead.
+- Groups require a phone number; Meetly asks you for one before reading the
+  calendar or creating holds if only an email is known.
 - Rescheduling or cancelling a meeting that is already booked is left to you.
 - If the model provider is unreachable, that five-minute check is skipped and
   the next one catches up from the same cursor.
@@ -277,9 +279,7 @@ Pick a newer `base-<sha>` tag and its digest from the
    fails on a base step preboot does not have. Drop `boot/mcp.ts` once the
    base sets the relay's `requestTimeoutMs` itself.
 4. Re-check `compose.yml` and `dev/Caddyfile` against the base.
-5. Re-read the base's `plugin/index.ts` for `plow_start_thread`:
-   `start-thread.ts` mirrors its `POST /v1/chats`.
-6. Run `npm test`.
+5. Run `npm test`.
 
 ## License
 

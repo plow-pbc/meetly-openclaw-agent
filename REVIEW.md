@@ -7,8 +7,9 @@ themselves and is deliberately not restated here.
 ## What this repo is
 
 **One agent**: Meetly, a scheduling assistant that reads the owner's
-iMessages through Latch, opens a Plow group with whoever wants to meet, and
-books the meeting on the owner's Google Calendar. It is the prompt
+iMessages through Latch, asks the owner about whoever wants to meet, opens a
+Plow group once they say yes, and books the meeting on the owner's Google
+Calendar. It is the prompt
 (`prompt/AGENTS.md`), the `meetly-*` skills and their scripts, a setup-gate
 plugin, and a boot that runs on a pinned base. The runtime underneath
 (OpenClaw, boot, identity, the Plow channel) is `plow-pbc/plow-openclaw-agent`.
