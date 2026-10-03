@@ -156,7 +156,9 @@ test("every Meetly group is opened with plow_start_thread from the owner's DM", 
   const group = groupSkill();
   assert.ok(flat(prompt).includes("Meetly opens a group only with plow_start_thread, from the owner's main DM"));
   assert.ok(group.includes("Then call `plow_start_thread` with `members: [\"<resolved phone>\"]` and the opener as `body`."));
-  assert.ok(group.includes("If delivery is unknown, continue without `chatUid` and tell the owner. Never resend."));
+  assert.ok(group.includes("If delivery is unknown, continue without `chatUid` and tell the owner. Never retry automatically; retry only after the owner explicitly clears the recorded attempt (step 1)."));
+  assert.ok(group.includes("attempt remains recorded, so never repeat the start automatically"));
+  assert.ok(flat(readFileSync(join(ROOT, "README.md"), "utf8")).includes("never retried automatically; Meetly may retry after the owner explicitly clears the recorded attempt"));
   assert.ok(flat(prompt).includes("Never send through the owner's Messages app or any iMessage tool on their Mac."));
   const all = [prompt, ...skillFiles.map((s) => readFileSync(s.path, "utf8"))].map(flat).join(" ");
   assert.doesNotMatch(all, /start[-]thread|reachable[-]handle|not[-]on[-]imessage|10 s\b|over iMessage/);
@@ -169,7 +171,7 @@ test("offers re-key to the resolved phone and group starts require a ledger atte
   assert.ok(offer.includes("re-keys an inbound request with the same `sourceRowid` to that phone"));
   assert.ok(offer.indexOf("--kind start --action begin") < offer.indexOf("Then call `plow_start_thread`"));
   assert.ok(offer.includes("On success or unknown delivery, run `ledger.ts delivery --id <saved request id> --kind start --action complete`"));
-  assert.ok(offer.includes("Only if the owner explicitly asks to retry"));
+  assert.ok(offer.includes("Only if the owner explicitly asks to clear the attempt and retry"));
   assert.ok(offer.includes("--kind start --action clear"));
 });
 

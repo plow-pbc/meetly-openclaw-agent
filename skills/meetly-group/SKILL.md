@@ -35,8 +35,8 @@ free there.
    either case, ask in the owner's main DM and end the turn.
    Run `ledger.ts find --handle <resolved phone>`. If it has `startedAt`
    but no `chatUid`, tell the owner a group start was already attempted and
-   stop. Only if the owner explicitly asks to retry, run `ledger.ts delivery
-   --id <id> --kind start --action clear` before continuing.
+   stop. Only if the owner explicitly asks to clear the attempt and retry,
+   run `ledger.ts delivery --id <id> --kind start --action clear` before continuing.
 2. Read the calendar.
 3. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
@@ -77,7 +77,7 @@ free there.
      the opener as `body`.
    - On success or unknown delivery, run `ledger.ts delivery --id <saved request id>
      --kind start --action complete`. If that fails, tell the owner; the
-     attempt remains recorded, so never repeat the start.
+     attempt remains recorded, so never repeat the start automatically.
    - The opener: third person, in their language. Say who Meetly is and whose
      assistant, the topic, and the slot labels, then ask which works. For
      inbound requests, never claim the owner asked.
@@ -95,7 +95,8 @@ free there.
      must ask in their main DM to make the group trusted; only there can
      `plow_set_thread_trust` change the group's trust.
    - If delivery is unknown, continue without `chatUid` and tell the owner.
-     Never resend.
+     Never retry automatically; retry only after the owner explicitly clears
+     the recorded attempt (step 1).
    - After a group opens, run `ledger.ts update --id <saved request id>
      --json '{"chatUid":"<chat uid>"}'` immediately. If that update fails,
      report the error and the chat uid to the owner; do not claim the group is

@@ -176,8 +176,9 @@ message is skipped.
   opened is recognized from its ledger and handled as that one meeting.
 - **Opening groups.** Only in the owner's DM, with the base's
   `plow_start_thread`; the image makes every group trusted. An uncertain
-  delivery is recorded without a chat and never resent. Meeting confirmations and
-  approval asks stay in that group; the owner is a participant.
+  delivery is recorded without a chat and never retried automatically; Meetly
+  may retry after the owner explicitly clears the recorded attempt. Meeting
+  confirmations and approval asks stay in that group; the owner is a participant.
 - **Scripts.** Small TypeScript CLIs in `skills/meetly/scripts/`, run directly
   by the image's Node (`node <script>.ts`, no build): setup, the message
   cursor, the request ledger, busy/free-slot math in your time zone, cron
