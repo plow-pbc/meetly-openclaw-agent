@@ -301,6 +301,12 @@ test("trust changes remain an explicit owner action and failed group opening is 
 });
 
 
+test("duration changes refresh the topic used for calendar titles and group labels", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("When the owner changes the duration, update any duration wording in `topic` and save it with the replacement offer."));
+  assert.ok(group.includes('"30-minute call" becomes "60-minute call"'));
+});
+
 test("owner approval re-check uses the saved meeting duration and meal", () => {
   const group = groupSkill();
   const approval = group.slice(group.indexOf("## Owner confirms"), group.indexOf("## Owner in the group"));

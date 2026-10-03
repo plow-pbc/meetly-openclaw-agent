@@ -47,6 +47,10 @@ Pass `--meal lunch|dinner|coffee` to `slots.ts`, including `--at`, and save `mea
 The script resolves the meal window and duration; an explicit `--duration` wins.
 Persist the search result's `durationMin` with its offered slots, rather than
 computing a duration yourself.
+When the owner changes the duration, update any duration wording in `topic`
+and save it with the replacement offer. For example, "30-minute call" becomes
+"60-minute call" when changed to an hour. The saved topic supplies calendar
+titles and the group label in owner notifications.
 
 1. Resolve one E.164 phone before any calendar read or hold. If none is
    known, ask the owner for a phone; if several match, ask which one. In
