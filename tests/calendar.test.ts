@@ -400,3 +400,31 @@ test("calendar reads reuse the wrapped and note-prefixed event parser", async t 
   await calendarAction("r_one", { action: "book", start }, { ...f.options, command });
   assert.equal(f.read().status, "booked");
 });
+
+for (const failure of ["offline", "degraded", "truncated"]) test(`an owner offer with ${failure} calendar coverage drops an unsent provisional request`, async t => {
+  const f = fixture(t);
+  writeJson(join(f.home, "ledger.json"), { requests: [] });
+  const calls: string[][] = [];
+  const command = async (cmd: MacCommand): Promise<MacOutcome | undefined> => {
+    calls.push(cmd.argv);
+    if (failure === "offline") return undefined;
+    return { output: JSON.stringify({ events: [], ...(failure === "degraded" ? { degraded: [account] } : { truncated: { after: start } }) }) };
+  };
+  await assert.rejects(offerRequest(f.offer, { ...f.options, command }), /new request dropped/);
+  assert.equal(f.read().status, "dropped");
+  assert.deepEqual(pendingCalendarWrites(), []);
+  assert.ok(calls.length > 0 && calls.every(c => c[2] === "events"), "no calendar write was sent");
+});
+
+test("an offline preflight after a hold was created keeps the journal for recovery", async t => {
+  const f = fixture(t);
+  writeJson(join(f.home, "ledger.json"), { requests: [] });
+  f.events.clear();
+  const command = async (cmd: MacCommand) => cmd.argv[2] === "events" && f.events.size ? undefined : f.command(cmd);
+  await assert.rejects(offerRequest(f.offer, { ...f.options, command }), /calendar unavailable/);
+  assert.equal(f.read().status, "offered");
+  assert.equal(pendingCalendarWrites().length, 1);
+  await calendarAction(f.read().id, { action: "resume" }, f.options);
+  assert.deepEqual(pendingCalendarWrites(), []);
+  assert.equal(f.calls.filter(c => c[2] === "create").length, 2);
+});

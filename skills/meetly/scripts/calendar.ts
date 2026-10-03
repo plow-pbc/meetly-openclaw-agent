@@ -197,12 +197,18 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         for (const account of new Set(config.calendars.map(c => c.account))) {
           const ids = config.calendars.filter(c => c.account === account).map(c => c.id);
           const output = await call(["events", "--calendars", ids.join(","), "--from", step.start, "--to", step.end, "--max", "100", "--json"], account);
-          if (output === undefined) throw new Error("calendar unavailable; no write attempted");
+          if (output === undefined) {
+            if (intent.steps.every(s => s.sentAt === undefined)) await fail();
+            throw new Error("calendar unavailable; no write attempted");
+          }
           const raw = parseCalendarObject(output) as any;
           results.push({ ...raw, events: (raw.events ?? raw.items).map((e: object) => ({ ...e, account })) });
         }
         const busy = toBusy(results, { tz: config.timezone, max: 100 });
-        if (busy.degraded.length || busy.unknownAfter) throw new Error("calendar coverage incomplete; no write attempted");
+        if (busy.degraded.length || busy.unknownAfter) {
+          if (intent.steps.every(s => s.sentAt === undefined)) await fail();
+          throw new Error("calendar coverage incomplete; no write attempted");
+        }
         const own = [...holds(requestById(id)), ...intent.steps.filter(s => s.output).map(s => ({ holdId: parseEvent(s.output!).id, account: s.account }))];
         if (request.eventId && request.booked) own.push({ holdId: request.eventId, account: request.booked.account });
         const overlaps = busy.busy.filter(b => Date.parse(b.start) < Date.parse(step.end) && Date.parse(b.end) > Date.parse(step.start));
