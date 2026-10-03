@@ -157,6 +157,16 @@ for (const [action, args] of actions) test(`${action} links the sender's unlinke
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE|owner@example.com|hold-one|hold-two|approved/);
 });
 
+test("other-times guidance offers owner approval for a time outside the meeting window", () => {
+  let description = "";
+  registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
+    const tool = factory(context); if (tool.name === "meetly_other_times") description = tool.description;
+  } });
+  assert.match(description, /outside the meeting window, offer to check with the owner/);
+  assert.match(description, /If the guest agrees, call meetly_ask_owner with start/);
+  assert.match(description, /ask for a specific date and time if needed/);
+});
+
 test("decline requires the guest's clear refusal, never an other-times refusal", () => {
   const descriptions = new Map<string, string>();
   registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
@@ -236,12 +246,17 @@ test("decline drops the open request, clears approval, deletes holds and queues 
   assert.equal(f.commands.filter(c => c[2] === "delete").length, 2);
 });
 
-test("outside-hours request records approval without creating or booking anything", async t => {
+test("an outside-hours refusal can proceed to owner approval without dropping or booking the request", async t => {
   const f = fixture(t);
+  for (const date of ["2026-10-05", "2026-10-06"]) f.events.set(date, event(date, `${date}T09:00:00Z`, `${date}T18:00:00Z`));
+  const refused = await guestAction(context, "other_times", { after: "20:00" });
+  assert.ok("error" in refused);
+  assert.deepEqual(f.read(), f.ledger);
   const result = await f.act(context, "ask_owner", { start: "2026-10-05T20:00" });
   assert.ok(!("error" in result)); assert.equal(f.request().status, "offered");
   assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T20:00:00+00:00", end: "2026-10-05T20:30:00+00:00", askedAt: new Date(now).toISOString() });
   assert.ok(f.commands.every(c => c[2] === "events"));
+  assert.equal(f.ownerLines.length, 1);
 });
 
 test("format before and after booking updates the event and records only the backend Meet link", async t => {
