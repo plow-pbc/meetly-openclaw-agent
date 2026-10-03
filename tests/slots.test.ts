@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import type { Config } from "../skills/meetly/scripts/config.ts";
 import { checkTime, findSlots, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
 import { writeJson } from "../skills/meetly/scripts/store.ts";
@@ -160,4 +160,29 @@ test("checkTime: a time the person insists on", () => {
   assert.equal(check("2026-10-03T10:00:00-03:00", { locale: "en-US" }).slot.label, "Sat, 10/3, 10:00 AM");
   assert.equal(check("2026-10-03T10:00").slot.start, "2026-10-03T10:00:00-03:00");
   assert.throws(() => check("someday"), /not a time/);
+});
+
+
+test("a busy requested time yields nearest permitted alternatives through the CLI", t => {
+  const home = tmpHome();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeJson(join(home, "config.json"), CONFIG);
+  const busyFile = join(home, "busy.json");
+  writeJson(busyFile, {
+    busy: [{ id: "commitment", start: "2026-09-28T11:30:00-03:00", end: "2026-09-28T12:30:00-03:00" }],
+    unknownAfter: "2026-09-28T14:00:00-03:00", degraded: [],
+  });
+  const args = ["--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--duration", "30",
+    "--days", "mon", "--from", "2026-09-28", "--to", "2026-09-28", "--after", "11:00", "--before", "15:00"];
+  const env = { MEETLY_HOME: home };
+  const result = cli("slots.ts", [...args, "--near", "2026-09-28T11:30:00-03:00"], env);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.json.slots.map((s: { start: string }) => s.start), [
+    "2026-09-28T11:00:00-03:00", "2026-09-28T12:30:00-03:00", "2026-09-28T13:00:00-03:00",
+  ]);
+  const later = cli("slots.ts", [...args, "--near", "2026-09-28T13:30:00-03:00"], env);
+  assert.deepEqual(later.json.slots.map((s: { start: string }) => s.start), [
+    "2026-09-28T13:30:00-03:00", "2026-09-28T13:00:00-03:00", "2026-09-28T12:30:00-03:00",
+  ]);
+  assert.equal(cli("slots.ts", [...args, "--near", "tomorrow"], env).status, 1);
 });
