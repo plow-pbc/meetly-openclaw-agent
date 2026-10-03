@@ -239,9 +239,12 @@ for (const scenario of ["owner-group alternative", "owner-group original", "owne
     const args = { days: ["mon", "wed"], after: "09:00", before: "12:00", from: "2026-10-05", to: "2026-10-07" };
     const result = await guestAction(context, "other_times", args);
     if (scenario !== "owner-group alternative") {
-      assert.ok("error" in result);
-      assert.deepEqual(f.read(), f.ledger);
-      assert.ok(f.commands.every(c => c[2] === "events"));
+      assert.ok(!("error" in result), JSON.stringify(result));
+      assert.ok(f.request().offered.length > 0);
+      for (const offer of f.request().offered) {
+        assert.equal(offer.start.slice(0, 10), "2026-10-06");
+        assert.notEqual(offer.alternative, true);
+      }
       return;
     }
     assert.ok(!("error" in result), JSON.stringify(result));

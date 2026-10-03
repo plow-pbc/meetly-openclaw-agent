@@ -184,7 +184,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs) {
   let { slots } = findSlots(query);
   const preferencesUnavailable = slots.length === 0;
   if (preferencesUnavailable) {
-    slots = findSlots({ ...query, ...intersection(request.constraints), days: request.constraints?.days as Day[] | undefined }).slots;
+    slots = findSlots({ ...query, ...intersection(conditions), days: conditions?.days as Day[] | undefined }).slots;
   }
   if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
   request = await cleanup(request, holds(request));
