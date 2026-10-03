@@ -118,6 +118,13 @@ test("guests route to their tool descriptions without loading skills or running 
   assert.doesNotMatch(prompt, /non-owner senders get replies only|Every Meetly group is trusted/);
 });
 
+test("non-owners in every group use only Meetly tools and see only free times, even in trusted groups", () => {
+  const p = flat(prompt);
+  assert.ok(p.includes("on a non-owner's turn in any group, including trusted groups, use only `meetly_*` tools"));
+  assert.ok(p.includes('Show the owner\'s calendar only as free times; busy events are "an existing commitment", never names or details.'));
+  assert.doesNotMatch(p, /act with those tools within the room's purpose|The tools available on the turn are the grant/);
+});
+
 test("Meetly introduces itself as Meetly, never by the configured name, as the owner or as a Plow assistant", () => {
   const text = flat(prompt);
   assert.ok(text.includes("Your name is Meetly, whatever name the configuration or the Plow line shows."));
