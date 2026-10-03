@@ -30,7 +30,7 @@ for (const toolName of ["meetly_ask_owner", "meetly_answer_owner"]) test(`${tool
   assert.equal(hook("message_sending", { to: "cht_MiXeD", content: "New scheduling reply" }, { ...outbound, runId: "turn-two" }), undefined);
 });
 
-test("only a Meetly tool's boolean silent result suppresses replies, including session-only outbound delivery", async () => {
+test("only a Meetly tool's boolean silent result suppresses replies in the same run", async () => {
   const hook = fixture();
   await hook("before_prompt_build", {}, turn);
   for (const event of [
@@ -43,7 +43,28 @@ test("only a Meetly tool's boolean silent result suppresses replies, including s
     assert.equal(hook("message_sending", { to: "cht_MiXeD", content: "Booked" }, outbound), undefined);
   }
   await hook("after_tool_call", { toolName: "meetly_ask_owner", result: { isError: true, details: { silent: true } } }, { sessionKey, runId: turn.runId });
-  assert.equal(hook("message_sending", { to: "cht_MiXeD", content: "Status" }, { ...outbound, runId: undefined })?.cancel, true);
+  assert.equal(hook("message_sending", { to: "cht_MiXeD", content: "Owner DM answer" }, { ...outbound, runId: undefined }), undefined);
+  assert.equal(hook("message_sending", { to: "cht_MiXeD", content: "Status" }, outbound)?.cancel, true);
   await hook("session_end", {}, { sessionKey });
   assert.equal(hook("message_sending", { to: "cht_MiXeD", content: "Later" }, outbound), undefined);
+});
+
+test("agent_end clears turn silence before a later owner DM answer reaches the group", async () => {
+  const hook = fixture();
+  await hook("before_prompt_build", {}, turn);
+  await hook("after_tool_call", { toolName: "meetly_ask_owner", result: { details: { silent: true } } }, { sessionKey, runId: turn.runId });
+  await hook("agent_end", {}, turn);
+  const reply = { to: "cht_MiXeD", content: "Patrick says to bring the slides." };
+  assert.equal(hook("message_sending", reply, outbound), undefined);
+  assert.equal(hook("message_sending", reply, { ...outbound, runId: undefined }), undefined);
+  assert.equal(hook("message_sending", reply, { ...outbound, runId: "owner-dm-run" }), undefined);
+});
+
+test("a late agent_end from an older run cannot clear the current run's silence", async () => {
+  const hook = fixture();
+  const current = { ...turn, runId: "turn-two" };
+  await hook("before_prompt_build", {}, current);
+  await hook("after_tool_call", { toolName: "meetly_ask_owner", result: { details: { silent: true } } }, current);
+  await hook("agent_end", {}, turn);
+  assert.equal(hook("message_sending", { to: "cht_MiXeD", content: "Status" }, { ...outbound, runId: current.runId })?.cancel, true);
 });

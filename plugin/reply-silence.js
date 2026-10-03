@@ -1,5 +1,5 @@
-// Outbound hooks may omit runId. Retain the current session's decision until
-// the next turn starts, including all reply chunks and same-turn retries.
+// Silence applies only to outgoing messages from the same active run.
+// A later owner answer can target this group from a different run or no run.
 export function createReplySilencer() {
   const turns = new Map();
   const target = value => typeof value === "string" ? value.replace(/^plow:/, "").toLowerCase() : undefined;
@@ -20,8 +20,11 @@ export function createReplySilencer() {
       if (ctx.channelId !== "plow" || (ctx.accountId ?? "chat") !== "chat") return;
       const turn = turns.get(ctx.sessionKey);
       if (!turn?.silent || !turn.to || target(event.to) !== turn.to) return;
-      if (ctx.runId && ctx.runId !== turn.runId) return;
+      if (!ctx.runId || ctx.runId !== turn.runId) return;
       return { cancel: true, cancelReason: "Meetly tool requested a silent group turn" };
+    },
+    endTurn(_event, ctx) {
+      if (turns.get(ctx.sessionKey)?.runId === ctx.runId) turns.delete(ctx.sessionKey);
     },
     end(_event, ctx) { turns.delete(ctx.sessionKey); },
   };
