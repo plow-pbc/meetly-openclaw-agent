@@ -1,4 +1,4 @@
-// A read-only command on the owner's Mac, through the Latch relay that boot
+// A command on the owner's Mac, through the Latch relay that boot
 // bridges to loopback: the MCP tool plow_run_command, with the bridge's own
 // per-boot token from the gateway's environment. Undefined when there is no
 // bridge, the Mac is not connected, or the command is refused or fails.
