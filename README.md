@@ -166,8 +166,8 @@ message is skipped.
   never depends on the model remembering to check. The base owns
   `plugins.load`, so the plugin sits in the state volume's global plugin root
   (`/var/lib/plow/extensions/meetly`), copied there from the image on every
-  boot. The scheduling plugin is required: installation or configuration
-  failure prevents gateway startup. The owner's name comes from their Plow
+  boot. The scheduling plugin is required: installation failure prevents
+  gateway startup. Model-route or owner-config errors are logged and boot continues. The owner's name comes from their Plow
   profile and the time zone from their Mac through Latch; setup asks only what neither can answer.
 - **Schedule.** One OpenClaw scheduler job (`openclaw cron`), `meetly-poll`:
   an isolated agent turn every five minutes with no automatic delivery,

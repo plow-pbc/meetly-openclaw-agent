@@ -52,21 +52,25 @@ try {
   const prompt = await readFile("/opt/plow/prompt/AGENTS.md", "utf8");
   await writeFile("/var/lib/plow/workspace/AGENTS.md", await renderPrompt(prompt, identity.mcp_url, process.env.PLOW_AGENT_TOKEN, config.channels.plow.threadTrust, identity.agent?.web_url));
 
-  const { route, problem } = llmRoute();
-  if (problem) console.error(`meetly-boot: llm: ${problem}`);
-  const JSON5 = createRequire("/opt/plow/package.json")("json5");
-  let owner: Record<string, unknown>;
   try {
-    owner = JSON5.parse(await readFile(CONFIG, "utf8"));
+    const { route, problem } = llmRoute();
+    if (problem) console.error(`meetly-boot: llm: ${problem}`);
+    const JSON5 = createRequire("/opt/plow/package.json")("json5");
+    let owner: Record<string, unknown>;
+    try {
+      owner = JSON5.parse(await readFile(CONFIG, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // A fresh volume: seed it as the base would, so the first gateway already runs on Luna.
+      owner = structuredClone(config);
+    }
+    applyGate(applyRoute(owner, route, base));
+    await writeFile(`${CONFIG}.tmp`, JSON.stringify(owner, null, 2) + "\n", { mode: 0o600 });
+    await rename(`${CONFIG}.tmp`, CONFIG);
+    console.log(`meetly-boot: llm ${route.provider} ${route.primary}${route.fallbacks.length ? ` (fallback ${route.fallbacks.join(", ")})` : ""}`);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    // A fresh volume: seed it as the base would, so the first gateway already runs on Luna.
-    owner = structuredClone(config);
+    console.error(`meetly-boot: llm config left as it was: ${message(error)}`);
   }
-  applyGate(applyRoute(owner, route, base));
-  await writeFile(`${CONFIG}.tmp`, JSON.stringify(owner, null, 2) + "\n", { mode: 0o600 });
-  await rename(`${CONFIG}.tmp`, CONFIG);
-  console.log(`meetly-boot: llm ${route.provider} ${route.primary}${route.fallbacks.length ? ` (fallback ${route.fallbacks.join(", ")})` : ""}`);
 
   await syncConfig(config, CONFIG, INCLUDES);
   console.log(`plow-boot: identity resolved to ${identity.line.uid}`);
