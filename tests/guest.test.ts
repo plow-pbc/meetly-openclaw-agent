@@ -207,15 +207,20 @@ test("guest date bounds survive fallback when the preferred clock time is unavai
   assert.equal(f.ownerLines.length, 0, "a broad preference is not an exact time approval");
 });
 
-test("an unavailable guest week never falls back into a different week", async t => {
+test("an unavailable guest week falls back to the owner's conditions alone", async t => {
   const f = fixture(t);
-  f.ledger.requests[0]!.constraints = {};
+  f.ledger.requests[0]!.constraints = { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-14", after: "10:00", before: "15:00" };
   f.save(f.ledger);
   f.events.set("week", event("week", "2026-10-05T00:00:00Z", "2026-10-12T00:00:00Z"));
   const result = await f.act(context, "other_times", { from: "2026-10-05", to: "2026-10-11" });
-  assert.ok("error" in result);
-  assert.deepEqual(f.read(), f.ledger);
-  assert.ok(f.commands.every(c => c[2] === "events"));
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true);
+  assert.deepEqual(f.request().constraints, f.ledger.requests[0]!.constraints);
+  assert.ok(f.request().offered.length > 0);
+  for (const offer of f.request().offered) {
+    assert.ok(["2026-10-12", "2026-10-13", "2026-10-14"].includes(offer.start.slice(0, 10)));
+    assert.ok(offer.start.slice(11, 16) >= "10:00" && offer.end.slice(11, 16) <= "15:00");
+  }
   assert.equal(f.ownerLines.length, 0);
 });
 
@@ -429,13 +434,23 @@ test("a rejected weekday preference without date bounds returns fresh times with
   assert.ok(offers.every(old => f.events.get(old.holdId)!.status === "cancelled"));
 });
 
-test("guest date bounds outside the owner's dates leave the current offer intact", async t => {
+test("a Thursday counterproposal falls back to the owner's Monday-Wednesday conditions", async t => {
   const f = fixture(t);
-  const result = await f.act(context, "other_times", { from: "2026-10-08", to: "2026-10-08", after: "16:00", before: "18:00" });
-  assert.ok("error" in result);
-  assert.deepEqual(f.read(), f.ledger);
+  f.ledger.requests[0]!.constraints = { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-07", after: "10:00", before: "15:00" };
+  f.save(f.ledger);
+  const result = await f.act(context, "other_times", { days: ["thu"], from: "2026-10-08", to: "2026-10-08", after: "16:00", before: "18:00" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true);
+  assert.deepEqual(f.request().constraints, f.ledger.requests[0]!.constraints);
+  assert.equal(f.request().status, "offered");
+  assert.ok(f.request().offered.length > 0);
+  for (const offer of f.request().offered) {
+    assert.ok(["2026-10-05", "2026-10-06", "2026-10-07"].includes(offer.start.slice(0, 10)));
+    assert.ok(offer.start.slice(11, 16) >= "10:00" && offer.end.slice(11, 16) <= "15:00");
+    assert.ok(!offers.some(old => Date.parse(old.start) === Date.parse(offer.start)));
+  }
+  assert.ok(offers.every(old => f.events.get(old.holdId)!.status === "cancelled"));
   assert.equal(f.ownerLines.length, 0);
-  assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
 test("no fallback availability leaves the existing offer and holds intact", async t => {
