@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { POLL_MESSAGE } from "../skills/meetly/scripts/register-crons.ts";
+import { registerOwnerGroupTool } from "../plugin/owner-tools.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SKILLS = join(ROOT, "skills");
@@ -273,6 +274,18 @@ test("meeting confirmations stay in the group while pending questions route priv
   assert.ok(group.includes("clears that question only after the send succeeds"));
   assert.ok(group.includes("Never send the answer separately"));
   assert.ok(flat(prompt).includes("asks go privately through `meetly_ask_owner`"));
+});
+
+test("owner-started groups introduce Meetly and name the owner in the first reply or offer", () => {
+  const group = groupSkill();
+  const identity = "Meetly, <ownerName>'s scheduling assistant";
+  const offer = group.slice(group.indexOf("## Offer times"), group.indexOf("## Owner request"));
+  const owner = group.slice(group.indexOf("## Owner in the group"), group.indexOf("## Holds"));
+  assert.ok(offer.includes(`If this is your first reply in an owner-started group, introduce yourself as "${identity}"`));
+  assert.ok(owner.includes(`Without an owner scheduling ask, on your first reply introduce yourself as "${identity}"`));
+  registerOwnerGroupTool({ registerTool(factory: (ctx: object) => { description: string }) {
+    assert.ok(factory({}).description.includes(`If this is your first reply in this group, introduce yourself as \"${identity}\"`));
+  } });
 });
 
 test("owner group turns keep the script flow and answers use the recorded thread", () => {
