@@ -1103,3 +1103,117 @@ for (const args of [{ question: "Should I bring the budget?" }, { start: "2026-1
     assert.ok(f.request().lastNudge);
   });
 }
+function emailFixture(t: TestContext) {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.channel = "email";
+  request.handle = "ana@example.net";
+  request.name = "Ana";
+  f.save(f.ledger);
+  const ctx = { ...context, agentAccountId: "email", requesterSenderId: "ea@example.net", senderIsOwner: false,
+    config: { channels: { plow: { apiBase: "https://plow.test", emailLineUid: "mail-line" } } } };
+  const thread = { uid: ctx.nativeChannelId, status: "active", participants: [
+    { type: "agent", relationship: "self", line: { uid: "mail-line" } },
+    { type: "member", provider_key: "ANA@example.net" }, { type: "member", provider_key: ctx.requesterSenderId },
+  ] };
+  const fetchCalendar = globalThis.fetch;
+  const previous = process.env.PLOW_AGENT_TOKEN;
+  process.env.PLOW_AGENT_TOKEN = "email-fixture";
+  t.after(() => { if (previous === undefined) delete process.env.PLOW_AGENT_TOKEN; else process.env.PLOW_AGENT_TOKEN = previous; });
+  t.mock.method(globalThis, "fetch", async (url: string | URL | globalThis.Request, init?: RequestInit) => {
+    if (String(url).startsWith("https://plow.test/")) {
+      assert.equal(String(url), `https://plow.test/v1/chats/${ctx.nativeChannelId}`);
+      assert.equal((init?.headers as Record<string, string>).Authorization, "Bearer email-fixture");
+      return Response.json(thread);
+    }
+    return fetchCalendar(url, init);
+  });
+  return { ...f, ctx, thread };
+}
+
+for (const [action, args] of actions.filter(([action]) => action !== "ask_owner")) test(`a CC'd participant can ${action} in the email thread`, async t => {
+  const f = emailFixture(t);
+  const result = await f.act(f.ctx, action, args);
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().channel, "email");
+  assert.equal(f.request().chatUid, context.nativeChannelId);
+  assert.equal(f.ownerLines.length, 0);
+  if (action === "pick") {
+    assert.equal("invitationSent" in result && result.invitationSent, true);
+    const booking = f.commands.find(argv => argv.includes("--attendees"))!;
+    assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net");
+    assert.ok(f.commands.every(argv => argv[0] !== "/bin/sh"), "an email guest does not need Contacts");
+  }
+});
+
+test("an explicit additional email invitee is included without replacing the guest", async t => {
+  const f = emailFixture(t);
+  const result = await f.act(f.ctx, "pick", { start: offers[0]!.start, attendees: ["ea@example.net"] });
+  assert.ok(!("error" in result));
+  const booking = f.commands.find(argv => argv.includes("--attendees"))!;
+  assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net,ea@example.net");
+});
+
+test("email requests cannot be acted on from phone turns or another email thread", async t => {
+  const f = emailFixture(t);
+  for (const ctx of [context, { ...f.ctx, nativeChannelId: "other-thread", config: {} }, { ...f.ctx, senderIsOwner: true }]) {
+    assert.ok("error" in await f.act(ctx, "pick", { start: offers[0]!.start }));
+  }
+  assert.deepEqual(f.read(), f.ledger);
+  assert.equal(f.commands.length, 0);
+});
+
+test("an uncertain email opener links on a CC reply using the server roster", async t => {
+  const f = emailFixture(t);
+  delete f.ledger.requests[0]!.chatUid;
+  f.ledger.requests[0]!.startedAt = new Date(now).toISOString();
+  f.save(f.ledger);
+  const result = await f.act(f.ctx, "view");
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().chatUid, context.nativeChannelId);
+  assert.equal(f.request().handle, "ana@example.net");
+});
+
+for (const invalid of ["not-started", "absent-guest", "absent-sender", "wrong-line", "inactive", "ambiguous"] as const) test(`uncertain email linking refuses ${invalid}`, async t => {
+  const f = emailFixture(t);
+  const request = f.ledger.requests[0]!;
+  delete request.chatUid;
+  request.startedAt = new Date(now).toISOString();
+  if (invalid === "not-started") delete request.startedAt;
+  if (invalid === "absent-guest") f.thread.participants.splice(1, 1);
+  if (invalid === "absent-sender") f.thread.participants.pop();
+  if (invalid === "wrong-line") f.thread.participants[0]!.line!.uid = "another-mailbox";
+  if (invalid === "inactive") f.thread.status = "inactive";
+  if (invalid === "ambiguous") f.ledger.requests.push({ ...request, id: "other-email", handle: f.ctx.requesterSenderId });
+  f.save(f.ledger);
+  assert.ok("error" in await f.act(f.ctx, "view"));
+  assert.deepEqual(f.read(), f.ledger);
+});
+
+for (const args of [{ question: "Should Ana bring the budget?" }, { start: "2026-10-05T20:00" }]) test(`email owner handoff uses final routing, not a second DM: ${JSON.stringify(args)}`, async t => {
+  const f = emailFixture(t);
+  const result = await f.act(f.ctx, "ask_owner", args);
+  assert.ok("replyToOwner" in result && result.replyToOwner, JSON.stringify(result));
+  assert.ok("ownerQuestion" in result);
+  assert.ok(!("silent" in result));
+  assert.ok(!("ownerAskSent" in result));
+  assert.equal(f.ownerLines.length, 0);
+  assert.ok(f.request().pendingOwner);
+  assert.ok("error" in await f.act(f.ctx, "ask_owner", args));
+  assert.equal(f.ownerLines.length, 0);
+});
+
+test("an owner-side email booking also invites the saved guest without a Contacts lookup", async t => {
+  const f = emailFixture(t);
+  const result = await calendarAction(f.request().id, { action: "book", start: offers[0]!.start });
+  assert.equal("invitationSent" in result && result.invitationSent, true);
+  const booking = f.commands.find(argv => argv.includes("--attendees"))!;
+  assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net");
+});
+
+test("an unused empty attendee list does not block a phone booking", async t => {
+  const f = fixture(t);
+  const result = await f.act(context, "pick", { start: offers[0]!.start, attendees: [] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().status, "booked");
+});

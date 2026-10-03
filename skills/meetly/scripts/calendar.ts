@@ -37,7 +37,7 @@ const holds = requestHolds;
 function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledger {
   const request = l.requests.find(r => r.id === id);
   if (request?.status !== "booked") return saveRequest(l, input, now, id);
-  if (!sameHandle(request.handle, input.handle) || request.chatUid !== input.chatUid) throw new Error("offer belongs to another request");
+  if (!sameHandle(request.handle, input.handle) || request.chatUid !== input.chatUid || (input.channel !== undefined && request.channel !== input.channel)) throw new Error("offer belongs to another request");
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   if (validated.status !== "offered") throw new Error("replacement needs offered times");
   return updateRequest(l, id, {
@@ -82,7 +82,7 @@ export function pendingCalendarWrites(): string[] {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
 }
 
-export async function calendarAction(id: string, input: CalendarAction, options: CalendarOptions = {}) {
+export async function calendarAction(id: string, action: CalendarAction, options: CalendarOptions = {}) {
   const now = options.now ?? Date.now;
   const command = options.command ?? runOnMacOutcome;
   const poll = options.poll ?? (handle => macOutcome("plow_get_result", { handle }));
@@ -135,11 +135,14 @@ export async function calendarAction(id: string, input: CalendarAction, options:
     }
   };
   // A queued initial pick must not become a move when another booking wins the lock.
-  const wasBooked = input.action === "book" && requestById(id).status === "booked";
+  const wasBooked = action.action === "book" && requestById(id).status === "booked";
   return locked(id, async () => {
     const journal = file(`calendar/${encodeURIComponent(id)}.json`);
     let intent = readJson<Intent | undefined>(journal, undefined);
     let request = requestById(id);
+    const input = action.action === "book" && request.channel === "email" && request.status !== "booked"
+      ? { ...action, attendees: [...new Set([request.handle, ...(action.attendees?.split(",") ?? [])].map(value => value.trim().toLowerCase()).filter(Boolean))].join(",") }
+      : action;
     options.validate?.(request);
     if (intent && request.calendarRevision === intent.id) { rmSync(journal); intent = undefined; }
     if (intent && input.action !== "resume") throw new Error(`calendar operation unresolved for ${id}; run resume first`);
@@ -152,7 +155,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
           patch({ reoffer: null, holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]) });
           await cleanup();
           request = requestById(id);
-          return { request, groupNotice: request.chatUid ? {
+          return { request, groupNotice: request.channel !== "email" && request.chatUid ? {
             chatUid: request.chatUid,
             text: request.holdCleanup?.length
               ? "The replacement offer expired; some holds still need cleanup. The original booking remains unchanged."

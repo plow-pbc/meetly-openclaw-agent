@@ -22,7 +22,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `update --id X --json '<patch>'` | `{request}`; patch keys: `chatUid, name, allowOverlap, constraints, topic, pendingOwner, locale` (`null` clears `pendingOwner`); format, location, calendar and reminder fields require their owning scripts |
 | | `expired [--hours N]` \| `asked` \| `pending` \| `booked` \| `cleanup` | `{requests}` |
 | | `delivery --id X --kind start\|answer --action begin\|complete\|clear` | `{request}`; `begin` records `startedAt`; `complete` records `startCompletedAt` after success or unknown delivery. Starts refuse a second attempt. `answer begin` records `pendingOwner.answerAttemptedAt` before sending and refuses another attempt; successful answer delivery clears the pending question or time approval. `clear` is for an unlinked start or an answer attempt, on the owner's explicit instruction (answers use only `begin`/`clear`). Delivery fields cannot be set through `save` or `update`. |
-| | `reminders [--lead-min N]` | `{requests}`: booked Meets whose link is due (default 10 min before, until 5 min after the start) |
+| | `reminders [--lead-min N]` | `{requests}`: booked text-thread Meets whose link is due (default 10 min before, until 5 min after the start) |
 | `event.ts` | `--in F` | `{id, status, start, end, meetUrl}` from a saved calendar event read |
 | `pipeline.ts` | `view [--locale TAG]` | `{items, text}`: derived pending pipeline and short dated request logs; read-only |
 | | `nudge [--locale TAG]` | `{items, text, reservations}`: atomically reserve one owner DM batch; null text means nothing new; never repeat a reserved batch |
@@ -63,6 +63,10 @@ Notes:
 - Displayed pipeline times and history labels use `localeFormatter` in the owner's
   configured timezone. `--locale` chooses their language tag (default en-US).
   Raw timestamps in items and reservations are machine data, not display text.
+- A request has `channel: "text"` (the default) or `"email"`. Email requests use
+  an email `handle` and their thread's `chatUid`; participants act by thread,
+  not by matching the guest's sender handle. Email starts use the same delivery
+  attempt markers as group starts and must not retry an unknown send.
 - A booked request may have `reoffer: {offered, offeredAt}`. Expiry releases only
   those replacement holds; the original event remains until a move or cancellation.
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.

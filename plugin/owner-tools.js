@@ -9,13 +9,14 @@ export function registerOwnerTools(api, execute = run, outbound) {
   const required = ["requestId", "askedAt", "text"];
   api.registerTool(context => ({
     name: "meetly_answer_owner", label: "Answer a meeting question",
-    description: "Resolve a pending meeting question or time approval from the owner's own answer. First match ledger.ts pending by person and topic. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. For a question in that same group, the owner's answer is already visible: clears silently without sending or acknowledging. When silent is true, end the turn without a group reply. Owner only. For time approvals, first finish the calendar booking or alternative-time flow, then call this tool with the result; it sends the result once even in the group and clears the approval.",
+    description: "Resolve a pending meeting question or time approval from the owner's own answer. First match ledger.ts pending by person and topic. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. For a question in that same group, the owner's answer is already visible: clears silently without sending or acknowledging. When silent is true, end the turn without a group reply. For an email request, this tool returns email.to and email.body after recording the attempt. Send them with plow_send_email, then call this tool again with the same requestId, askedAt and text plus emailSent: true only after confirmed sent: true. Never confirm an unknown delivery. A question already answered by the owner in the email thread clears without another send. Owner only. For time approvals, first finish the calendar booking or alternative-time flow, then call this tool with the result; it sends the result once even in the group and clears the approval.",
     parameters: {
       type: "object", additionalProperties: false, required,
       properties: {
         requestId: { type: "string", description: "The matched request's id." },
         askedAt: { type: "string", description: "The matched pending question or time approval's askedAt." },
         text: { type: "string", description: "The owner's answer, phrased as Meetly for the group." },
+        emailSent: { type: "boolean", description: "Only true after plow_send_email confirms sent: true for the email answer returned by this tool. Keep the same requestId, askedAt and text." },
       },
     },
     async execute(_id, args) {

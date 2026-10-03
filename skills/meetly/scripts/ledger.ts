@@ -47,6 +47,7 @@ export type Reminder = { at: string; outcome: "sent" | "cancelled" | "no-link" }
 
 export type Request = {
   id: string;
+  channel: "text" | "email";
   origin: "inbound" | "owner" | "owner-group";
   handle: string;
   name?: string;
@@ -98,9 +99,9 @@ export const requestEvents = (request: Request): HoldRef[] => [
 export type Ledger = { requests: Request[] };
 
 export type NewRequest = Omit<Request,
-  "id" | "doNotContact" | "lastGuestReplyAt" | "lastNudge" | "log" | "reoffer" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
+  "id" | "channel" | "doNotContact" | "lastGuestReplyAt" | "lastNudge" | "log" | "reoffer" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
   | "startedAt" | "startCompletedAt" | "detailsAskedAt"
-  | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
+  | "offeredAt" | "createdAt" | "updatedAt"> & { channel?: Request["channel"]; status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
   "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale">> & {
   reoffer?: Request["reoffer"] | null;
@@ -276,6 +277,9 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   for (const key of ["doNotContact", "lastGuestReplyAt", "lastNudge", "log"]) {
     if (key in input) throw new Error(`${key} is managed by pipeline.ts`);
   }
+  const channel = input.channel ?? "text";
+  if (channel !== "text" && channel !== "email") throw new Error("channel must be text or email");
+  if (channel === "email" && !input.handle.includes("@")) throw new Error("email requests need an email address");
   for (const key of ["calendarRevision", "reoffer"]) {
     if (key in input) throw new Error(`${key} is managed by calendar.ts`);
   }
@@ -303,8 +307,8 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   // only ever set through update, where they are validated.
   const { booked: _b, meetUrl: _m, reminder: _r, ...fields } = input as NewRequest & Partial<Pick<Request, "booked" | "meetUrl" | "reminder">>;
   const request: Request = status === "asked"
-    ? { ...fields, offered: [], format, id, status, createdAt: at, updatedAt: at }
-    : { ...fields, format, id, status, offeredAt: at, createdAt: at, updatedAt: at };
+    ? { ...fields, channel, offered: [], format, id, status, createdAt: at, updatedAt: at }
+    : { ...fields, channel, format, id, status, offeredAt: at, createdAt: at, updatedAt: at };
   if (doNotContact(ledger, input.handle)) request.doNotContact = true;
   return { requests: [...ledger.requests, appendLog(request, `Request ${status}`, now)] };
 }
@@ -322,12 +326,14 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
   if (bySource && byHandle && bySource.id !== byHandle.id) throw new Error("resolved handle belongs to another open request");
   const existing = bySource ?? byHandle;
   if (!existing) return addRequest(ledger, input, now, id);
+  if (input.channel !== undefined && input.channel !== existing.channel) throw new Error("an open request cannot change channel");
   if (input.status === "asked") return ledger;
 
   // Reuse addRequest's validation and timestamp behavior, then apply its new
   // offer to the existing record. An absent chatUid must not erase the link.
   if (existing.origin === "owner-group" && input.chatUid !== undefined && input.chatUid !== existing.chatUid) throw new Error("an owner-group request cannot move to another chat");
-  input = { ...input, origin: existing.origin === "owner-group" ? existing.origin : input.origin, chatUid: input.chatUid ?? existing.chatUid };
+  if (existing.channel === "email" && existing.chatUid && input.chatUid && input.chatUid !== existing.chatUid) throw new Error("an email request cannot move to another thread");
+  input = { ...input, channel: existing.channel, origin: existing.origin === "owner-group" ? existing.origin : input.origin, chatUid: input.chatUid ?? existing.chatUid };
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   const newHolds = new Set(validated.offered.flatMap((offer) => offer.holdId ? [`${offer.account}\0${offer.holdId}`] : []));
   const replacedHolds = existing.offered.flatMap((offer) => offer.holdId && !newHolds.has(`${offer.account}\0${offer.holdId}`)
@@ -381,6 +387,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   const updated: Request = { ...ledger.requests[index]!, updatedAt: at };
   if (updated.status === "asked" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
   if (updated.origin === "owner-group" && patch.chatUid !== undefined && patch.chatUid !== updated.chatUid) throw new Error("an owner-group request cannot move to another chat");
+  if (updated.channel === "email" && updated.chatUid && patch.chatUid !== undefined && patch.chatUid !== updated.chatUid) throw new Error("an email request cannot move to another thread");
   for (const [key, value] of Object.entries(patch)) {
     if (value === null && (NULLABLE as readonly string[]).includes(key)) delete updated[key as (typeof NULLABLE)[number]];
     else if (value !== undefined) (updated as Record<string, unknown>)[key] = value;
@@ -452,11 +459,11 @@ export function pendingOwnerList(ledger: Ledger): Request[] {
     && (r.status === "offered" || r.status === "booked"));
 }
 
-// Booked Meets whose link is due in the group: from `leadMin` before the
+// Booked text-thread Meets whose link is due in the group: from `leadMin` before the
 // start until `graceMin` after it, once.
 export function dueReminders(ledger: Ledger, now: number, leadMin: number, graceMin = 5): Request[] {
   return ledger.requests.filter((r) => {
-    if (r.status !== "booked" || r.format !== "meet" || !r.meetUrl || !r.booked || r.reminder) return false;
+    if (r.channel === "email" || r.status !== "booked" || r.format !== "meet" || !r.meetUrl || !r.booked || r.reminder) return false;
     const start = Date.parse(r.booked.start);
     return now >= start - leadMin * 60_000 && now < start + graceMin * 60_000;
   });
