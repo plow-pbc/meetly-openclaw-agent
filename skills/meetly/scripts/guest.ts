@@ -60,6 +60,7 @@ export function view(request: Request, config: Config) {
   return {
     status: request.status, origin: request.origin, ownerName: config.ownerName, timezone: config.timezone,
     topic: request.topic, meal: request.meal, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
+    detailsQuestion: null,
     offered: request.status === "offered" ? request.offered.map(time) : [],
     ...(request.booked ? { booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
     ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),

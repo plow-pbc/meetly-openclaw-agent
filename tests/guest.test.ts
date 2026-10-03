@@ -744,3 +744,17 @@ test("guests can re-offer and book dinner but cannot widen its meal window", asy
   assert.ok(!("error" in booked), JSON.stringify(booked));
   assert.equal(f.request().status, "booked");
 });
+
+
+test("an owner duration change keeps an unanswered opener question suppressed on guest re-offers", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.detailsAskedAt = new Date(now).toISOString();
+  f.ledger.requests[0]!.durationMin = 60;
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { days: ["tue"] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal("detailsQuestion" in result && result.detailsQuestion, null);
+  assert.equal(f.request().detailsAskedAt, new Date(now).toISOString());
+  assert.equal(f.request().format, "unknown");
+  assert.equal(f.request().durationMin, 60);
+});

@@ -75,6 +75,8 @@ export type Request = {
   notifiedAt?: string;
   startedAt?: string;
   startCompletedAt?: string;
+  // Reserved before the opener send; an uncertain delivery must not ask twice.
+  detailsAskedAt?: string;
   offeredAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -84,7 +86,7 @@ export type Ledger = { requests: Request[] };
 
 export type NewRequest = Omit<Request,
   "id" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
-  | "notifyAttemptedAt" | "notifiedAt" | "startedAt" | "startCompletedAt"
+  | "notifyAttemptedAt" | "notifiedAt" | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
   "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale">> & {
@@ -185,7 +187,7 @@ function checkOffers(offered: unknown): Offer[] {
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
   input = { ...input, handle: normalizeHandle(input.handle) };
   if ("calendarRevision" in input) throw new Error("calendarRevision is managed by calendar.ts");
-  for (const key of ["notifyAttemptedAt", "notifiedAt", "startedAt", "startCompletedAt"]) {
+  for (const key of ["notifyAttemptedAt", "notifiedAt", "startedAt", "startCompletedAt", "detailsAskedAt"]) {
     if (key in input) throw new Error(`${key} is managed by ledger.ts delivery`);
   }
   if (input.origin !== "inbound" && input.origin !== "owner" && input.origin !== "owner-group") throw new Error(`origin must be inbound, owner or owner-group, got ${input.origin}`);
@@ -294,6 +296,12 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   return { requests };
 }
 
+function detailsQuestion(request: Request): string | null {
+  if (request.status !== "offered" || request.origin === "owner-group" || request.detailsAskedAt || request.startedAt || request.chatUid) return null;
+  if (!request.format || request.format === "unknown") return "How would you like to meet?";
+  return request.format === "in_person" && !request.location?.trim() ? "Where would you like to meet?" : null;
+}
+
 // Owner notices can retry until completed; group starts and answers need an explicit clear.
 export function recordDelivery(ledger: Ledger, id: string, kind: string, action: string, now: number): Ledger {
   if (!["notify", "start", "answer"].includes(kind) || !["begin", "complete", "clear"].includes(action)) {
@@ -322,6 +330,7 @@ export function recordDelivery(ledger: Ledger, id: string, kind: string, action:
   } else if (action === "begin") {
     if (kind === "start" && (request.startedAt || request.chatUid)) throw new Error("group start already attempted; only the owner can authorize clearing it");
     if (request[completed]) throw new Error(`${kind} delivery already completed`);
+    if (kind === "start" && detailsQuestion(request)) updated.detailsAskedAt = at;
     updated[attempt] = at;
   } else {
     if (!request[attempt]) throw new Error(`${kind} delivery has no recorded attempt`);
@@ -431,8 +440,13 @@ if (isMain(import.meta.url)) {
       }
       case "delivery": {
         if (!values.id) throw new Error("delivery needs --id X");
-        const ledger = updateJson<Ledger>(path, EMPTY, (l) => recordDelivery(l, values.id!, values.kind ?? "", values.action ?? "", now));
-        return { request: ledger.requests.find((r) => r.id === values.id) };
+        let question: string | null = null;
+        const ledger = updateJson<Ledger>(path, EMPTY, (l) => {
+          const next = recordDelivery(l, values.id!, values.kind ?? "", values.action ?? "", now);
+          if (values.kind === "start" && values.action === "begin") question = detailsQuestion(l.requests.find(r => r.id === values.id)!);
+          return next;
+        });
+        return { request: ledger.requests.find((r) => r.id === values.id), detailsQuestion: question };
       }
       case "asked":
         return { requests: askedList(readJson<Ledger>(path, EMPTY), values.unnotified) };

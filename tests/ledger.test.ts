@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   addRequest, saveRequest, cleanupList, pendingOwnerList, expiredRequests, findByChat, findOpenByHandle, normalizeHandle, sameHandle, updateRequest,
@@ -432,4 +432,38 @@ test("owner-group origin requires and preserves its exact chat across re-offers"
   const saved = saveRequest(ledger, input(), T0 + HOUR, "r_2").requests[0]!;
   assert.equal(saved.origin, "owner-group");
   assert.equal(saved.chatUid, "cht_MiXeD");
+});
+
+test("a format question is reserved once across owner re-offers and an uncertain group-start retry", t => {
+  const env = { MEETLY_HOME: tmpHome() };
+  t.after(() => rmSync(env.MEETLY_HOME, { recursive: true, force: true }));
+  const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(input())], env).json.request;
+  const delivery = (action: string) => cli("ledger.ts", ["delivery", "--id", id, "--kind", "start", "--action", action], env);
+  const first = delivery("begin");
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(first.json.detailsQuestion, "How would you like to meet?");
+  const askedAt = first.json.request.detailsAskedAt;
+  assert.ok(askedAt);
+  const replacement = cli("ledger.ts", ["save", "--json", JSON.stringify(input({ durationMin: 60,
+    offered: [{ ...offer, end: "2026-09-29T13:00:00-03:00" }] }))], env);
+  assert.equal(replacement.status, 0, replacement.stderr);
+  assert.equal(replacement.json.request.detailsAskedAt, askedAt);
+  assert.equal(replacement.json.request.format, "unknown");
+  assert.equal(delivery("clear").json.request.detailsAskedAt, askedAt);
+  const retry = delivery("begin");
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(retry.json.detailsQuestion, null);
+  assert.equal(retry.json.request.detailsAskedAt, askedAt);
+  assert.equal(delivery("complete").json.detailsQuestion, null);
+});
+
+for (const [format, location, question] of [
+  ["in_person", "", "Where would you like to meet?"], ["in_person", "Cafe", null], ["meet", "", null],
+] as const) test(`the opener asks only for missing details: ${format} ${location}`, t => {
+  const env = { MEETLY_HOME: tmpHome() };
+  t.after(() => rmSync(env.MEETLY_HOME, { recursive: true, force: true }));
+  const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(input({ format, location }))], env).json.request;
+  const started = cli("ledger.ts", ["delivery", "--id", id, "--kind", "start", "--action", "begin"], env);
+  assert.equal(started.status, 0, started.stderr);
+  assert.equal(started.json.detailsQuestion, question);
 });

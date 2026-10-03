@@ -89,7 +89,8 @@ Lunch/dinner windows replace working hours; the owner's allowed days still apply
    It keeps the prior offer until the replacement succeeds, then releases
    the old holds. On failure, stop and tell the owner; do not send an offer.
 6. Deliver the times:
-   - An open request that already has a `chatUid`: post the new times there.
+   - An open request that already has a `chatUid`: post the new times there,
+     without a format/place question, even if those details are still unknown.
    - Otherwise, in the owner's DM, run `ledger.ts delivery --id <saved request id>
      --kind start --action begin`. If it fails, tell the owner and stop.
      Then call `plow_start_thread` with `members: ["<resolved phone>"]` and
@@ -100,7 +101,11 @@ Lunch/dinner windows replace working hours; the owner's allowed days still apply
    - The opener: third person, in their language. Say who Meetly is and whose
      assistant, the topic, and the slot labels, then ask which works. For
      inbound requests, never claim the owner asked.
-   - Follow the prompt's "Meeting details" rule for missing format/place.
+   - Add only the non-null `detailsQuestion` returned by that successful
+     `delivery --kind start --action begin`, translated into their language.
+     The ledger reserves it in `detailsAskedAt` before sending. A null question
+     means ask nothing about format/place; never clear this marker on re-offers
+     or when retrying an uncertain group start.
    - If `plow_start_thread` definitely fails, tell the owner what it said and stop.
      Run `calendar.ts drop --id <id>`; it records any failed hold deletes
      for the cleanup poll.
