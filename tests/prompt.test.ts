@@ -81,6 +81,14 @@ test("the poll never contacts anyone new: it saves the request as asked and asks
   assert.ok(poll.includes("give https://plow.co/download/latch. Go to step 6: it needs no message reads."));
 });
 
+test("poll maintenance retries unnotified requests and records attempts before sending", () => {
+  const maintenance = pollSkill().split("6. Maintenance:")[1]!;
+  assert.ok(maintenance.includes("`ledger.ts asked --unnotified`"));
+  assert.ok(maintenance.indexOf("--kind notify --action begin") < maintenance.indexOf("Send the owner one line"));
+  assert.ok(maintenance.includes("On success or unknown delivery, run `ledger.ts delivery --id <id> --kind notify --action complete`"));
+  assert.ok(maintenance.includes("On a definite failure, leave it unnotified for the next poll"));
+});
+
 test("the owner's yes or no in their DM decides an asked request", () => {
   const group = groupSkill();
   assert.ok(group.includes("## Asked requests"));
@@ -147,11 +155,22 @@ test("recipient selection precedes calendar access and asks the owner to resolve
 test("every Meetly group is opened with plow_start_thread from the owner's DM", () => {
   const group = groupSkill();
   assert.ok(flat(prompt).includes("Meetly opens a group only with plow_start_thread, from the owner's main DM"));
-  assert.ok(group.includes("Otherwise, in the owner's DM, call `plow_start_thread` with `members: [\"<resolved phone>\"]` and the opener as `body`."));
+  assert.ok(group.includes("Then call `plow_start_thread` with `members: [\"<resolved phone>\"]` and the opener as `body`."));
   assert.ok(group.includes("If delivery is unknown, continue without `chatUid` and tell the owner. Never resend."));
   assert.ok(flat(prompt).includes("Never send through the owner's Messages app or any iMessage tool on their Mac."));
   const all = [prompt, ...skillFiles.map((s) => readFileSync(s.path, "utf8"))].map(flat).join(" ");
   assert.doesNotMatch(all, /start[-]thread|reachable[-]handle|not[-]on[-]imessage|10 s\b|over iMessage/);
+});
+
+test("offers re-key to the resolved phone and group starts require a ledger attempt", () => {
+  const group = groupSkill();
+  const offer = group.slice(group.indexOf("## Offer times"), group.indexOf("## Owner request"));
+  assert.ok(offer.includes("`handle` (the resolved phone)"));
+  assert.ok(offer.includes("re-keys an inbound request with the same `sourceRowid` to that phone"));
+  assert.ok(offer.indexOf("--kind start --action begin") < offer.indexOf("Then call `plow_start_thread`"));
+  assert.ok(offer.includes("On success or unknown delivery, run `ledger.ts delivery --id <saved request id> --kind start --action complete`"));
+  assert.ok(offer.includes("Only if the owner explicitly asks to retry"));
+  assert.ok(offer.includes("--kind start --action clear"));
 });
 
 test("group requests without a matching ledger entry get a safe owner escalation", () => {
@@ -274,7 +293,7 @@ test("a Meetly group is trusted but scoped to its meeting, and a group that fail
   assert.ok(p.includes("anyone who is not the owner can only arrange this one meeting"));
   assert.ok(p.includes("Every Meetly group is trusted so you can run the meeting's scripts on a guest's message; that trust never extends the guest's reach past this one meeting."));
   const group = flat(readFileSync(join(SKILLS, "meetly-group", "SKILL.md"), "utf8"));
-  assert.ok(group.includes("If `plow_start_thread` fails, tell the owner what it said and stop"));
+  assert.ok(group.includes("If `plow_start_thread` definitely fails, tell the owner what it said and stop"));
   assert.ok(group.includes("`plow_set_thread_trust`"));
 });
 

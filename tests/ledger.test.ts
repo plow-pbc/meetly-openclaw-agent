@@ -174,6 +174,72 @@ test("asked becomes offered by saving the offer over it, keeping the request", (
   assert.equal(r.offeredAt, new Date(T0 + HOUR).toISOString());
 });
 
+test("CLI re-keys an inbound email request by source row so a phone reply finds the same offer", () => {
+  const env = { MEETLY_HOME: tmpHome() };
+  const saved = cli("ledger.ts", ["save", "--json", JSON.stringify(asked({ handle: "ana@example.com" }))], env).json.request;
+  cli("ledger.ts", ["delivery", "--id", saved.id, "--kind", "notify", "--action", "begin"], env);
+  const notice = cli("ledger.ts", ["delivery", "--id", saved.id, "--kind", "notify", "--action", "complete"], env).json.request;
+  const offered = cli("ledger.ts", ["save", "--json", JSON.stringify(input({ sourceRowid: 42 }))], env);
+  assert.equal(offered.status, 0, offered.stderr);
+  assert.equal(offered.json.request.id, saved.id);
+  assert.equal(offered.json.request.notifiedAt, notice.notifiedAt);
+  assert.deepEqual(cli("ledger.ts", ["asked"], env).json, { requests: [] });
+  const reply = cli("ledger.ts", ["find", "--chat", "c_unknown", "--handle", "+15551234567"], env).json.request;
+  assert.equal(reply.id, saved.id);
+  assert.equal(reply.offered[0].holdId, "h1");
+});
+
+test("re-keying refuses a phone already used by another open request", () => {
+  let l = saveRequest(empty(), asked({ handle: "ana@example.com" }), T0, "r_email");
+  l = addRequest(l, input(), T0, "r_phone");
+  assert.throws(() => saveRequest(l, input({ sourceRowid: 42 }), T0, "unused"), /another open request/);
+  assert.equal(l.requests.length, 2);
+});
+
+test("CLI retries an unfinished owner notice and completes success or unknown delivery once", () => {
+  const env = { MEETLY_HOME: tmpHome() };
+  const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(asked())], env).json.request;
+  const delivery = (action: string) => cli("ledger.ts", ["delivery", "--id", id, "--kind", "notify", "--action", action], env);
+  assert.equal(delivery("complete").status, 1);
+  assert.equal(delivery("begin").status, 0);
+  assert.equal(cli("ledger.ts", ["asked", "--unnotified"], env).json.requests[0].id, id);
+  assert.equal(delivery("begin").status, 0);
+  const completed = delivery("complete");
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.ok(completed.json.request.notifyAttemptedAt);
+  assert.ok(completed.json.request.notifiedAt);
+  assert.deepEqual(cli("ledger.ts", ["asked", "--unnotified"], env).json, { requests: [] });
+  assert.equal(cli("ledger.ts", ["asked"], env).json.requests[0].id, id);
+  assert.equal(delivery("begin").status, 1);
+});
+
+test("CLI blocks a second group start across re-offers until its marker is cleared", () => {
+  const env = { MEETLY_HOME: tmpHome() };
+  const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(asked())], env).json.request;
+  const delivery = (action: string) => cli("ledger.ts", ["delivery", "--id", id, "--kind", "start", "--action", action], env);
+  assert.equal(delivery("begin").status, 1);
+  cli("ledger.ts", ["save", "--json", JSON.stringify(input())], env);
+  assert.equal(delivery("complete").status, 1);
+  const attempt = delivery("begin");
+  assert.equal(attempt.status, 0, attempt.stderr);
+  assert.ok(attempt.json.request.startedAt);
+  assert.equal(delivery("begin").status, 1);
+  assert.ok(delivery("complete").json.request.startCompletedAt);
+  const saved = cli("ledger.ts", ["save", "--json", JSON.stringify(input({ offered: [{ ...offer, holdId: "h2" }] }))], env);
+  assert.equal(saved.json.request.startedAt, attempt.json.request.startedAt);
+  assert.equal(cli("ledger.ts", ["save", "--json", JSON.stringify(input({ startedAt: null }))], env).status, 1);
+  assert.equal(cli("ledger.ts", ["update", "--id", id, "--json", '{"startedAt":null}'], env).status, 1);
+  assert.match(delivery("begin").stderr, /already attempted/);
+  const cleared = delivery("clear");
+  assert.equal(cleared.status, 0, cleared.stderr);
+  assert.equal(cleared.json.request.startedAt, undefined);
+  assert.equal(cleared.json.request.startCompletedAt, undefined);
+  assert.equal(delivery("begin").status, 0);
+  cli("ledger.ts", ["update", "--id", id, "--json", '{"chatUid":"c1"}'], env);
+  assert.equal(delivery("clear").status, 1);
+  assert.equal(delivery("begin").status, 1);
+});
+
 test("the owner's conditions from the yes survive a later offer; the person's proposed times are kept apart", () => {
   const proposed = { days: ["fri"] };
   const owner = { after: "14:00" };

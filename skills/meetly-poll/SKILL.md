@@ -45,7 +45,7 @@ thread. For a message to the owner with no meeting thread, use
         thread in one line that no link went out for <name>'s meeting.
       - `skip`: already handled.
 2. Run `cursor.ts get`. If `rowid` is `null`: run `plow-messages search
-   --order desc --limit 1`, then `cursor.ts set <that rowid, or 0>`, and end.
+   --order desc --limit 1`, then `cursor.ts set <that rowid, or 0>`, and go to step 6.
    Never scan history.
 3. Run `plow-messages search --after-rowid <rowid> --order asc --limit 50`.
    - On failure, or a `blocked` result: run `cursor.ts fail`. If `warn` is
@@ -76,9 +76,7 @@ thread. For a message to the owner with no meeting thread, use
       config, `proposed` for any times they proposed, their `locale`, and
       `format`: the format if their words say it (`meetly-group` "Meeting
       format"; otherwise `unknown`). No holds, no group, no message to them.
-   7. Send the owner one line in their DM, in their language: "<name or
-      handle> asked about <topic> <when>. Want me to offer times?"
-   8. If the save fails, stop processing senders. Run `cursor.ts set <the
+   7. If the save fails, stop processing senders. Run `cursor.ts set <the
       rowid just below this sender's first row in the batch>` and go to
       step 6.
 5. Run `cursor.ts set <highest rowid in the batch>`.
@@ -88,6 +86,14 @@ thread. For a message to the owner with no meeting thread, use
      '{"status":"expired","pendingOwner":null}'`. If it has a `chatUid`, tell
      the group the held times were released; this also notifies the owner.
      An `asked` request has neither holds nor a group.
+   - For each request from `ledger.ts asked --unnotified`, run `ledger.ts
+     delivery --id <id> --kind notify --action begin`. If it fails, skip
+     this request. Send the owner one line in their DM, in their language:
+     "<name or handle> asked about <topic> <when>. Want me to offer times?"
+     On success or unknown delivery, run `ledger.ts delivery --id <id>
+     --kind notify --action complete`. On a definite failure, leave it
+     unnotified for the next poll. If completion cannot be recorded, report
+     the error and stop; do not send it again in this turn.
    - For each request from `ledger.ts cleanup`: retry each delete, then
      update `holdCleanup` to what is still left (`[]` when none).
 7. If nothing happened, end silently.

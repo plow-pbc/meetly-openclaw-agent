@@ -33,6 +33,10 @@ free there.
 1. Resolve one E.164 phone before any calendar read or hold. If none is
    known, ask the owner for a phone; if several match, ask which one. In
    either case, ask in the owner's main DM and end the turn.
+   Run `ledger.ts find --handle <resolved phone>`. If it has `startedAt`
+   but no `chatUid`, tell the owner a group start was already attempted and
+   stop. Only if the owner explicitly asks to retry, run `ledger.ts delivery
+   --id <id> --kind start --action clear` before continuing.
 2. Read the calendar.
 3. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
@@ -52,13 +56,14 @@ free there.
    conflict. If none are left, tell the owner and stop.
 5. Persist the offer immediately after the holds exist, before sending or
    opening a group. Run `ledger.ts save --json '<request>'` with every field:
-   `origin`, `handle` (the intended contact handle), `name`, `sourceRowid`,
+   `origin`, `handle` (the resolved phone), `name`, `sourceRowid`,
    `chatUid` if already known, `topic`, `location`, `durationMin`,
    `constraints` (only the owner's words set them; on a guest's turn, pass
    the request's `constraints` unchanged),
    `proposed`, `allowOverlap`, `format` and `locale` (see "Meeting
    format"), and `offered[]` with each `start`/`end`/`holdId`/`account`. `save` creates a request or updates the
-   existing open request for that person, preserving its id and existing
+   existing open request for that person; it re-keys an inbound request with
+   the same `sourceRowid` to that phone, preserving its id and existing
    `chatUid` when the new value is absent. Holds from the replaced offer are
    moved to `holdCleanup` automatically so the cleanup poll can delete them.
    If it fails, delete each hold just
@@ -66,8 +71,13 @@ free there.
    offer. If any deletion fails, report those hold ids too.
 6. Deliver the times:
    - An open request that already has a `chatUid`: post the new times there.
-   - Otherwise, in the owner's DM, call `plow_start_thread` with `members:
-     ["<resolved phone>"]` and the opener as `body`.
+   - Otherwise, in the owner's DM, run `ledger.ts delivery --id <saved request id>
+     --kind start --action begin`. If it fails, tell the owner and stop.
+     Then call `plow_start_thread` with `members: ["<resolved phone>"]` and
+     the opener as `body`.
+   - On success or unknown delivery, run `ledger.ts delivery --id <saved request id>
+     --kind start --action complete`. If that fails, tell the owner; the
+     attempt remains recorded, so never repeat the start.
    - The opener: third person, in their language. Say who Meetly is and whose
      assistant, the topic, and the slot labels, then ask which works. For
      inbound requests, never claim the owner asked.
@@ -75,7 +85,7 @@ free there.
      like to meet: Google Meet or in person. When it is `in_person` with no
      `location`, it asks where. Always in that one message, never a second
      one.
-   - If `plow_start_thread` fails, tell the owner what it said and stop.
+   - If `plow_start_thread` definitely fails, tell the owner what it said and stop.
      Delete the new holds and mark the saved request `dropped`; if a hold
      cannot be deleted, record its id and account in `holdCleanup` so
      cleanup can retry.
@@ -119,7 +129,7 @@ asked` and match their answer to a request; if it could be more than one,
 ask which and end the turn.
 
 - **Yes:** follow "Offer times" with `origin: inbound`, the request's
-  `handle`, `name`, `sourceRowid`, `topic`, `format`, `locale` and `proposed`, and
+  `name`, `sourceRowid`, `topic`, `format`, `locale` and `proposed`, and
   `constraints` set to any conditions the owner gave with the yes. Saving
   the offer turns the request into `offered` under the same id.
 - **No:** run `ledger.ts update --id <id> --json '{"status":"dropped"}'`.
