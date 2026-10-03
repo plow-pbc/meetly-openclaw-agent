@@ -1199,6 +1199,11 @@ for (const args of [{ question: "Should Ana bring the budget?" }, { start: "2026
   assert.ok(!("ownerAskSent" in result));
   assert.equal(f.ownerLines.length, 0);
   assert.ok(f.request().pendingOwner);
+  assert.deepEqual(f.request().lastNudge, {
+    fingerprint: JSON.stringify(["question" in args ? "owner-question" : "time-approval", f.request().pendingOwner!.askedAt]),
+    at: new Date(now).toISOString(),
+  });
+  assert.equal(reserveNudges(f.read(), now + 5 * 60_000).text, null, "the poll must not duplicate the email owner handoff");
   assert.ok("error" in await f.act(f.ctx, "ask_owner", args));
   assert.equal(f.ownerLines.length, 0);
 });

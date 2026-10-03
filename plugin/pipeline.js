@@ -10,7 +10,7 @@ const record = async (event, ctx) => {
 
 export function registerPipelineHooks(api, recordReply = record) {
   api.on("message_received", async (event, ctx) => {
-    if (ctx.channelId !== "plow" || ctx.accountId !== "chat" || !ctx.conversationId) return;
+    if (ctx.channelId !== "plow" || (ctx.accountId !== "chat" && ctx.accountId !== "email") || !ctx.conversationId) return;
     try { await recordReply(event, { ...ctx, conversationId: ctx.conversationId.replace(/^plow:/, "") }); }
     catch { api.logger.info("meetly pipeline: could not record guest reply"); }
   });

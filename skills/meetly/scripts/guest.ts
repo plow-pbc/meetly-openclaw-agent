@@ -211,13 +211,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     pendingOwner = { start: checked.slot.start, end: checked.slot.end, askedAt };
     question = `Can we meet ${localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(checked.slot.start))} (${config.timezone}), outside the meeting window?`;
   }
-  if (request.channel === "email") {
-    patch(request, { pendingOwner });
-    return { ownerQuestion: question, guestName: request.name, topic: meetingTopic(request),
-    replyToOwner: true, message: "Ask the owner in your final text. Do not send an email to the thread or send a separate DM." };
-  }
   // Save the question and its notification together so the poll cannot send a
-  // second owner ask while this DM is in flight or its delivery is uncertain.
+  // second owner ask while the notification is in flight or its delivery is uncertain.
   updateJson<Ledger>(file("ledger.json"), EMPTY, ledger => {
     unchanged(request, ledger.requests.find(r => r.id === request.id)!);
     const next = updateRequest(ledger, request.id, { pendingOwner }, Date.now());
@@ -226,6 +221,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
       at: new Date(Date.now()).toISOString(),
     } } : r) };
   });
+  if (request.channel === "email") return { ownerQuestion: question, guestName: request.name, topic: meetingTopic(request),
+    replyToOwner: true, message: "Ask the owner in your final text. Do not send an email to the thread or send a separate DM." };
   // Keep the slot on an uncertain send so another turn cannot duplicate it.
   try {
     const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
