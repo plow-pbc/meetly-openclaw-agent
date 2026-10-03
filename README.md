@@ -177,8 +177,7 @@ message is skipped.
   opened is recognized from its ledger and handled as that one meeting.
 - **Opening groups.** Only in the owner's DM, with the base's
   `plow_start_thread`; new groups are untrusted. Guests receive the six
-  scheduling tools in `PLOW_GUEST_TOOLS`; owner turns keep full tools. Existing
-  trusted groups keep their grants until the owner changes them. An uncertain
+  scheduling tools in `PLOW_GUEST_TOOLS`; owner turns keep full tools. An uncertain
   delivery is recorded without a chat and never retried automatically; Meetly
   may retry after the owner explicitly clears the recorded attempt. Meeting
   confirmations and approval asks stay in that group; the owner is a participant.

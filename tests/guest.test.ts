@@ -134,6 +134,15 @@ for (const [action, args] of actions) test(`${action} links the sender's unlinke
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE|owner@example.com|hold-one|hold-two|approved/);
 });
 
+test("decline requires the guest's clear refusal, never an other-times refusal", () => {
+  const descriptions = new Map<string, string>();
+  registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
+    const tool = factory(context); descriptions.set(tool.name, tool.description);
+  } });
+  assert.match(descriptions.get("meetly_decline")!, /Only use when the guest clearly declines the meeting/);
+  assert.match(descriptions.get("meetly_decline")!, /A refusal from meetly_other_times is not a guest decline/);
+});
+
 test("ordinary plugin tool factories retain context, have no identity arguments, and declare their contracts", () => {
   const names: string[] = [];
   const hooks: string[] = [];
