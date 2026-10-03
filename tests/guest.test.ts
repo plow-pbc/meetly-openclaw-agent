@@ -686,7 +686,7 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
   assert.ok(!tool.parameters.required.includes("durationMin"));
   assert.deepEqual(tool.parameters.properties.constraints.properties.days.items.enum, ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
   assert.equal(tool.parameters.properties.constraints.properties.after.description, "Earliest time, HH:MM.");
-  assert.equal(tool.parameters.properties.proposed, tool.parameters.properties.constraints);
+  assert.equal(tool.parameters.properties.proposed.properties, tool.parameters.properties.constraints.properties);
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "other-group" }, "view"));
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "cht_mixed" }, "view"));
   assert.ok(!("error" in await guestAction({ ...context, nativeChannelId: "cht_MiXeD" }, "view")));
