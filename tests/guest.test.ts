@@ -277,8 +277,24 @@ for (const action of ["pick", "ask_owner"] as const) test(`${action} cannot bypa
   assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
-test("empty intersection leaves the existing offer and holds intact", async t => {
+test("a rejected Thursday counterproposal returns fresh times within the owner's conditions", async t => {
   const f = fixture(t);
+  const result = await guestAction(context, "other_times", { days: ["thu"], from: "2026-10-08", to: "2026-10-08", after: "16:00", before: "18:00" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true);
+  assert.deepEqual(f.request().constraints, f.ledger.requests[0]!.constraints);
+  assert.ok(f.request().offered.length > 0);
+  for (const offer of f.request().offered) {
+    assert.ok(["2026-10-05", "2026-10-06"].includes(offer.start.slice(0, 10)));
+    assert.ok(offer.start.slice(11, 16) >= "10:00" && offer.end.slice(11, 16) <= "15:00");
+    assert.ok(!offers.some(old => Date.parse(old.start) === Date.parse(offer.start)));
+  }
+  assert.ok(offers.every(old => f.events.get(old.holdId)!.status === "cancelled"));
+});
+
+test("no fallback availability leaves the existing offer and holds intact", async t => {
+  const f = fixture(t);
+  f.events.set("busy", event("busy", "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z"));
   const result = await guestAction(context, "other_times", { days: ["wed"] });
   assert.ok("error" in result); assert.deepEqual(f.read(), f.ledger);
   assert.ok(f.commands.every(c => c[2] === "events"));
