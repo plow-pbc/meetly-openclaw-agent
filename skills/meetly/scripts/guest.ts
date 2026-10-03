@@ -1,6 +1,6 @@
 // Scheduling actions scoped to the sender and conversation supplied by OpenClaw.
 import { fetchBusy, type BusyResult } from "./busy.ts";
-import { loadConfig, minutes, parseTime, type Config, type Day } from "./config.ts";
+import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
 import { findByChat, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
@@ -111,10 +111,7 @@ async function pick(request: Request, config: Config, start: string) {
 
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
   const preferred = preferences(args);
-  // A single date and a duration-sized range identify an exact requested slot.
-  const start = args.start || (preferred.from && preferred.from === preferred.to && preferred.after && preferred.before
-    && minutes(preferred.before) - minutes(preferred.after) === request.durationMin
-    ? `${preferred.from}T${preferred.after}` : undefined);
+  const start = args.start;
   if (start) {
     const checked = await check(request, config, start);
     if (checked.free && checked.outsideHours) return askOwner(request, config, { start }, sendOwner);

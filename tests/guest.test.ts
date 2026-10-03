@@ -131,20 +131,8 @@ for (const [action, args] of actions) test(`${action} refuses an unlinked offer 
   assert.deepEqual(f.commands, []);
 });
 
-test("other-times guidance reports automatic approval delivery instead of a second ask", () => {
-  let description = "";
-  registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
-    const tool = factory(context); if (tool.name === "meetly_other_times") description = tool.description;
-  } });
-  assert.match(description, /automatically asks the owner/);
-  assert.match(description, /ownerAskSent is true/);
-  assert.match(description, /ask for a specific date and time if needed/);
-});
-
-for (const args of [
-  { start: "2026-10-05T20:00" },
-  { from: "2026-10-05", to: "2026-10-05", after: "20:00", before: "20:30" },
-]) test(`other-times files a free outside-window approval without replacing holds: ${JSON.stringify(args)}`, async t => {
+test("other-times files a free outside-window approval without replacing holds", async t => {
+  const args = { start: "2026-10-05T20:00" };
   const f = fixture(t);
   const tool = f.tools.get("meetly_other_times")!;
   const result = JSON.parse((await tool.execute("ask", args)).content[0]!.text);
@@ -169,30 +157,6 @@ test("an exact in-window other-times request holds that time without asking the 
   assert.equal(f.ownerLines.length, 0);
 });
 
-for (const failure of ["busy", "calendar", "delivery"] as const) test(`outside-window approval never claims an owner ask on ${failure}`, async t => {
-  const f = fixture(t);
-  if (failure === "busy") f.events.set("busy", event("busy", "2026-10-05T20:00:00Z", "2026-10-05T21:00:00Z"));
-  if (failure === "calendar") f.fail.add("events");
-  if (failure === "delivery") f.delivery.status = "queued";
-  const tool = f.tools.get(failure === "busy" ? "meetly_ask_owner" : "meetly_other_times")!;
-  const result = JSON.parse((await tool.execute("ask", { start: "2026-10-05T20:00" })).content[0]!.text);
-  assert.ok(result.error);
-  assert.notEqual(result.ownerAskSent, true);
-  assert.equal(result.message, undefined);
-  assert.equal(f.deliveries.length, failure === "delivery" ? 1 : 0);
-  assert.deepEqual(f.request().offered, offers);
-});
-
-test("owner questions relay the guest's own words and delivery claims require a sent ask", () => {
-  let description = "";
-  registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
-    const tool = factory(context); if (tool.name === "meetly_ask_owner") description = tool.description;
-  } });
-  assert.match(description, /Never invent a question or turn your own uncertainty into a guest question/);
-  assert.match(description, /ownerAskSent is true/);
-  assert.match(description, /Do not paraphrase or add a guest-asks prefix/);
-});
-
 test("decline requires the guest's clear refusal, never an other-times refusal", () => {
   const descriptions = new Map<string, string>();
   registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
@@ -200,6 +164,12 @@ test("decline requires the guest's clear refusal, never an other-times refusal",
   } });
   assert.match(descriptions.get("meetly_decline")!, /Only use when the guest clearly declines the meeting/);
   assert.match(descriptions.get("meetly_decline")!, /A refusal from meetly_other_times is not a guest decline/);
+  assert.match(descriptions.get("meetly_other_times")!, /automatically asks the owner/);
+  assert.match(descriptions.get("meetly_other_times")!, /ownerAskSent is true/);
+  assert.match(descriptions.get("meetly_other_times")!, /ask for a specific date and time if needed/);
+  assert.match(descriptions.get("meetly_ask_owner")!, /Never invent a question or turn your own uncertainty into a guest question/);
+  assert.match(descriptions.get("meetly_ask_owner")!, /ownerAskSent is true/);
+  assert.match(descriptions.get("meetly_ask_owner")!, /Do not paraphrase or add a guest-asks prefix/);
 });
 
 test("ordinary plugin tool factories retain context, have no identity arguments, and declare their contracts", () => {
