@@ -312,6 +312,38 @@ test("pendingOwner is set, listed and cleared", () => {
   assert.deepEqual(pendingOwnerList(l), []);
 });
 
+test("pending questions validate, list for offered and booked meetings, and clear", () => {
+  let l = addRequest(empty(), input(), T0, "r_1");
+  const pending = { question: "Which project?", askedAt: new Date(T0).toISOString() };
+  l = updateRequest(l, "r_1", { pendingOwner: pending }, T0);
+  assert.deepEqual(pendingOwnerList(l).map(r => r.pendingOwner), [pending]);
+  for (const invalid of [
+    { ...pending, question: " " }, { ...pending, question: "x".repeat(501) },
+    { ...pending, askedAt: "yesterday" }, { ...pending, start: new Date(T0).toISOString() },
+  ]) assert.throws(() => updateRequest(l, "r_1", { pendingOwner: invalid }, T0), /pendingOwner/);
+  l = updateRequest(l, "r_1", { status: "booked" }, T0);
+  assert.equal(pendingOwnerList(l).length, 1);
+  for (const status of ["dropped", "expired"] as const) {
+    assert.deepEqual(pendingOwnerList(updateRequest(l, "r_1", { status }, T0)), []);
+  }
+  l = updateRequest(l, "r_1", { pendingOwner: null }, T0);
+  assert.deepEqual(pendingOwnerList(l), []);
+});
+
+test("CLI lists and clears a general owner question using the existing pending command", () => {
+  const home = tmpHome();
+  const env = { MEETLY_HOME: home };
+  const id = cli("ledger.ts", ["add", "--json", JSON.stringify(input({ chatUid: "chat_1" }))], env).json.request.id;
+  const pendingOwner = { question: "Which project?", askedAt: new Date(T0).toISOString() };
+  assert.equal(cli("ledger.ts", ["update", "--id", id, "--json", JSON.stringify({ pendingOwner })], env).status, 0);
+  const pending = cli("ledger.ts", ["pending"], env).json.requests;
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].chatUid, "chat_1");
+  assert.deepEqual(pending[0].pendingOwner, pendingOwner);
+  assert.equal(cli("ledger.ts", ["update", "--id", id, "--json", '{"pendingOwner":null}'], env).status, 0);
+  assert.deepEqual(cli("ledger.ts", ["pending"], env).json.requests, []);
+});
+
 test("CLI add, find, update, expired and cleanup round-trip", () => {
   const home = tmpHome();
   const env = { MEETLY_HOME: home };

@@ -56,8 +56,8 @@ signed as Meetly.
 - **Offers only free time, inside your hours.** Your calendar shows up as free
   slots within the days and hours you set. Anything else is "an existing
   commitment" — never an event name or detail. If the other person can only
-  do a time outside your hours, Meetly asks you in that group and books it only on
-  your yes there. A yes in your DM does not approve the group request.
+  do a time outside your hours, Meetly asks you privately and books it only on
+  your yes, then confirms in the group. Unclear meeting questions also go to your DM.
 - **Holds expire.** No answer in 48 hours: the holds are deleted and the
   group is told the times were released.
 - **Overlaps only with your word.** Meetly books over an existing event only
@@ -179,8 +179,10 @@ message is skipped.
   tools in `PLOW_GUEST_TOOLS`; owner turns keep full tools. Existing trusted
   groups stay trusted until the owner changes them. An uncertain
   delivery is recorded without a chat and never retried automatically; Meetly
-  may retry after the owner explicitly clears the recorded attempt. Meeting
-  confirmations and approval asks stay in that group; the owner is a participant.
+  may retry after the owner explicitly clears the recorded attempt. Meeting confirmations
+  stay in the group. `meetly_ask_owner` privately sends a question or out-of-hours
+  approval ask to the owner's DM, with one open ask per request. The owner's
+  DM answer returns to that request's group through `plow_reply_to`.
 - **Scripts.** Small TypeScript CLIs in `skills/meetly/scripts/`, run directly
   by the image's Node (`node <script>.ts`, no build): setup, the message
   cursor, the request ledger, busy/free-slot math in your time zone, cron

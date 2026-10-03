@@ -3,7 +3,7 @@ import { fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { parseEvent, type EventInfo } from "./event.ts";
-import { findByChat, findOpenByHandle, sameHandle, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Offer, type Patch, type Request } from "./ledger.ts";
+import { findByChat, findOpenByHandle, OWNER_QUESTION_LIMIT, sameHandle, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Offer, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { runOnMac } from "./mac.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
@@ -13,7 +13,8 @@ import { DAYS, localIso, wallParts } from "./time.ts";
 
 export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
-export type GuestArgs = Constraints & { start?: string; format?: Format; location?: string };
+export type GuestArgs = Constraints & { start?: string; question?: string; format?: Format; location?: string };
+type SendOwner = (text: string) => Promise<void>;
 const EMPTY: Ledger = { requests: [] };
 
 function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
@@ -51,7 +52,7 @@ function view(request: Request, config: Config) {
     topic: request.topic, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
     offered: request.status === "offered" ? request.offered.map(time) : [],
     ...(request.booked ? { booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
-    ...(request.pendingOwner ? { pendingOwner: time(request.pendingOwner) } : {}),
+    ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
     ...(request.holdCleanup?.length ? { cleanupPending: true } : {}),
   };
 }
@@ -204,7 +205,40 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs) {
     ? { message: "The requested preferences are unavailable. Offer these new times within the owner's conditions instead." } : {}) };
 }
 
-export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}): Promise<object> {
+async function askOwner(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
+  if (request.pendingOwner) return { error: "A question is already open with the owner. Wait for their answer." };
+  if ((args.question === undefined) === (args.start === undefined)) return { error: "Provide either a question or a start time, not both." };
+  if (!sendOwner) return { error: "Owner messaging is unavailable. Nothing was sent." };
+  let pendingOwner: PendingOwner;
+  let question: string;
+  const askedAt = new Date(Date.now()).toISOString();
+  if (args.question !== undefined) {
+    if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
+    question = args.question.replace(/\s+/g, " ").trim().slice(0, OWNER_QUESTION_LIMIT);
+    pendingOwner = { question, askedAt };
+  } else {
+    const checked = await check(request, config, args.start!);
+    if (!checked.free) return { error: "That time is not available. Offer the current times or ask for other times." };
+    if (!checked.outsideHours) return { error: "That time is within working hours. Ask for other times to get an offer." };
+    pendingOwner = { start: checked.slot.start, end: checked.slot.end, askedAt };
+    question = `Can we meet ${localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(checked.slot.start))} (${config.timezone}), outside your working hours?`;
+  }
+  updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
+    const latest = l.requests.find(r => r.id === request.id);
+    if (!latest || latest.pendingOwner || latest.status !== request.status) throw new Error("request changed");
+    return updateRequest(l, request.id, { pendingOwner }, Date.now());
+  });
+  // Keep the slot on an uncertain send so another turn cannot duplicate it.
+  try {
+    const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
+    await sendOwner(`${label(request.name ?? "Your guest")} in your ${label(request.topic)} group asks: ${JSON.stringify(question)} — what should I tell them?`);
+  } catch {
+    return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
+  }
+  return { ownerName: config.ownerName, message: "I will check with the owner and get back to you here." };
+}
+
+export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
   try {
     let request = resolveRequest(ctx);
     if (!request) return { error: "No scheduling request matches you in this conversation." };
@@ -225,6 +259,9 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
       } else request = patch(request, change);
       return view(request, config);
     }
+    if (action === "ask_owner" && (request.status === "offered" || (request.status === "booked" && args.question !== undefined))) {
+      return await askOwner(request, config, args, sendOwner);
+    }
     if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
     if (action === "decline") {
       request = patch(request, { status: "dropped", pendingOwner: null });
@@ -233,13 +270,6 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     if (action === "other_times") return await otherTimes(request, config, args);
     if (!args.start) return { error: "Provide a start time." };
     if (action === "pick") return await pick(request, config, args.start);
-    if (action === "ask_owner") {
-      const checked = await check(request, config, args.start);
-      if (!checked.free) return { error: "That time is not available. Offer the current times or ask for other times." };
-      if (!checked.outsideHours) return { error: "That time is within working hours. Ask for other times to get an offer." };
-      request = patch(request, { pendingOwner: { start: checked.slot.start, end: checked.slot.end, askedAt: new Date(Date.now()).toISOString() } });
-      return { ...view(request, config), message: "Ask the owner in this thread whether to book this out-of-hours time. Nothing is booked; wait for their own turn." };
-    }
     return { error: "Unknown scheduling action." };
   } catch {
     // Backend output can contain private event details, contact data, and accounts.

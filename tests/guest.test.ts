@@ -11,7 +11,7 @@ import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { tmpHome } from "./helpers.ts";
 
 const now = Date.parse("2026-10-02T08:00:00Z");
-const context = { messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "chat-one", requesterSenderId: "+15551234567" };
+const context = { messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "chat-one", requesterSenderId: "+15551234567", config: {} };
 const offers = [
   { start: "2026-10-05T10:00:00Z", end: "2026-10-05T10:30:00Z", holdId: "hold-one", account: "owner@example.com" },
   { start: "2026-10-06T10:00:00Z", end: "2026-10-06T10:30:00Z", holdId: "hold-two", account: "owner@example.com" },
@@ -98,11 +98,34 @@ function fixture(t: TestContext) {
     if (previousToken === undefined) delete process.env.PLOW_MCP_BRIDGE_TOKEN; else process.env.PLOW_MCP_BRIDGE_TOKEN = previousToken;
     rmSync(home, { recursive: true, force: true });
   });
+  const ownerLines: string[] = [];
+  const deliveries: Record<string, any>[] = [];
+  const routes: Record<string, any>[] = [];
+  const delivery = { status: "sent", fail: false };
+  const ownerRoute = { agentId: "main", sessionKey: "agent:main:main" };
+  const sendOwner = async (text: string) => { ownerLines.push(text); };
+  const outbound = async () => ({
+    buildOutboundSessionContext: (args: object) => args,
+    sendDurableMessageBatch: async (args: Record<string, any>) => {
+      assert.ok(read().requests[0]!.pendingOwner, "save the question before sending");
+      deliveries.push(args);
+      if (delivery.fail) throw new Error("PRIVATE TRANSPORT ERROR");
+      ownerLines.push(args.payloads[0].text);
+      return { status: delivery.status };
+    },
+  });
   const tools = new Map<string, { execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
-  registerGuestTools({ registerTool(factory: (ctx: GuestContext) => { name: string; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
+  registerGuestTools({ runtime: { channel: {
+    routing: { resolveAgentRoute(args: object) {
+      assert.deepEqual(args, { cfg: context.config, channel: "plow", accountId: "chat", peer: { kind: "direct", id: "plow-owner" } });
+      return ownerRoute;
+    } },
+    session: { resolveStorePath: () => "/sessions", updateLastRoute: async (args: Record<string, any>) => { routes.push(args); } },
+  } }, registerTool(factory: (ctx: GuestContext) => { name: string; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
     const tool = factory(context); tools.set(tool.name, tool);
-  } }, guestAction);
-  return { home, read, save, ledger, events, commands, fail, tools, request: () => read().requests[0]! };
+  } }, guestAction, outbound);
+  const act = (ctx: GuestContext, action: GuestAction, args: GuestArgs = {}) => guestAction(ctx, action, args, sendOwner);
+  return { home, read, save, ledger, events, commands, fail, tools, act, ownerLines, deliveries, routes, delivery, request: () => read().requests[0]! };
 }
 
 for (const [action, args] of actions) test(`${action} refuses missing or mismatched runtime sender/chat and ignores identity arguments`, async t => {
@@ -121,7 +144,7 @@ for (const [action, args] of actions) test(`${action} links the sender's unlinke
   delete f.ledger.requests[0]!.chatUid;
   f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "other", chatUid: "other-chat", handle: "+15557654321" });
   f.save(f.ledger);
-  const result = await guestAction(context, action, args);
+  const result = await f.act(context, action, args);
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().chatUid, context.nativeChannelId);
   assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
@@ -210,10 +233,90 @@ test("decline drops the open request, clears approval, deletes holds and queues 
 
 test("outside-hours request records approval without creating or booking anything", async t => {
   const f = fixture(t);
-  const result = await guestAction(context, "ask_owner", { start: "2026-10-05T20:00" });
+  const result = await f.act(context, "ask_owner", { start: "2026-10-05T20:00" });
   assert.ok(!("error" in result)); assert.equal(f.request().status, "offered");
   assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T20:00:00+00:00", end: "2026-10-05T20:30:00+00:00", askedAt: new Date(now).toISOString() });
   assert.ok(f.commands.every(c => c[2] === "events"));
+  assert.match(f.ownerLines[0]!, /Guest in your Lunch group asks: .*outside your working hours/);
+});
+
+test("ask-owner sends a capped human question to the fixed owner DM and mirrors the owner session", async t => {
+  const f = fixture(t);
+  const question = 'Could we discuss "the new project"? ' + "x".repeat(600);
+  const result = await f.tools.get("meetly_ask_owner")!.execute("ask", { question, to: "intruder", chatUid: "intruder" });
+  assert.doesNotMatch(JSON.stringify(result), /error|intruder/);
+  const saved = { question: question.slice(0, 500), askedAt: new Date(now).toISOString() };
+  assert.deepEqual(f.request().pendingOwner, saved);
+  assert.deepEqual(f.commands, []);
+  assert.deepEqual(f.ownerLines, [`Guest in your Lunch group asks: ${JSON.stringify(saved.question)} — what should I tell them?`]);
+  assert.doesNotMatch(f.ownerLines[0]!, /chat-one|request-one|plow_reply_to|ledger|owner@example.com/);
+  assert.deepEqual(f.deliveries, [{
+    cfg: {}, channel: "plow", accountId: "chat", to: "plow-owner", payloads: [{ text: f.ownerLines[0] }],
+    session: { cfg: {}, agentId: "main", sessionKey: "agent:main:main", conversationType: "direct" },
+    mirror: { agentId: "main", sessionKey: "agent:main:main" }, skipQueue: true,
+  }]);
+  assert.deepEqual(f.routes, [{ storePath: "/sessions", sessionKey: "agent:main:main", channel: "plow", accountId: "chat", to: "plow-owner", createIfMissing: true }]);
+  const view = await guestAction(context, "view");
+  assert.deepEqual((view as { pendingOwner: object }).pendingOwner, { question: saved.question });
+});
+
+test("a second time approval cannot replace an open ask", async t => {
+  const f = fixture(t);
+  await f.act(context, "ask_owner", { start: "2026-10-05T20:00" });
+  const pending = f.request().pendingOwner;
+  const reads = f.commands.length;
+  const result = await f.act(context, "ask_owner", { start: "2026-10-06T20:00" });
+  assert.match(JSON.stringify(result), /already open/);
+  assert.deepEqual(f.request().pendingOwner, pending);
+  assert.equal(f.commands.length, reads);
+  assert.equal(f.ownerLines.length, 1);
+});
+
+test("questions and time approvals share one slot, including concurrent asks", async t => {
+  const f = fixture(t);
+  const ask = f.tools.get("meetly_ask_owner")!;
+  const results = await Promise.all([ask.execute("one", { start: "2026-10-05T20:00" }), ask.execute("two", { question: "Which project?" })]);
+  assert.equal(results.filter(r => /error/.test(r.content[0]!.text)).length, 1);
+  assert.equal(f.deliveries.length, 1);
+  const pending = f.request().pendingOwner;
+  const result = await ask.execute("three", { start: "2026-10-06T20:00" });
+  assert.match(result.content[0]!.text, /already open/);
+  assert.deepEqual(f.request().pendingOwner, pending);
+});
+
+for (const failure of ["unknown", "throw"] as const) test(`ask-owner ${failure} keeps the pending slot and never retries or claims delivery`, async t => {
+  const f = fixture(t);
+  f.delivery.status = "queued";
+  f.delivery.fail = failure === "throw";
+  const ask = f.tools.get("meetly_ask_owner")!;
+  const result = await ask.execute("one", { question: "Which project?" });
+  assert.match(result.content[0]!.text, /could not confirm delivery/);
+  assert.doesNotMatch(result.content[0]!.text, /PRIVATE/);
+  assert.ok(f.request().pendingOwner);
+  assert.match((await ask.execute("two", { question: "Which project?" })).content[0]!.text, /already open/);
+  assert.equal(f.deliveries.length, 1);
+});
+
+test("ask-owner rejects malformed or unscoped questions without sending", async t => {
+  const f = fixture(t);
+  const ask = f.tools.get("meetly_ask_owner")!;
+  for (const args of [{}, { question: " " }, { question: 123 }, { question: "Where?", start: offers[0]!.start }]) {
+    assert.match((await ask.execute("bad", args)).content[0]!.text, /error/);
+  }
+  assert.match(JSON.stringify(await f.act({ ...context, nativeChannelId: "other-chat" }, "ask_owner", { question: "Where?" })), /No scheduling request/);
+  assert.deepEqual(f.read(), f.ledger);
+  assert.deepEqual(f.ownerLines, []);
+  assert.deepEqual(f.commands, []);
+});
+
+test("a booked meeting can have a general question without changing the booking", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.status = "booked"; f.save(f.ledger);
+  const result = await f.tools.get("meetly_ask_owner")!.execute("ask", { question: "Which entrance?" });
+  assert.doesNotMatch(result.content[0]!.text, /error/);
+  assert.equal(f.request().status, "booked");
+  assert.deepEqual(f.commands, []);
+  assert.equal(f.deliveries.length, 1);
 });
 
 test("format before and after booking updates the event and records only the backend Meet link", async t => {
@@ -231,7 +334,7 @@ test("format before and after booking updates the event and records only the bac
 for (const status of ["booked", "dropped", "expired"] as const) test(`${status} stays this chat's request; guest cannot rebook or cancel it`, async t => {
   const f = fixture(t); f.ledger.requests[0]!.status = status; f.save(f.ledger);
   for (const [action, args] of actions.filter(([a]) => a !== "format")) {
-    const result = await guestAction(context, action, args);
+    const result = await f.act(context, action, args);
     assert.equal((result as { status: string }).status, status);
   }
   assert.deepEqual(f.commands, []); assert.deepEqual(f.read(), f.ledger);
@@ -240,7 +343,7 @@ for (const status of ["booked", "dropped", "expired"] as const) test(`${status} 
 test("calendar failure leaks no event data and leaves the offer untouched", async t => {
   const f = fixture(t); f.fail.add("events");
   for (const action of ["pick", "other_times", "ask_owner"] as const) {
-    const result = await guestAction(context, action, { start: offers[0]!.start });
+    const result = await f.act(context, action, { start: offers[0]!.start });
     assert.ok("error" in result); assert.doesNotMatch(JSON.stringify(result), /PRIVATE|owner@example.com/);
   }
   assert.deepEqual(f.read(), f.ledger);
