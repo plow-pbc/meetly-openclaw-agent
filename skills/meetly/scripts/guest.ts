@@ -32,7 +32,6 @@ function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
   const open = ledger.requests.find(r => r.status === "offered" && identity(r.handle) === senderId);
   if (open && ((open.chatUid && open.chatUid !== chat) || (linked?.status === "offered" && linked.id !== open.id))) return;
   const request = open ?? linked;
-  if (request?.startedInGroup && request.chatUid !== chat) return;
   return request && identity(request.handle) === senderId && request.status !== "asked" ? request : undefined;
 }
 
@@ -55,11 +54,11 @@ function patch(request: Request, change: Patch): Request {
     .requests.find(r => r.id === request.id)!;
 }
 
-function view(request: Request, config: Config) {
+export function view(request: Request, config: Config) {
   const format = localeFormatter(request.locale ?? "en-US", config.timezone);
   const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });
   return {
-    status: request.status, startedInGroup: request.startedInGroup === true, ownerName: config.ownerName, timezone: config.timezone,
+    status: request.status, origin: request.origin, ownerName: config.ownerName, timezone: config.timezone,
     topic: request.topic, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
     offered: request.status === "offered" ? request.offered.map(time) : [],
     ...(request.booked ? { booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
