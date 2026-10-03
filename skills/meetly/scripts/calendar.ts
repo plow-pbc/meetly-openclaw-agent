@@ -235,6 +235,9 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       }
       if (intent.failed) await fail();
       if (step.skipped) continue;
+      if (step.verb === "update" && step.handle && step.output === undefined) {
+        throw new Error(`calendar write unresolved for ${id}; approval is pending, run resume`);
+      }
       if (step.output === undefined) {
         const output = await call(step.verb === "create"
           ? ["events", "primary", "--from", step.start, "--to", step.end, "--private-prop-filter", `meetlyOperation=${step.token}`, "--all-pages", "--json"]

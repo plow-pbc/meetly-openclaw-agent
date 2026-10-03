@@ -247,7 +247,6 @@ test("a delayed Latch approval resumes its handle without sending the update aga
   const f = fixture(t);
   let saved!: MacCommand, sends = 0, ready = false;
   const command = async (cmd: MacCommand) => {
-    if (cmd.argv[2] === "event" && saved && !ready) return undefined;
     if (cmd.argv[2] !== "update") return f.command(cmd);
     saved = cmd; sends++; return { handle: "approval-one" };
   };
@@ -256,6 +255,9 @@ test("a delayed Latch approval resumes its handle without sending the update aga
     return ready ? f.command(saved) : { handle };
   };
   await assert.rejects(calendarAction("r_one", { action: "book", start }, { ...f.options, command, poll }), /unresolved/);
+  await assert.rejects(calendarAction("r_one", { action: "resume" }, { ...f.options, command, poll }), /unresolved/);
+  assert.equal(f.calls.filter(c => c[2] === "event").length, 1, "only the pre-write read is allowed while approval is pending");
+  assert.equal(f.events.get("hold-one").status, "confirmed");
   ready = true;
   await calendarAction("r_one", { action: "resume" }, { ...f.options, command, poll });
   assert.equal(f.read().status, "booked");
