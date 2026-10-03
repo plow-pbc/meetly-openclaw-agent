@@ -9,7 +9,7 @@ import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { durationFor, loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
 import type { Busy } from "./busy.ts";
-import { intersectConstraints, type Ledger, type Meal } from "./ledger.ts";
+import { requestEvents, intersectConstraints, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { addDays, DAYS, localIso, wallParts, zonedToUtc, type Day } from "./time.ts";
@@ -227,11 +227,15 @@ if (isMain(import.meta.url)) {
     const now = values.now !== undefined ? Date.parse(values.now) : Date.now();
     if (Number.isNaN(now)) throw new Error(`--now is not a time: ${values.now}`);
     const degraded = input.degraded ?? [];
+    const request = values.request === undefined ? undefined
+      : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
+    if (values.request !== undefined && (!request || !["offered", "booked"].includes(request.status))) throw new Error("--request needs an offered or booked request");
+    if (request) input.busy = input.busy.filter(b => !requestEvents(request).some(o => o.holdId === b.id && o.account === b.account));
     if (values.at !== undefined) {
-      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "request"] as const) {
+      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
-      const check: Parameters<typeof checkTime>[0] = { now, config, meal, busy: input.busy, start: values.at, allowOverlap: input.allowOverlap };
+      const check: Parameters<typeof checkTime>[0] = { now, config, meal: request?.meal ?? meal, durationMin: request?.durationMin, locale: request?.locale, busy: input.busy, start: values.at, allowOverlap: request?.allowOverlap ?? input.allowOverlap };
       if (input.unknownAfter !== undefined) check.unknownAfter = input.unknownAfter;
       if (values.duration !== undefined) check.durationMin = positiveInt(values.duration, "--duration");
       if (values["allow-overlap"]) check.allowOverlap = values["allow-overlap"];
@@ -260,16 +264,14 @@ if (isMain(import.meta.url)) {
       for (const e of values.exclude) if (Number.isNaN(Date.parse(e))) throw new Error(`--exclude is not a time: ${e}`);
       q.exclude = values.exclude;
     }
-    if (values.request !== undefined) {
-      const request = readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
-      if (!request || request.status !== "offered") throw new Error("--request needs an offered request");
+    if (request) {
       const narrowed = intersectConstraints(request.constraints, q);
       Object.assign(q, narrowed);
       q.meal = request.meal;
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
       q.allowOverlap = [...new Set([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])])];
-      q.busy = q.busy.filter(b => !request.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
+      if (request.booked) q.exclude = [...(q.exclude ?? []), request.booked.start];
     }
     return { ...findSlots(q), degraded };
   });

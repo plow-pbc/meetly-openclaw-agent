@@ -407,7 +407,7 @@ test("format before and after booking updates the event and records only the bac
   assert.doesNotMatch(JSON.stringify(result), /https:\/\/meet|PRIVATE/);
 });
 
-for (const status of ["booked", "dropped", "expired"] as const) test(`${status} stays this chat's request; guest cannot rebook or cancel it`, async t => {
+for (const status of ["dropped", "expired"] as const) test(`${status} stays this chat's request; guest cannot rebook or cancel it`, async t => {
   const f = fixture(t); f.ledger.requests[0]!.status = status; f.ledger.requests[0]!.format = "phone"; f.save(f.ledger);
   for (const [action, args] of actions.filter(([a]) => a !== "format")) {
     const result = await f.act(context, action, args);
@@ -964,4 +964,54 @@ test("guest next_week uses the source timestamp and owner timezone before filter
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.ok(f.request().offered.length > 0);
   assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-13")), JSON.stringify(f.request().offered));
+});
+
+test("guest reschedules and cancels this thread's booked lunch through the calendar writer", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.meal = "lunch";
+  f.ledger.requests[0]!.offered = [{ ...offers[0]!, start: "2026-10-05T12:00:00Z", end: "2026-10-05T12:30:00Z" }];
+  f.events.set("hold-one", event("hold-one", "2026-10-05T12:00:00Z", "2026-10-05T12:30:00Z"));
+  f.save(f.ledger);
+  await f.act(context, "pick", { start: "2026-10-05T12:00:00Z" });
+  const booked = f.request().booked;
+  const offered = await f.act(context, "other_times", { start: "2026-10-06T12:00" });
+  assert.ok(!("error" in offered), JSON.stringify(offered));
+  assert.equal("offered" in offered && (offered.offered as unknown[]).length, 1);
+  assert.deepEqual(f.request().booked, booked);
+  assert.equal(f.request().status, "booked");
+  const moved = await f.act(context, "pick", { start: "2026-10-06T12:00:00Z" });
+  assert.ok(!("error" in moved), JSON.stringify(moved));
+  assert.equal(f.request().eventId, "hold-one");
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse("2026-10-06T12:00:00Z"));
+  const move = f.commands.filter(c => c[2] === "update").at(-1)!;
+  assert.equal(move[4], "hold-one");
+  assert.equal(move[move.indexOf("--send-updates") + 1], "all");
+  assert.ok(!move.includes("--attendees"), "preserve existing invitees on a move");
+  assert.equal(f.events.get("new-1")!.status, "cancelled");
+  const cancelled = await f.act(context, "decline");
+  assert.equal("status" in cancelled && cancelled.status, "dropped");
+  assert.equal(f.events.get("hold-one")!.status, "cancelled");
+  const deletion = f.commands.find(c => c[2] === "delete" && c[4] === "hold-one")!;
+  assert.equal(deletion[deletion.indexOf("--send-updates") + 1], "all");
+  assert.equal(f.read().requests.length, 1);
+});
+
+test("booked guest picks require this thread's current replacement and preserve owner conditions", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  const booked = f.request().booked;
+  assert.ok("error" in await f.act(context, "pick", { start: offers[1]!.start }));
+  await f.act(context, "other_times", { days: ["thu"], after: "16:00" });
+  const replacement = f.request().reoffer!;
+  assert.ok(replacement);
+  assert.ok(replacement.offered.every(o => ["2026-10-05", "2026-10-06"].includes(o.start.slice(0, 10)) && o.start.slice(11, 16) < "15:00"));
+  for (const ctx of [{ ...context, nativeChannelId: "another-chat" }, { ...context, requesterSenderId: "+15559999999" }]) {
+    assert.ok("error" in await f.act(ctx, "pick", { start: replacement.offered[0]!.start }));
+    assert.ok("error" in await f.act(ctx, "decline"));
+  }
+  await calendarAction("request-one", { action: "expire" }, { now: () => now + 49 * 3600_000 });
+  assert.equal(f.request().reoffer, undefined);
+  assert.ok("error" in await f.act(context, "pick", { start: replacement.offered[0]!.start }));
+  assert.deepEqual(f.request().booked, booked);
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
 });

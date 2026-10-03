@@ -425,3 +425,137 @@ test("an offline preflight after a hold was created keeps the journal for recove
   assert.deepEqual(pendingCalendarWrites(), []);
   assert.equal(f.calls.filter(c => c[2] === "create").length, 2);
 });
+
+test("booked replacement holds preserve the event, expire independently and clean up after a move", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const booked = f.read().booked;
+  const replacement = { ...f.offer, offered: [
+    { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account },
+    { start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z", account },
+  ] };
+  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
+  assert.equal(f.read().status, "booked");
+  assert.deepEqual(f.read().booked, booked);
+  assert.equal(f.events.get("hold-one")!.start.dateTime, start);
+  const early = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 47 * 3600_000 });
+  assert.equal(early.skipped, true, "expiry uses the replacement timestamp, not the original offer");
+  const expired = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
+  assert.equal(expired.request.status, "booked");
+  assert.equal(expired.request.reoffer, undefined);
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+  assert.equal(f.events.get("new-1")!.status, "cancelled");
+  assert.equal(f.events.get("new-2")!.status, "cancelled");
+  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
+  await calendarAction("r_one", { action: "book", start: replacement.offered[0]!.start }, f.options);
+  assert.equal(f.read().eventId, "hold-one");
+  assert.equal(f.read().booked!.start, replacement.offered[0]!.start);
+  assert.equal(f.read().reoffer, undefined);
+  assert.equal(f.events.get("new-3")!.status, "cancelled");
+  assert.equal(f.events.get("new-4")!.status, "cancelled");
+  assert.ok(f.calls.filter(c => c[2] === "delete").every(c => c[4] !== "hold-one"));
+  assert.ok(f.calls.filter(c => c[2] === "update").every(c => c[c.indexOf("--send-updates") + 1] === "all"));
+});
+
+test("moving an externally cancelled booked event refuses to create another invitation", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  f.events.get("hold-one")!.status = "cancelled";
+  const before = f.read();
+  await assert.rejects(calendarAction("r_one", { action: "book", start: "2026-10-06T11:00:00Z" }, f.options), /booked event was cancelled/);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.calls.filter(c => c[2] === "create").length, 0);
+});
+
+for (const outcome of ["failure", "lost-response"] as const) test(`booked reoffers preserve the booking across ${outcome}`, async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const original = f.read().booked;
+  const input = { ...f.offer, offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account }] };
+  await calendarAction("r_one", { action: "offer", request: input }, f.options);
+  const previous = f.read().reoffer;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] !== "create") return f.command(cmd);
+    if (outcome === "failure") return { error: "offline" };
+    await f.command(cmd); return undefined;
+  };
+  const replacement = calendarAction("r_one", { action: "offer", request: input }, { ...f.options, command });
+  if (outcome === "failure") {
+    await assert.rejects(replacement, /previous offer retained/);
+    assert.deepEqual(f.read().reoffer, previous);
+    assert.equal(f.events.get("new-1")!.status, "confirmed");
+  } else {
+    await replacement;
+    assert.equal(f.read().reoffer!.offered[0]!.holdId, "new-2");
+    assert.equal(f.events.get("new-1")!.status, "cancelled");
+  }
+  assert.deepEqual(f.read().booked, original);
+  assert.equal(f.read().status, "booked");
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+});
+
+test("a reconciled move commits once and retains failed reoffer cleanup for retry", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  await calendarAction("r_one", { action: "offer", request: f.offer }, f.options);
+  const before = f.read().booked;
+  let moved = false;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] === "delete") return { error: "offline" };
+    const result = await f.command(cmd);
+    if (cmd.argv[2] === "update") { moved = true; return { handle: "move-pending" }; }
+    return result;
+  };
+  const options = { ...f.options, command, poll: async () => ({ handle: "move-pending" }) };
+  await assert.rejects(calendarAction("r_one", { action: "book", start: "2026-10-06T10:00:00Z" }, options), /approval is pending/);
+  assert.equal(moved, true);
+  assert.deepEqual(f.read().booked, before);
+  assert.ok(f.read().reoffer);
+  await calendarAction("r_one", { action: "resume" }, { ...options, poll: async () => ({ output: JSON.stringify(f.events.get("hold-one")) }) });
+  assert.equal(f.read().eventId, "hold-one");
+  assert.equal(f.read().reoffer, undefined);
+  assert.equal(f.read().holdCleanup!.length, 2);
+  await calendarAction("r_one", { action: "cleanup" }, f.options);
+  assert.deepEqual(f.read().holdCleanup, []);
+  assert.equal(f.calls.filter(c => c[2] === "update").length, 2, "one initial booking and one move");
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+});
+
+test("format changes retain a live reoffer; cancel releases it and notifies only the booked invite", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  await calendarAction("r_one", { action: "offer", request: f.offer }, f.options);
+  const replacement = f.read().reoffer;
+  await calendarAction("r_one", { action: "format", format: "meet" }, f.options);
+  assert.deepEqual(f.read().reoffer, replacement);
+  assert.equal(f.events.get("new-1")!.status, "confirmed");
+  assert.equal(f.events.get("new-2")!.status, "confirmed");
+  await calendarAction("r_one", { action: "cancel" }, f.options);
+  assert.equal(f.read().status, "dropped");
+  assert.equal(f.read().reoffer, undefined);
+  assert.deepEqual(f.read().holdCleanup, []);
+  for (const id of ["hold-one", "new-1", "new-2"]) {
+    assert.equal(f.events.get(id)!.status, "cancelled");
+    const deletion = f.calls.find(c => c[2] === "delete" && c[4] === id)!;
+    assert.equal(deletion[deletion.indexOf("--send-updates") + 1], id === "hold-one" ? "all" : "none");
+  }
+});
+
+test("owner DM lookup and exact-time check select the booked record and move its event", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const env = { MEETLY_HOME: f.home };
+  const listed = cli("ledger.ts", ["booked"], env);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.equal(listed.json.requests.length, 1);
+  assert.equal(listed.json.requests[0].id, "r_one");
+  const busyFile = join(f.home, "busy.json");
+  writeJson(busyFile, { busy: [{ id: "hold-one", account, start, end }], degraded: [] });
+  const checked = cli("slots.ts", ["--in", busyFile, "--request", "r_one", "--at", "2026-10-05T10:15:00Z", "--now", new Date(now).toISOString()], env);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.equal(checked.json.free, true, "the original event is not a conflict with its own move");
+  await calendarAction(listed.json.requests[0].id, { action: "book", start: checked.json.slot.start, end: checked.json.slot.end }, f.options);
+  assert.equal(f.read().eventId, "hold-one");
+  assert.equal(Date.parse(f.read().booked!.start), Date.parse("2026-10-05T10:15:00Z"));
+  t.diagnostic(`Mock owner DM flow: booked lookup → exact-time check → update ${f.read().eventId} at ${f.read().booked!.start}; no replacement event created.`);
+});

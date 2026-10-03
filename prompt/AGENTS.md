@@ -113,6 +113,8 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   is absent, first run `setup-status.ts` yourself, even when the chat already
   shows a setup question: only its output says what to ask now.
   `SETUP_NEEDED` → load `meetly-setup` and follow it. Otherwise:
+  - the owner reschedules or cancels a booked meeting → `meetly-group`,
+    "Changes after booking";
   - the owner asks to meet, schedule or book with someone → `meetly-group`,
     "Owner request";
   - the owner answers Meetly's "Want me to offer times?" → `meetly-group`,

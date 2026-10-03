@@ -92,7 +92,8 @@ thread. For a message to the owner with no meeting thread, use
    - For each request from `ledger.ts expired`, run `calendar.ts expire --id <id>`.
      The writer rechecks expiry while holding the request lock. If it prints
      `skipped`, do not announce expiry. Otherwise, if its returned request has
-     a `chatUid`, tell the group the offer expired; if `holdCleanup` is not empty,
+     a `chatUid`, tell the group the offer expired. If its status is still `booked`,
+     say only the replacement offer expired and the original booking remains; if `holdCleanup` is not empty,
      say some holds still need cleanup. An `asked` request has no holds or group.
    - For each request from `ledger.ts asked --unnotified`, run `ledger.ts
      delivery --id <id> --kind notify --action begin`. If it fails, skip

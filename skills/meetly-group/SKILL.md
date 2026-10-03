@@ -81,7 +81,8 @@ titles and the group label in owner notifications.
    - **`degraded` is not empty:** never claim the owner is free on those
      accounts. Tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
-4. For a new or replacement owner-group request, call `meetly_offer_owner_group`
+4. For a booked request, use "Changes after booking" below.
+   For a new or replacement owner-group request, call `meetly_offer_owner_group`
    with the fields below except `origin`, `chatUid`, `account` and `allowOverlap`;
    pass `allowOverlapTitles` with only the event names the owner explicitly
    authorized. The tool resolves matching event ids internally and merges them
@@ -275,12 +276,12 @@ Without an owner scheduling ask, on your first reply introduce yourself as
 ask the guest to identify a request or show internal confusion. Larger groups
 are out of scope. A booked or closed request is not a no-match.
 
-- **Book a time:** read the calendar and select the requested slot, following
+- **Book a time:** for a booked request follow "Changes after booking"; otherwise read the calendar and select the requested slot, following
   "Book the event". Supply the format or place the owner gave and the person's
   email as an attendee if contacts has one.
 - **A requested time is busy:** follow the "Owner request" nearest-time
   fallback, keeping this request's conditions and replying in this group.
-- **Other times:** follow "Offer times", carrying the request's conditions
+- **Other times:** for a booked request follow "Changes after booking"; otherwise follow "Offer times", carrying the request's conditions
   and any changes the owner gives. Use `--request <id>` to keep saved date bounds
   and exclude its own holds; pass `--duration` for a changed length. Merge
   explicit condition changes with `ledger.ts update` before searching. The writer keeps the old offer until its
@@ -299,6 +300,38 @@ they will meet. For `meet`, say the link will be posted here 10 minutes before.
 Do not paste the link now. Ask format/place only when `askDetails` is true.
 If the writer warns `no-meet-link`, say no reminder
 will go out. The group confirmation also notifies the owner.
+
+## Changes after booking
+
+The booked request remains the meeting thread's record. Guests can request other
+times, pick a replacement, or cancel with their scheduling tools; confirm the
+result once in the group so the owner is notified afterwards.
+
+From the owner's DM, run `ledger.ts booked` and match the meeting by person,
+topic and thread context. If multiple meetings fit, ask which before changing
+anything. From the group, use `ledger.ts find --chat <this chat uid>`.
+Use that request's id and recorded `chatUid`; never start another request or group.
+
+- **Other times:** read the calendar and search with `slots.ts --request <id>`.
+  It keeps the owner's conditions and excludes this request's event and holds
+  from busy time. Run `calendar.ts offer --id <id> --json '<request with replacement offered slots>'`,
+  carrying the saved request fields listed in "Offer times". The writer saves
+  `reoffer.offered` and its hold timestamp, leaving the booked event untouched.
+  Show those replacement slots in the same group. If none work, retain the booking.
+- **Move to a selected time:** read the calendar and check with
+  `slots.ts --request <id> --at <start>`. Then run `calendar.ts book --id <id>
+  --json '{"start":"<slot.start>","end":"<slot.end>"}'`. Do not supply attendees
+  again: the existing invitation is updated in place with `sendUpdates: "all"`.
+  The writer releases every replacement hold after committing the move.
+- **Cancel:** run `calendar.ts cancel --id <id>`. It records `dropped`, clears
+  the reoffer and pending question, and deletes the event with `sendUpdates: "all"`.
+  If `holdCleanup` is nonempty, report pending cancellation/hold cleanup rather
+  than claiming that every calendar deletion finished.
+
+Only confirm after the writer resolves successfully. From the DM, send the
+result once to the recorded group using `plow_reply_to`, then acknowledge the
+owner briefly in the DM. In a group, confirm here once. Never cancel and recreate
+an event to reschedule it. A replacement offer expiring leaves the booking intact.
 
 ## Holds
 

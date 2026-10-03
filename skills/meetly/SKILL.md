@@ -20,12 +20,12 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `add --json '<obj>'` \| `--json-file F` | `{request}` (refused if the person already has an open request) |
 | | `save --json '<obj>'` \| `--json-file F` | `{request}` (creates, or replaces the current open offer by handle or inbound `sourceRowid`, re-keying it to the supplied handle and preserving its id, chat link and delivery state; `status:"asked"` changes nothing if one is open) |
 | | `update --id X --json '<patch>'` | `{request}`; patch keys: `chatUid, name, allowOverlap, constraints, topic, pendingOwner, locale` (`null` clears `pendingOwner`); format, location, calendar and reminder fields require their owning scripts |
-| | `expired [--hours N]` \| `asked [--unnotified]` \| `pending` \| `cleanup` | `{requests}` (`--unnotified` selects asked requests without `notifiedAt`) |
+| | `expired [--hours N]` \| `asked [--unnotified]` \| `pending` \| `booked` \| `cleanup` | `{requests}` (`--unnotified` selects asked requests without `notifiedAt`) |
 | | `delivery --id X --kind notify\|start\|answer --action begin\|complete\|clear` | `{request}`; `begin` records `notifyAttemptedAt`/`startedAt`; `complete` records `notifiedAt`/`startCompletedAt` after success or unknown delivery. Notices retry until completed; starts refuse a second attempt. `answer begin` records `pendingOwner.answerAttemptedAt` before sending and refuses another attempt; successful answer delivery clears the pending question or time approval. `clear` is for an unlinked start or an answer attempt, on the owner's explicit instruction (answers use only `begin`/`clear`). Delivery fields cannot be set through `save` or `update`. |
 | | `reminders [--lead-min N]` | `{requests}`: booked Meets whose link is due (default 10 min before, until 5 min after the start) |
 | `event.ts` | `--in F` | `{id, status, start, end, meetUrl}` from a saved calendar event read |
-| `calendar.ts` | `offer --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer; retains an existing offer on failure; drops a failed new request while retaining cleanup |
-| | `book --id X --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book and release the other holds |
+| `calendar.ts` | `offer [--id X] --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer (`--id` selects a booked request for a reoffer); retains an existing offer on failure; drops a failed new request while retaining cleanup |
+| | `book --id X --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book or move the existing event and release its holds |
 | | `format --id X --json '{"format":"meet", "location":"<optional place>"}'` | save format/location on an offered request, or update and record a booked event; both use the calendar lock |
 | | `resume-pending` | `{results:[{id, request?, error?}]}`: resume all pending writes, continuing past individual failures |
 | | `pending` | `{ids}`: requests with a durable write awaiting reconciliation |
@@ -36,11 +36,13 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `--in F [--in F2…] [--max 100]` | `{busy:[{start,end,id,account}], unknownAfter?, degraded}` |
 | `time.ts` | `next_week --anchor ISO --timezone IANA` | `{from,to}` in the owner's timezone, anchored to the source message timestamp; pass weekdays separately |
 | `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--meal lunch\|dinner\|coffee] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-overlap ID]… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], durationMin, unknownAfter?, degraded}` |
-| | `--in busy.json --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--duration N] [--allow-overlap ID]… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
+| | `--in busy.json [--request ID] --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--duration N] [--allow-overlap ID]… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
 | `owner-chat.ts` | | `{chatUid}`: the owner's DM |
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
 
 Notes:
+- A booked request may have `reoffer: {offered, offeredAt}`. Expiry releases only
+  those replacement holds; the original event remains until a move or cancellation.
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
   `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-group`.
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.

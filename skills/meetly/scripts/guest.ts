@@ -3,7 +3,7 @@ import { fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
-import { findByChat, meetingTopic, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { currentOffers, requestEvents, findByChat, meetingTopic, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { checkTime, findSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -34,9 +34,8 @@ function patch(request: Request, change: Patch): Request {
     .requests.find(r => r.id === request.id)!;
 }
 
-const holds = (request: Request): HoldRef[] => request.offered.flatMap(o => o.holdId ? [{ holdId: o.holdId, account: o.account }] : []);
 // Recheck the guest's authorized snapshot inside the writer lock. A concurrent
-// booking or replacement must not turn a guest pick into an owner-style move.
+// booking or replacement must not authorize a pick from a stale offer.
 function unchanged(request: Request, latest: Request): void {
   if (JSON.stringify(request) !== JSON.stringify(latest)) throw new Error("request changed");
 }
@@ -45,11 +44,11 @@ const write = (request: Request, action: CalendarAction) => calendarAction(reque
   validate: latest => unchanged(request, latest),
 });
 
-// Remove only this request's own holds, including their account, from busy time.
+// Remove only this request's holds and booked event, with their accounts.
 async function busyFor(request: Request, config: Config, from: string, to: string): Promise<BusyResult> {
   const result = await fetchBusy(config, { from, to });
   if (result.degraded.length) throw new Error("calendar unavailable");
-  return { ...result, busy: result.busy.filter(b => !holds(request).some(h => h.holdId === b.id && h.account === b.account)) };
+  return { ...result, busy: result.busy.filter(b => !requestEvents(request).some(h => h.holdId === b.id && h.account === b.account)) };
 }
 
 function preferences(args: GuestArgs, timezone: string): Constraints {
@@ -77,10 +76,14 @@ async function check(request: Request, config: Config, start: string) {
 }
 
 async function pick(request: Request, config: Config, start: string) {
-  const offer = request.offered.find(o => Date.parse(o.start) === Date.parse(start));
+  const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(start));
   if (!offer) return { error: "Choose one of the currently offered start times." };
   const checked = await check(request, config, offer.start);
   if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available. Ask for other times." };
+  if (request.status === "booked") {
+    request = (await write(request, { action: "book", start: offer.start, end: offer.end })).request;
+    return { ...view(request, config), invitationUpdated: true, overlappedWithOwnerApproval: checked.overlap };
+  }
   const contact = await lookupContact(request.handle);
   const email = request.handle.includes("@") ? request.handle : contact.found && contact.matches === 1 ? contact.emails[0] : undefined;
   request = (await write(request, { action: "book", start: offer.start, attendees: email })).request;
@@ -109,7 +112,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   const busy = await busyFor(request, config, localIso(now, config.timezone), localIso(now + (config.horizonDays + 1) * 86_400_000, config.timezone));
   const narrowed = intersectConstraints(bounds, preferred);
   const query: SlotQuery = { ...busy, ...narrowed, days: narrowed.days as Day[] | undefined, now, config,
-    meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
+    meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
   let { slots } = exact ? { slots: [exact] } : findSlots(query);
   const preferencesUnavailable = slots.length === 0;
   if (preferencesUnavailable) {
@@ -187,9 +190,9 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
       const result = await askOwner(request, config, args, sendOwner);
       return typeof args.question === "string" && args.question.trim() ? { ...result, silent: true } : result;
     }
-    if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
+    if (request.status !== "offered" && request.status !== "booked") return view(request, config);
     if (action === "decline") {
-      request = (await write(request, { action: "drop" })).request;
+      request = (await write(request, { action: request.status === "booked" ? "cancel" : "drop" })).request;
       return view(request, config);
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
