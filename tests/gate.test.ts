@@ -109,6 +109,6 @@ test("owner answer tools extend the profile without changing guest grants", () =
   const config = { tools: { alsoAllow: ["existing"] }, channels: { plow: { guestTools: ["meetly_ask_owner"] } } };
   allowOwnerTools(config);
   allowOwnerTools(config);
-  assert.deepEqual(config.tools.alsoAllow, ["existing", "meetly_answer_owner"]);
+  assert.deepEqual(config.tools.alsoAllow, ["existing", "meetly_answer_owner", "meetly_offer_owner_group"]);
   assert.deepEqual(config.channels.plow.guestTools, ["meetly_ask_owner"]);
 });

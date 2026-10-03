@@ -3,7 +3,7 @@ import { fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, minutes, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
-import { findByChat, normalizeHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { findByChat, intersectConstraints, normalizeHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { checkTime, findSlots, localeFormatter, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -32,6 +32,7 @@ function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
   const open = ledger.requests.find(r => r.status === "offered" && identity(r.handle) === senderId);
   if (open && ((open.chatUid && open.chatUid !== chat) || (linked?.status === "offered" && linked.id !== open.id))) return;
   const request = open ?? linked;
+  if (request?.startedInGroup && request.chatUid !== chat) return;
   return request && identity(request.handle) === senderId && request.status !== "asked" ? request : undefined;
 }
 
@@ -58,7 +59,7 @@ function view(request: Request, config: Config) {
   const format = localeFormatter(request.locale ?? "en-US", config.timezone);
   const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });
   return {
-    status: request.status, ownerName: config.ownerName, timezone: config.timezone,
+    status: request.status, startedInGroup: request.startedInGroup === true, ownerName: config.ownerName, timezone: config.timezone,
     topic: request.topic, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
     offered: request.status === "offered" ? request.offered.map(time) : [],
     ...(request.booked ? { booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
@@ -83,16 +84,6 @@ async function busyFor(request: Request, config: Config, from: string, to: strin
   const result = await fetchBusy(config, { from, to });
   if (result.degraded.length) throw new Error("calendar unavailable");
   return { ...result, busy: result.busy.filter(b => !holds(request).some(h => h.holdId === b.id && h.account === b.account)) };
-}
-
-function intersection(owner: Constraints = {}, guest: Constraints = {}): Constraints {
-  return {
-    days: owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
-    after: [owner.after, guest.after].filter(Boolean).sort().at(-1),
-    before: [owner.before, guest.before].filter(Boolean).sort()[0],
-    from: [owner.from, guest.from].filter(Boolean).sort().at(-1),
-    to: [owner.to, guest.to].filter(Boolean).sort()[0],
-  };
 }
 
 function preferences(args: GuestArgs): Constraints {
@@ -156,12 +147,12 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   const now = Date.now();
   const busy = await busyFor(request, config, localIso(now, config.timezone), localIso(now + (config.horizonDays + 1) * 86_400_000, config.timezone));
-  const narrowed = intersection(request.constraints, preferred);
+  const narrowed = intersectConstraints(request.constraints, preferred);
   const query: SlotQuery = { ...busy, ...narrowed, days: narrowed.days as Day[] | undefined, now, config,
     durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
   let { slots } = findSlots(query);
   const preferencesUnavailable = slots.length === 0;
-  if (preferencesUnavailable) slots = findSlots({ ...query, ...intersection(request.constraints), days: request.constraints?.days as Day[] | undefined }).slots;
+  if (preferencesUnavailable) slots = findSlots({ ...query, ...intersectConstraints(request.constraints), days: request.constraints?.days as Day[] | undefined }).slots;
   if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
   const { origin, handle, name, sourceRowid, chatUid, topic, location, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {

@@ -23,3 +23,30 @@ export function registerOwnerTools(api, execute = run, outbound) {
     },
   }));
 }
+
+const runGroup = async (context, args) => {
+  const { offerOwnerGroup } = await import("/opt/plow/skills/meetly/scripts/owner-group.ts");
+  return offerOwnerGroup(context, args);
+};
+
+export function registerOwnerGroupTool(api, execute = runGroup) {
+  const string = { type: "string" };
+  const constraints = { type: "object", additionalProperties: false, properties: {
+    days: { type: "array", items: string }, after: string, before: string, from: string, to: string,
+  } };
+  api.registerTool(context => ({
+    name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
+    description: "For the owner's scheduling ask in a group with exactly one guest and Meetly. Read meetly-group and find free slots first. Records the request with this turn's exact chat uid and creates holds through the calendar writer. Use the guest's participant handle and known name, the owner's conditions and the slot results. Reply with the returned offer here; never open another thread. Owner only.",
+    parameters: { type: "object", additionalProperties: false, required: ["handle", "topic", "durationMin", "offered"], properties: {
+      handle: string, name: string, topic: string, durationMin: { type: "integer", minimum: 1 },
+      constraints, proposed: constraints, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
+      location: string, locale: string,
+      offered: { type: "array", minItems: 1, items: { type: "object", additionalProperties: false,
+        required: ["start", "end", "account"], properties: { start: string, end: string, account: string } } },
+    } },
+    async execute(_id, args) {
+      const result = await execute(context, args);
+      return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  }));
+}

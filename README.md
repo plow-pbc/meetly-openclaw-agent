@@ -24,7 +24,7 @@ times. Nobody hears from Meetly until you say yes. Then it:
    hours you allow,
 3. holds those times on your calendar so nothing else takes them,
 4. asks how you'll meet (Google Meet or in person) when the message does
-   not say it,
+   not say it, except in a group you started, where missing details are left to you,
 5. books the one they pick, invites them if it knows their email, and
    releases the other holds; for a Meet it creates the room,
 6. posts the Meet link in the group 10 minutes before the start,
