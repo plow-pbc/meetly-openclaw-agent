@@ -79,16 +79,18 @@ test("the poll never contacts anyone new: it saves the request as asked and asks
   assert.ok(poll.includes("never contacts anyone new: it opens no group and messages no one who wrote to the owner"));
   assert.ok(poll.includes("`ledger.ts save --json` with `status: \"asked\"`"));
   assert.ok(poll.includes("No holds, no group, no message to them."));
-  assert.ok(poll.includes("Send the owner one line in their DM, in their language: \"<name or handle> asked about <topic> <when>. Want me to offer times?\""));
+  assert.ok(poll.includes("Run `pipeline.ts nudge` once"));
   assert.ok(poll.includes("give https://plow.co/download/latch. Go to step 6: it needs no message reads."));
 });
 
-test("poll maintenance retries unnotified requests and records attempts before sending", () => {
+test("poll maintenance sends only the reserved monitor batch to the owner DM", () => {
   const maintenance = pollSkill().split("6. Maintenance:")[1]!;
-  assert.ok(maintenance.includes("`ledger.ts asked --unnotified`"));
-  assert.ok(maintenance.indexOf("--kind notify --action begin") < maintenance.indexOf("Send the owner one line"));
-  assert.ok(maintenance.includes("On success or unknown delivery, run `ledger.ts delivery --id <id> --kind notify --action complete`"));
-  assert.ok(maintenance.includes("On a definite failure, leave it unnotified for the next poll"));
+  assert.ok(maintenance.indexOf("calendar.ts resume-pending") < maintenance.indexOf("pipeline.ts nudge"));
+  assert.ok(maintenance.indexOf("owner-chat.ts") < maintenance.indexOf("pipeline.ts nudge"));
+  assert.ok(maintenance.includes("send exactly that `text` once"));
+  assert.ok(maintenance.includes("On a failed or unknown send, do not retry or clear it"));
+  assert.ok(!maintenance.includes("ledger.ts asked --unnotified"));
+  assert.ok(pollSkill().includes('If the save prints `skipped: "do-not-contact"`, run `cursor.ts release`'));
 });
 
 test("the owner's yes or no in their DM decides an asked request", () => {

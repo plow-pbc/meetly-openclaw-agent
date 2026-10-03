@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { calendarAction, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
-import { addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
+import { setDoNotContact, addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { macOutcome, type MacCommand, type MacOutcome } from "../skills/meetly/scripts/mac.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
@@ -565,4 +565,16 @@ test("owner DM lookup and exact-time check select the booked record and move its
   assert.equal(f.read().eventId, "hold-one");
   assert.equal(Date.parse(f.read().booked!.start), Date.parse("2026-10-05T10:15:00Z"));
   t.diagnostic(`Mock owner DM flow: booked lookup → exact-time check → update ${f.read().eventId} at ${f.read().booked!.start}; no replacement event created.`);
+});
+
+
+test("a flagged owner offer requires explicit confirmation and retains the contact flag afterwards", async t => {
+  const f = fixture(t);
+  const path = join(f.home, "ledger.json");
+  writeJson(path, setDoNotContact(readJson<Ledger>(path, { requests: [] }), f.input.handle, true, now));
+  await assert.rejects(offerRequest(f.offer, f.options), /Confirm in the owner's DM/);
+  assert.deepEqual(f.calls, [], "no calendar operation before confirmation");
+  const result = await offerRequest(f.offer, { ...f.options, confirmContact: true });
+  assert.equal(result.request.doNotContact, true);
+  assert.ok(f.calls.some(c => c[2] === "create"));
 });

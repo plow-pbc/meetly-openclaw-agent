@@ -7,6 +7,7 @@
 // Plain JavaScript on purpose: the image ships it as is, with no build step,
 // and preboot copies it into the state volume's plugin root on every boot.
 import { execFile } from "node:child_process";
+import { registerPipelineHooks } from "./pipeline.js";
 import { registerGuestTools } from "./guest-tools.js";
 import { registerOwnerTools, registerOwnerGroupTool } from "./owner-tools.js";
 import { getReplySilencer } from "./reply-silence.js";
@@ -94,6 +95,7 @@ export default {
   description: "Guest scheduling tools and the owner DM setup check.",
   register(api) {
     const silence = getReplySilencer();
+    registerPipelineHooks(api);
     registerGuestTools(api);
     registerOwnerTools(api);
     registerOwnerGroupTool(api);

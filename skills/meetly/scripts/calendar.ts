@@ -9,7 +9,7 @@ import { toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
-import { addRequest, requestHolds, sameHandle, expiredRequests, findOpenByHandle, requestId, sameCleanup, uniqueCleanup, saveRequest, meetingTopic, updateRequest, type HoldCleanup, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
+import { checkContact, addRequest, requestHolds, sameHandle, expiredRequests, findOpenByHandle, requestId, sameCleanup, uniqueCleanup, saveRequest, meetingTopic, updateRequest, type HoldCleanup, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
@@ -22,7 +22,7 @@ export type CalendarAction =
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
 type Step = { verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
 type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" }>; steps: Step[]; failed?: boolean };
-export type CalendarOptions = { validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+export type CalendarOptions = { confirmContact?: boolean; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
 const EMPTY: Ledger = { requests: [] };
 const CREATE_WAIT_MS = 10 * 60_000;
 const ledger = () => readJson<Ledger>(file("ledger.json"), EMPTY);
@@ -341,6 +341,7 @@ export async function offerRequest(input: NewRequest, options: CalendarOptions =
   if (input.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
   let id = "", provisional = false;
   updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
+    checkContact(l, input.handle, options.confirmContact);
     const existing = findOpenByHandle(l, input.handle) ?? l.requests.find(r => input.origin === "inbound" && input.sourceRowid !== undefined && r.sourceRowid === input.sourceRowid && ["asked", "offered"].includes(r.status));
     id = existing?.id ?? requestId();
     provisional = !existing;
@@ -359,12 +360,14 @@ export async function resumePending(options: CalendarOptions = {}) {
 }
 
 if (isMain(import.meta.url)) run(async () => {
-  const { values, positionals } = parseArgs({ allowPositionals: true, options: { id: { type: "string" }, json: { type: "string" }, "json-file": { type: "string" } } });
+  const { values, positionals } = parseArgs({ allowPositionals: true, options: { id: { type: "string" }, json: { type: "string" }, "json-file": { type: "string" }, "confirm-contact": { type: "boolean" } } });
   const action = positionals[0];
   const args = values["json-file"] ? JSON.parse(readFileSync(values["json-file"], "utf8")) : JSON.parse(values.json ?? "{}");
   if (action === "resume-pending") return resumePending();
   if (action === "pending") return { ids: pendingCalendarWrites() };
-  if (action === "offer") return values.id ? calendarAction(values.id, { action: "offer", request: args }) : offerRequest(args);
+  if (action === "offer") checkContact(ledger(), args.handle, values["confirm-contact"]);
+  if (action === "book" && values.id) checkContact(ledger(), requestById(values.id).handle, values["confirm-contact"]);
+  if (action === "offer") return values.id ? calendarAction(values.id, { action: "offer", request: args }) : offerRequest(args, { confirmContact: values["confirm-contact"] });
   if (!values.id || !["book", "format", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | book|format|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
   return calendarAction(values.id, { ...args, action } as CalendarAction);
 });

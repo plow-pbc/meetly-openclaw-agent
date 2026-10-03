@@ -3,7 +3,7 @@ import { fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
-import { currentOffers, requestEvents, findByChat, meetingTopic, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { sameRequest, currentOffers, requestEvents, findByChat, meetingTopic, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { checkTime, findSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -37,7 +37,7 @@ function patch(request: Request, change: Patch): Request {
 // Recheck the guest's authorized snapshot inside the writer lock. A concurrent
 // booking or replacement must not authorize a pick from a stale offer.
 function unchanged(request: Request, latest: Request): void {
-  if (JSON.stringify(request) !== JSON.stringify(latest)) throw new Error("request changed");
+  if (!sameRequest(request, latest)) throw new Error("request changed");
 }
 
 const write = (request: Request, action: CalendarAction) => calendarAction(request.id, action, {

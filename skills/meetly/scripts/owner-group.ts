@@ -2,7 +2,7 @@ import { offerRequest, type CalendarOptions } from "./calendar.ts";
 import { fetchBusy } from "./busy.ts";
 import { durationFor, loadConfig } from "./config.ts";
 import { view } from "./request-view.ts";
-import type { Constraints, NewRequest } from "./ledger.ts";
+import { ContactConfirmationRequired, type Constraints, type NewRequest } from "./ledger.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
 type GroupRequest = Pick<NewRequest, "handle" | "name" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale"> & { allowOverlapTitles?: string[]; durationMin?: number; offered: { start: string; end: string }[] };
@@ -39,7 +39,8 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
       },
     });
     return view(request, config);
-  } catch {
+  } catch (error) {
+    if (error instanceof ContactConfirmationRequired) return { error: error.message, doNotContact: true };
     return { error: "The scheduling action could not be completed. Check the request before trying again." };
   }
 }

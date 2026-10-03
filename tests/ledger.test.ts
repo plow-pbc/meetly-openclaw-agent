@@ -184,12 +184,11 @@ test("asked becomes offered by saving the offer over it, keeping the request", (
 test("CLI re-keys an inbound email request by source row so a phone reply finds the same offer", () => {
   const env = { MEETLY_HOME: tmpHome() };
   const saved = cli("ledger.ts", ["save", "--json", JSON.stringify(asked({ handle: "ana@example.com" }))], env).json.request;
-  cli("ledger.ts", ["delivery", "--id", saved.id, "--kind", "notify", "--action", "begin"], env);
-  const notice = cli("ledger.ts", ["delivery", "--id", saved.id, "--kind", "notify", "--action", "complete"], env).json.request;
+  const batch = cli("pipeline.ts", ["nudge"], env).json;
   const offered = cli("ledger.ts", ["save", "--json", JSON.stringify(input({ sourceRowid: 42 }))], env);
   assert.equal(offered.status, 0, offered.stderr);
   assert.equal(offered.json.request.id, saved.id);
-  assert.equal(offered.json.request.notifiedAt, notice.notifiedAt);
+  assert.equal(offered.json.request.lastNudge.fingerprint, batch.items[0].fingerprint);
   assert.deepEqual(cli("ledger.ts", ["asked"], env).json, { requests: [] });
   const reply = cli("ledger.ts", ["find", "--chat", "c_unknown", "--handle", "+15551234567"], env).json.request;
   assert.equal(reply.id, saved.id);
@@ -203,22 +202,6 @@ test("re-keying refuses a phone already used by another open request", () => {
   assert.equal(l.requests.length, 2);
 });
 
-test("CLI retries an unfinished owner notice and completes success or unknown delivery once", () => {
-  const env = { MEETLY_HOME: tmpHome() };
-  const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(asked())], env).json.request;
-  const delivery = (action: string) => cli("ledger.ts", ["delivery", "--id", id, "--kind", "notify", "--action", action], env);
-  assert.equal(delivery("complete").status, 1);
-  assert.equal(delivery("begin").status, 0);
-  assert.equal(cli("ledger.ts", ["asked", "--unnotified"], env).json.requests[0].id, id);
-  assert.equal(delivery("begin").status, 0);
-  const completed = delivery("complete");
-  assert.equal(completed.status, 0, completed.stderr);
-  assert.ok(completed.json.request.notifyAttemptedAt);
-  assert.ok(completed.json.request.notifiedAt);
-  assert.deepEqual(cli("ledger.ts", ["asked", "--unnotified"], env).json, { requests: [] });
-  assert.equal(cli("ledger.ts", ["asked"], env).json.requests[0].id, id);
-  assert.equal(delivery("begin").status, 1);
-});
 
 test("CLI blocks a second group start across re-offers until its marker is cleared", () => {
   const env = { MEETLY_HOME: tmpHome() };
