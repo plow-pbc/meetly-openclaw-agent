@@ -30,7 +30,7 @@ type RawEvent = {
 
 // gog prints a "Note: …" line before the JSON; plow_run_command wraps it all
 // in {exit_code, output}. Both are unwrapped here.
-function toObject(text: string): Record<string, unknown> {
+export function parseCalendarObject(text: string): Record<string, unknown> {
   const at = text.indexOf("{");
   if (at < 0) throw new Error("no JSON object in the calendar output");
   let value: unknown;
@@ -41,7 +41,7 @@ function toObject(text: string): Record<string, unknown> {
   }
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("the calendar output is not an object");
   const obj = value as Record<string, unknown>;
-  if (typeof obj.output === "string" && obj.event === undefined && obj.id === undefined) return toObject(obj.output);
+  if (typeof obj.output === "string" && obj.event === undefined && obj.id === undefined) return parseCalendarObject(obj.output);
   return obj;
 }
 
@@ -52,7 +52,7 @@ function meetLink(e: RawEvent): string | null {
 }
 
 export function parseEvent(text: string): EventInfo {
-  const obj = toObject(text);
+  const obj = parseCalendarObject(text);
   const e = (obj.event ?? obj) as RawEvent;
   if (typeof e !== "object" || e === null) throw new Error("no event in the calendar output");
   if (typeof e.id !== "string" || !e.id) throw new Error("the calendar output has no event id");

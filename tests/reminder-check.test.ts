@@ -5,7 +5,8 @@ import { join, resolve } from "node:path";
 import { addRequest, updateRequest, type Ledger, type NewRequest, type Patch, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { parseEvent, type EventInfo } from "../skills/meetly/scripts/event.ts";
 import { checkReminder, markSent } from "../skills/meetly/scripts/reminder-check.ts";
-import { writeJson } from "../skills/meetly/scripts/store.ts";
+import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
+import { recordBooking } from "../skills/meetly/scripts/record-booking.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
 const FIXTURES = resolve(import.meta.dirname, "fixtures", "calendar");
@@ -131,7 +132,7 @@ test("markSent records the send once; a second mark is refused", () => {
   assert.throws(() => markSent(l, "nope", START), /no request/);
 });
 
-// End to end through the CLIs: book, wait, send, mark, and never twice.
+// From a booked fixture, list, send and mark the reminder through the CLIs.
 test("CLI: the poll's full reminder sequence", () => {
   const home = tmpHome();
   const env = { MEETLY_HOME: home };
@@ -149,7 +150,7 @@ test("CLI: the poll's full reminder sequence", () => {
   raw.event.end.dateTime = iso(start + 30 * MIN);
   const eventFile = join(home, "event.txt");
   writeFileSync(eventFile, JSON.stringify(raw));
-  assert.equal(cli("record-booking.ts", ["--id", id, "--event-file", eventFile, "--account", ACCOUNT], env).status, 0);
+  writeJson(join(home, "ledger.json"), recordBooking(readJson<Ledger>(join(home, "ledger.json"), { requests: [] }), id, parseEvent(JSON.stringify(raw)), ACCOUNT, T0).ledger);
 
   const due = cli("ledger.ts", ["reminders"], env);
   assert.deepEqual(due.json.requests.map((r: { id: string }) => r.id), [id]);
@@ -182,7 +183,7 @@ test("CLI: a cancelled event is written to the ledger so the next poll skips it"
   const id = cli("ledger.ts", ["save", "--json", JSON.stringify(input())], env).json.request.id;
   const eventFile = join(home, "event.txt");
   writeFileSync(eventFile, fixture("event-meet"));
-  cli("record-booking.ts", ["--id", id, "--event-file", eventFile, "--account", ACCOUNT], env);
+  writeJson(join(home, "ledger.json"), recordBooking(readJson<Ledger>(join(home, "ledger.json"), { requests: [] }), id, event(), ACCOUNT, T0).ledger);
   writeFileSync(eventFile, fixture("event-cancelled"));
   const out = cli("reminder-check.ts", ["--id", id, "--event-file", eventFile], env);
   assert.equal(out.json.action, "cancelled");

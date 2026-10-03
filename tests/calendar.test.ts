@@ -3,12 +3,12 @@ import { test, type TestContext } from "node:test";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
-import { calendarAction, pendingCalendarWrites, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
+import { calendarAction, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
 import { addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { macOutcome, type MacCommand, type MacOutcome } from "../skills/meetly/scripts/mac.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
-import { tmpHome } from "./helpers.ts";
+import { cli, tmpHome } from "./helpers.ts";
 
 const start = "2026-10-05T10:00:00Z", end = "2026-10-05T10:30:00Z", account = "owner@example.com";
 const now = Date.parse("2026-10-03T08:00:00Z");
@@ -229,6 +229,28 @@ test("ambiguous update and delete reconcile by event id", async t => {
   assert.equal(f.calls.filter(c => c[2] === "delete").length, 1);
 });
 
+test("a markerless reread keeps a lost update unresolved until its late completion", async t => {
+  const f = fixture(t);
+  let saved!: MacCommand, writes = 0;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] !== "update") return f.command(cmd);
+    saved = cmd; writes++; return undefined;
+  };
+  const options = { ...f.options, command };
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, options), /unresolved/);
+  await assert.rejects(calendarAction("r_one", { action: "resume" }, options), /unresolved/);
+  await assert.rejects(calendarAction("r_one", { action: "book", start: f.input.offered[1]!.start }, options), /unresolved/);
+  assert.deepEqual(pendingCalendarWrites(), ["r_one"]);
+  assert.deepEqual(f.read().offered, f.input.offered);
+  assert.ok(f.calls.every(c => c[2] !== "delete"));
+  await f.command(saved);
+  await calendarAction("r_one", { action: "resume" }, options);
+  assert.equal(f.read().status, "booked");
+  assert.equal(f.read().eventId, "hold-one");
+  assert.equal(writes, 1);
+  assert.deepEqual(pendingCalendarWrites(), []);
+});
+
 test("a delayed Latch approval resumes its handle without sending the update again", async t => {
   const f = fixture(t);
   let saved!: MacCommand, sends = 0, ready = false;
@@ -241,8 +263,140 @@ test("a delayed Latch approval resumes its handle without sending the update aga
     return ready ? f.command(saved) : { handle };
   };
   await assert.rejects(calendarAction("r_one", { action: "book", start }, { ...f.options, command, poll }), /unresolved/);
+  await assert.rejects(calendarAction("r_one", { action: "resume" }, { ...f.options, command, poll }), /unresolved/);
+  assert.equal(f.calls.filter(c => c[2] === "event").length, 1, "only the pre-write read is allowed while approval is pending");
+  assert.equal(f.events.get("hold-one").status, "confirmed");
   ready = true;
   await calendarAction("r_one", { action: "resume" }, { ...f.options, command, poll });
   assert.equal(f.read().status, "booked");
   assert.equal(sends, 1);
+});
+
+
+test("cancelling a booked hold notifies attendees and retains that mode across cleanup retries", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start, attendees: "guest@example.com" }, f.options);
+  const command = async (cmd: MacCommand) => cmd.argv[2] === "delete" ? { error: "offline" } : f.command(cmd);
+  await calendarAction("r_one", { action: "cancel" }, { ...f.options, command });
+  assert.equal(f.read().status, "dropped");
+  assert.deepEqual(f.read().holdCleanup, [{ holdId: "hold-one", account, sendUpdates: "all" }]);
+  await calendarAction("r_one", { action: "cleanup" }, f.options);
+  const deleted = f.calls.filter(c => c[2] === "delete");
+  assert.equal(deleted.find(c => c[4] === "hold-two")?.includes("none"), true);
+  assert.equal(deleted.find(c => c[4] === "hold-one")?.includes("all"), true);
+  assert.deepEqual(f.read().holdCleanup, []);
+});
+
+test("an abandoned attendee-bearing create notifies invitees when its late event is cleaned", async t => {
+  const f = fixture(t);
+  for (const event of f.events.values()) event.status = "cancelled";
+  let saved!: MacCommand, clock = now;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] !== "create") return f.command(cmd);
+    saved = cmd; return undefined;
+  };
+  const options = { ...f.options, command, now: () => clock };
+  await assert.rejects(calendarAction("r_one", { action: "book", start, attendees: "guest@example.com" }, options), /unresolved/);
+  clock += 10 * 60_000;
+  await assert.rejects(calendarAction("r_one", { action: "resume" }, options), /failed/);
+  assert.equal(f.read().holdCleanup?.[0]?.sendUpdates, "all");
+  await f.command(saved);
+  await calendarAction("r_one", { action: "cleanup" }, f.options);
+  assert.equal(f.calls.find(c => c[2] === "delete" && c[4] === "new-1")?.includes("all"), true);
+  assert.deepEqual(f.read().holdCleanup, []);
+});
+
+for (const deferred of [false, true]) test(`a failed first offer closes its provisional row and preserves cleanup (${deferred ? "resumed" : "immediate"})`, async t => {
+  const f = fixture(t);
+  fs.rmSync(join(f.home, "ledger.json"));
+  f.events.clear();
+  let creates = 0;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] === "create" && ++creates === 2) return deferred ? { handle: "refused" } : { error: "failed" };
+    if (cmd.argv[2] === "delete") return { error: "offline" };
+    return f.command(cmd);
+  };
+  const options = { ...f.options, command, poll: async () => ({ handle: "refused" }) };
+  await assert.rejects(offerRequest(f.offer, options), deferred ? /unresolved/ : /failed/);
+  const id = f.read().id;
+  if (deferred) {
+    assert.equal(f.read().status, "offered");
+    await assert.rejects(calendarAction(id, { action: "resume" }, { ...options, poll: async () => ({ error: "failed" }) }), /failed/);
+  }
+  assert.equal(f.read().status, "dropped");
+  assert.deepEqual(f.read().holdCleanup, [{ holdId: "new-1", account }]);
+  const next = addRequest({ requests: [f.read()] }, { ...f.input, sourceRowid: 99, status: "asked", offered: [] }, now, "r_next");
+  assert.equal(next.requests[1]!.status, "asked");
+  await calendarAction(id, { action: "cleanup" }, f.options);
+  assert.deepEqual(f.read().holdCleanup, []);
+});
+
+
+test("resume-pending continues past an unresolved update and reconciles another request", async t => {
+  const f = fixture(t);
+  assert.deepEqual(cli("calendar.ts", ["resume-pending"], { MEETLY_HOME: f.home }).json, { results: [] });
+  let hideCreated = true;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] === "update") return undefined;
+    if (hideCreated && cmd.argv.includes("--private-prop-filter")) return { output: '{"events":[]}' };
+    const result = await f.command(cmd);
+    return cmd.argv[2] === "create" ? undefined : result;
+  };
+  const options = { ...f.options, command };
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, options), /unresolved/);
+  await assert.rejects(offerRequest({ ...f.offer, handle: "+15557654321", offered: [
+    { start: "2026-10-07T10:00:00Z", end: "2026-10-07T10:30:00Z", account },
+  ] }, options), /unresolved/);
+  hideCreated = false;
+  const { results } = await resumePending(options);
+  assert.equal(results.length, 2);
+  assert.match(results.find(r => r.id === "r_one")!.error!, /unresolved/);
+  const resumed = results.find(r => r.id !== "r_one")!;
+  assert.equal(resumed.error, undefined);
+  assert.equal(resumed.request!.offered[0]!.holdId, "new-1");
+  assert.deepEqual(pendingCalendarWrites(), ["r_one"]);
+  assert.equal(f.calls.filter(c => c[2] === "create").length, 1);
+});
+
+test("validation runs on the latest request after acquiring its calendar lock", async t => {
+  const f = fixture(t);
+  let entered!: () => void, release!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] === "update") { entered(); await gate; }
+    return f.command(cmd);
+  };
+  const booking = calendarAction("r_one", { action: "book", start }, { ...f.options, command });
+  await waiting;
+  const stalePick = calendarAction("r_one", { action: "book", start: f.input.offered[1]!.start }, {
+    ...f.options, validate(request) { if (request.status !== "offered") throw new Error("request changed"); },
+  });
+  const rejected = assert.rejects(stalePick, /request changed/);
+  release();
+  await booking;
+  await rejected;
+  assert.equal(f.calls.filter(c => c[2] === "update").length, 1);
+  assert.equal(f.read().booked!.start, start);
+});
+
+test("an explicit Mac failure releases a pending update without deleting the old offer", async t => {
+  const f = fixture(t);
+  const command = async (cmd: MacCommand) => cmd.argv[2] === "update" ? { handle: "denied-update" } : f.command(cmd);
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, { ...f.options, command, poll: async () => ({ handle: "denied-update" }) }), /unresolved/);
+  await assert.rejects(calendarAction("r_one", { action: "resume" }, { ...f.options, command, poll: async () => ({ error: "denied" }) }), /previous offer retained/);
+  assert.deepEqual(pendingCalendarWrites(), []);
+  assert.deepEqual(f.read().offered, f.input.offered);
+  assert.ok(f.calls.every(c => c[2] !== "delete"));
+});
+
+test("calendar reads reuse the wrapped and note-prefixed event parser", async t => {
+  const f = fixture(t);
+  const command = async (cmd: MacCommand) => {
+    const result = await f.command(cmd);
+    return "output" in result && ["events", "event"].includes(cmd.argv[2]!)
+      ? { output: JSON.stringify({ exit_code: 0, output: `Note: calendar output\n${result.output}` }) } : result;
+  };
+  await calendarAction("r_one", { action: "book", start }, { ...f.options, command });
+  assert.equal(f.read().status, "booked");
 });

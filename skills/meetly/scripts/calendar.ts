@@ -8,21 +8,21 @@ import { parseArgs } from "node:util";
 import { toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig } from "./config.ts";
-import { parseEvent } from "./event.ts";
-import { expiredRequests, findOpenByHandle, sameCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
+import { parseCalendarObject, parseEvent } from "./event.ts";
+import { expiredRequests, findOpenByHandle, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
 import { readJson, updateJson, withLock, writeJson } from "./store.ts";
 
 export type CalendarAction =
-  | { action: "offer"; request: NewRequest }
+  | { action: "offer"; request: NewRequest; provisional?: boolean }
   | { action: "book"; start: string; end?: string; attendees?: string }
   | { action: "format"; format: Request["format"]; location?: string }
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
-type Step = { verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sent?: boolean; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
+type Step = { verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
 type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" }>; steps: Step[]; failed?: boolean };
-export type CalendarOptions = { command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+export type CalendarOptions = { validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
 const EMPTY: Ledger = { requests: [] };
 const CREATE_WAIT_MS = 10 * 60_000;
 const ledger = () => readJson<Ledger>(file("ledger.json"), EMPTY);
@@ -32,7 +32,6 @@ const requestById = (id: string) => {
   return request;
 };
 const holds = (r: Request): HoldRef[] => r.offered.flatMap(o => o.holdId ? [{ holdId: o.holdId, account: o.account }] : []);
-const object = (output: string): any => JSON.parse(output.slice(output.indexOf("{")));
 const checkedEvent = (step: Step) => {
   const event = parseEvent(step.output!);
   if (event.status === "cancelled" || Date.parse(event.start) !== Date.parse(step.start) || Date.parse(event.end) !== Date.parse(step.end)
@@ -86,7 +85,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
   const queue = (refs: HoldCleanup[]) => {
     updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
       const r = l.requests.find(r => r.id === id)!;
-      const all = [...(r.holdCleanup ?? []), ...refs].filter((h, i, all) => all.findIndex(x => sameCleanup(h, x)) === i)
+      const all = uniqueCleanup([...(r.holdCleanup ?? []), ...refs])
         .filter(h => !(r.status === "booked" && h.holdId === r.eventId && h.account === r.booked?.account));
       return updateRequest(l, id, { holdCleanup: all }, now());
     });
@@ -98,11 +97,11 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const output = await call(["events", "primary", "--from", ref.start, "--to", ref.end,
           "--private-prop-filter", `meetlyOperation=${ref.token}`, "--all-pages", "--json"], ref.account);
         if (output === undefined) continue;
-        const raw = object(output);
+        const raw = parseCalendarObject(output) as any;
         const matches = (raw.events ?? raw.items ?? []).filter((e: any) => e.extendedProperties?.private?.meetlyOperation === ref.token && e.id);
         // An empty search does not prove a delayed create will never arrive.
         if (!matches.length) continue;
-        const found: HoldRef[] = matches.map((e: any) => ({ holdId: e.id, account: ref.account }));
+        const found: HoldCleanup[] = matches.map((e: any) => ({ holdId: e.id, account: ref.account, ...(ref.sendUpdates ? { sendUpdates: ref.sendUpdates } : {}) }));
         queue(found);
         patch({ holdCleanup: (requestById(id).holdCleanup ?? []).filter(h => !sameCleanup(h, ref)) });
         refs.push(...found);
@@ -113,11 +112,11 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         patch({ holdCleanup: (r.holdCleanup ?? []).filter(h => !sameCleanup(h, ref)) });
         continue;
       }
-      const output = await call(["delete", "primary", ref.holdId, "--send-updates", "none", "--force"], ref.account);
+      const output = await call(["delete", "primary", ref.holdId, "--send-updates", ref.sendUpdates ?? "none", "--force"], ref.account);
       let removed = output !== undefined;
       if (!removed) {
         const check = await call(["event", "primary", ref.holdId, "--json"], ref.account);
-        if (check !== undefined) { const raw = object(check); removed = (raw.event ?? raw).status === "cancelled"; }
+        if (check !== undefined) { const raw = parseCalendarObject(check) as any; removed = (raw.event ?? raw).status === "cancelled"; }
       }
       if (removed) patch({ holdCleanup: (requestById(id).holdCleanup ?? []).filter(h => !sameCleanup(h, ref)) });
     }
@@ -126,6 +125,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
     const journal = file(`calendar/${encodeURIComponent(id)}.json`);
     let intent = readJson<Intent | undefined>(journal, undefined);
     let request = requestById(id);
+    options.validate?.(request);
     if (intent && request.calendarRevision === intent.id) { rmSync(journal); intent = undefined; }
     if (intent && input.action !== "resume") throw new Error(`calendar operation unresolved for ${id}; run resume first`);
     if (!intent) {
@@ -133,10 +133,10 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       if (input.action === "expire" && !expiredRequests(ledger(), holdHours(), now()).some(r => r.id === id)) return { request, skipped: true };
       if (input.action === "expire" || input.action === "drop" || input.action === "cancel") {
         if (request.status === "booked" && input.action !== "cancel") return { request, skipped: true };
-        const refs = holds(request);
-        if (input.action === "cancel" && request.eventId && request.booked) refs.push({ holdId: request.eventId, account: request.booked.account });
+        const refs: HoldCleanup[] = holds(request);
+        if (input.action === "cancel" && request.eventId && request.booked) refs.push({ holdId: request.eventId, account: request.booked.account, sendUpdates: "all" });
         patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null,
-          holdCleanup: [...(request.holdCleanup ?? []), ...refs].filter((h, i, all) => all.findIndex(x => sameCleanup(h, x)) === i) }); await cleanup(); return { request: requestById(id) };
+          holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...refs]) }); await cleanup(); return { request: requestById(id) };
       }
       if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(input.action === "book" && request.status === "booked")) throw new Error(`request is ${request.status}`);
       const steps: Step[] = [];
@@ -160,7 +160,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         if (slot.holdId) {
           const output = await call(["event", "primary", slot.holdId, "--json"], slot.account);
           if (output === undefined) throw new Error("cannot read existing calendar event");
-          const raw = object(output);
+          const raw = parseCalendarObject(output) as any;
           if ((raw.event ?? raw).status === "cancelled") {
             if (input.action === "format") throw new Error("booked event was cancelled");
             verb = "create";
@@ -177,27 +177,28 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       writeJson(journal, intent);
     }
     const fail = async () => {
-      const created: HoldCleanup[] = intent.steps.filter(s => s.verb === "create" && s.output).map(s => ({ holdId: parseEvent(s.output!).id, account: s.account }));
-      created.push(...intent.steps.filter(s => s.abandoned).map(s => ({ token: s.token, account: s.account, start: s.start, end: s.end })));
+      const notification = intent.input.action === "book" ? { sendUpdates: "all" as const } : {};
+      const created: HoldCleanup[] = intent.steps.filter(s => s.verb === "create" && s.output).map(s => ({ holdId: parseEvent(s.output!).id, account: s.account, ...notification }));
+      created.push(...intent.steps.filter(s => s.abandoned).map(s => ({ token: s.token, account: s.account, start: s.start, end: s.end, ...notification })));
       queue(created);
+      const provisional = intent.input.action === "offer" && intent.input.provisional;
+      if (provisional) patch({ status: "dropped" });
       rmSync(journal);
       await cleanup();
-      throw new Error("calendar write failed; previous offer retained");
+      throw new Error(provisional ? "calendar write failed; new request dropped" : "calendar write failed; previous offer retained");
     };
     if (intent.failed) await fail();
     for (const step of intent.steps) {
       if (step.skipped) continue;
       if (step.output !== undefined) { checkedEvent(step); continue; }
-      // Older journals start their bounded wait on the first resume.
-      if (step.sent && step.sentAt === undefined) { step.sentAt = now(); writeJson(journal, intent); }
-      if (!step.sent && !intent.failed) {
+      if (step.sentAt === undefined && !intent.failed) {
         const config = loadConfig();
         const results: unknown[] = [];
         for (const account of new Set(config.calendars.map(c => c.account))) {
           const ids = config.calendars.filter(c => c.account === account).map(c => c.id);
           const output = await call(["events", "--calendars", ids.join(","), "--from", step.start, "--to", step.end, "--max", "100", "--json"], account);
           if (output === undefined) throw new Error("calendar unavailable; no write attempted");
-          const raw = object(output);
+          const raw = parseCalendarObject(output) as any;
           results.push({ ...raw, events: (raw.events ?? raw.items).map((e: object) => ({ ...e, account })) });
         }
         const busy = toBusy(results, { tz: config.timezone, max: 100 });
@@ -211,8 +212,8 @@ export async function calendarAction(id: string, input: CalendarAction, options:
           intent.failed = true; writeJson(journal, intent);
         } else if (step.verb === "create" && overlaps.length && !step.args.includes("--confirm-conflict")) step.args.push("--confirm-conflict");
       }
-      if (!step.sent && !intent.failed) {
-        step.sent = true; step.sentAt = now(); writeJson(journal, intent);
+      if (step.sentAt === undefined && !intent.failed) {
+        step.sentAt = now(); writeJson(journal, intent);
         const outcome = await send([step.verb, "primary", ...(step.verb === "update" ? [step.eventId!] : []),
           ...step.args, "--from", step.start, "--to", step.end, "--private-prop", `meetlyOperation=${step.token}`, "--json"], step.account);
         if (outcome && "output" in outcome) step.output = outcome.output;
@@ -234,12 +235,15 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       }
       if (intent.failed) await fail();
       if (step.skipped) continue;
+      if (step.verb === "update" && step.handle && step.output === undefined) {
+        throw new Error(`calendar write unresolved for ${id}; approval is pending, run resume`);
+      }
       if (step.output === undefined) {
         const output = await call(step.verb === "create"
           ? ["events", "primary", "--from", step.start, "--to", step.end, "--private-prop-filter", `meetlyOperation=${step.token}`, "--all-pages", "--json"]
           : ["event", "primary", step.eventId!, "--json"], step.account);
         if (output !== undefined) {
-          const raw = object(output);
+          const raw = parseCalendarObject(output) as any;
           const events = step.verb === "create" ? raw.events ?? raw.items ?? [] : [raw.event ?? raw];
           const matches = events.filter((e: any) => e.extendedProperties?.private?.meetlyOperation === step.token && e.status !== "cancelled");
           if (matches.length === 1) step.output = JSON.stringify(matches[0]);
@@ -269,8 +273,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       }
       return { requests: next.requests.map(r => {
         if (r.id !== id) return r;
-        const cleanup = [...(r.holdCleanup ?? []), ...(r.status === "booked" ? holds(r) : [])]
-          .filter((h, i, all) => all.findIndex(x => sameCleanup(h, x)) === i)
+        const cleanup = uniqueCleanup([...(r.holdCleanup ?? []), ...(r.status === "booked" ? holds(r) : [])])
           .filter(h => !(r.status === "booked" && r.eventId === h.holdId && r.booked?.account === h.account));
         return { ...r, calendarRevision: completed.id, holdCleanup: cleanup };
       }) };
@@ -284,21 +287,32 @@ export async function calendarAction(id: string, input: CalendarAction, options:
 
 export async function offerRequest(input: NewRequest, options: CalendarOptions = {}) {
   if (input.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
-  let id = "";
+  let id = "", provisional = false;
   updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
     const existing = findOpenByHandle(l, input.handle) ?? l.requests.find(r => input.origin === "inbound" && input.sourceRowid !== undefined && r.sourceRowid === input.sourceRowid && ["asked", "offered"].includes(r.status));
-    id = existing?.id ?? `r_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+    id = existing?.id ?? requestId();
+    provisional = !existing;
     return existing ? l : saveRequest(l, input, (options.now ?? Date.now)(), id);
   });
-  return calendarAction(id, { action: "offer", request: input }, options);
+  return calendarAction(id, { action: "offer", request: input, provisional }, options);
+}
+
+export async function resumePending(options: CalendarOptions = {}) {
+  const results = [];
+  for (const id of pendingCalendarWrites()) {
+    try { results.push({ id, ...await calendarAction(id, { action: "resume" }, options) }); }
+    catch (error) { results.push({ id, error: error instanceof Error ? error.message : String(error) }); }
+  }
+  return { results };
 }
 
 if (isMain(import.meta.url)) run(async () => {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { id: { type: "string" }, json: { type: "string" }, "json-file": { type: "string" } } });
   const action = positionals[0];
   const args = values["json-file"] ? JSON.parse(readFileSync(values["json-file"], "utf8")) : JSON.parse(values.json ?? "{}");
+  if (action === "resume-pending") return resumePending();
   if (action === "pending") return { ids: pendingCalendarWrites() };
   if (action === "offer") return offerRequest(args);
-  if (!values.id || !["book", "format", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts offer --json '<request>' | book|format|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
+  if (!values.id || !["book", "format", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | book|format|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
   return calendarAction(values.id, { ...args, action } as CalendarAction);
 });

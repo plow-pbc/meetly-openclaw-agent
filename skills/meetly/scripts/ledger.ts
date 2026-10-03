@@ -15,8 +15,13 @@ import { readJson, updateJson } from "./store.ts";
 export type Status = "asked" | "offered" | "booked" | "dropped" | "expired";
 export type Offer = { start: string; end: string; holdId?: string; account: string };
 export type HoldRef = { holdId: string; account: string };
-export type HoldCleanup = (HoldRef & { token?: never }) | { token: string; account: string; start: string; end: string; holdId?: never };
+export type HoldCleanup = ((HoldRef & { token?: never }) | { token: string; account: string; start: string; end: string; holdId?: never }) & { sendUpdates?: "all" | "none" };
 export const sameCleanup = (a: HoldCleanup, b: HoldCleanup) => a.account === b.account && a.holdId === b.holdId && a.token === b.token;
+// Notify invitees even if a silent hold cleanup already names the same event.
+export const uniqueCleanup = (refs: HoldCleanup[]) =>
+  [...refs.filter(ref => ref.sendUpdates === "all"), ...refs.filter(ref => ref.sendUpdates !== "all")]
+    .filter((ref, i, all) => all.findIndex(other => sameCleanup(ref, other)) === i);
+export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
 // A time outside the owner's days or window that the other person asked for,
 // waiting for the owner's yes or no.
 export type PendingOwner = { start: string; end: string; askedAt: string };
@@ -220,8 +225,7 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
   const replacedHolds = existing.offered.flatMap((offer) => offer.holdId && !newHolds.has(`${offer.account}\0${offer.holdId}`)
     ? [{ holdId: offer.holdId, account: offer.account }]
     : []);
-  const holdCleanup = [...(existing.holdCleanup ?? []), ...replacedHolds]
-    .filter((hold, index, holds) => holds.findIndex((item) => sameCleanup(item, hold)) === index);
+  const holdCleanup = uniqueCleanup([...(existing.holdCleanup ?? []), ...replacedHolds]);
   const replacement: Request = {
     ...existing,
     ...validated,
@@ -378,19 +382,22 @@ if (isMain(import.meta.url)) {
       }
       case "add": {
         const input = jsonArg(values);
-        const id = `r_${randomBytes(4).toString("hex")}`;
+        const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => addRequest(l, input, now, id));
         return { request: ledger.requests.find((r) => r.id === id) };
       }
       case "save": {
         const input = jsonArg(values);
-        const id = `r_${randomBytes(4).toString("hex")}`;
+        const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
         return { request: findOpenByHandle(ledger, input.handle) ?? findOpenBySource(ledger, input) };
       }
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
         const patch = jsonArg(values);
+        for (const key of ["status", "eventId", "offered", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision"]) {
+          if (key in patch) throw new Error(`${key} is managed by calendar.ts or reminder-check.ts`);
+        }
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => updateRequest(l, values.id!, patch, now));
         return { request: ledger.requests.find((r) => r.id === values.id) };
       }

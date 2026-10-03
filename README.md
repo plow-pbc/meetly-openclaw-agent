@@ -227,7 +227,8 @@ Meetly reads your messages, so use it on an install only you talk to.
 - One person per request.
 - Groups require a phone number; Meetly asks you for one before reading the
   calendar or creating holds if only an email is known.
-- Rescheduling or cancelling a meeting that is already booked is left to you.
+- Ask Meetly to cancel a booked meeting; it deletes the event and notifies invitees.
+  Rescheduling a booked meeting is still left to you.
 - If the model provider is unreachable, that five-minute check is skipped and
   the next one catches up from the same cursor.
 

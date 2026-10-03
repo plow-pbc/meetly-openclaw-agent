@@ -1,11 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { addRequest, updateRequest, type Ledger, type NewRequest } from "../skills/meetly/scripts/ledger.ts";
 import { parseEvent, type EventInfo } from "../skills/meetly/scripts/event.ts";
 import { recordBooking } from "../skills/meetly/scripts/record-booking.ts";
-import { cli, tmpHome } from "./helpers.ts";
 
 const FIXTURES = resolve(import.meta.dirname, "fixtures", "calendar");
 const fixture = (name: string) => readFileSync(join(FIXTURES, `${name}.txt`), "utf8");
@@ -82,26 +81,4 @@ test("refuses a cancelled event, another event for a booked request, a closed re
   }
   assert.throws(() => recordBooking(offered(), "nope", meetEvent(), ACCOUNT, T0), /no request nope/);
   assert.throws(() => recordBooking(offered(), "r_1", meetEvent(), "", T0), /account/);
-});
-
-test("CLI books from gog's saved output and prints the link", () => {
-  const home = tmpHome();
-  const env = { MEETLY_HOME: home };
-  const saved = cli("ledger.ts", ["save", "--json", JSON.stringify(input({ format: "meet" }))], env);
-  const id = saved.json.request.id;
-  const file = join(home, "event.txt");
-  writeFileSync(file, fixture("event-meet"));
-  const r = cli("record-booking.ts", ["--id", id, "--event-file", file, "--account", ACCOUNT], env);
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.json.meetUrl, "https://meet.google.com/sai-nvgi-cdg");
-  assert.equal(r.json.request.status, "booked");
-  // It is in the ledger, not only in the output.
-  assert.equal(cli("ledger.ts", ["find", "--chat", "c1"], env).json.request.eventId, "evt123abc");
-  const missing = cli("record-booking.ts", ["--id", id, "--account", ACCOUNT], env);
-  assert.equal(missing.status, 1);
-  assert.match(missing.stderr, /usage/);
-  writeFileSync(file, "refusing to delete event x without --force (non-interactive)\n");
-  const bad = cli("record-booking.ts", ["--id", id, "--event-file", file, "--account", ACCOUNT], env);
-  assert.equal(bad.status, 1);
-  assert.match(bad.stderr, /^error: /);
 });

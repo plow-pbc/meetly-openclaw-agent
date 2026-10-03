@@ -4,8 +4,9 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   addRequest, saveRequest, cleanupList, pendingOwnerList, expiredRequests, findByChat, findOpenByHandle, normalizeHandle, sameHandle, updateRequest,
-  type Ledger, type NewRequest,
+  type Ledger, type NewRequest, type Patch,
 } from "../skills/meetly/scripts/ledger.ts";
+import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
 const T0 = Date.parse("2026-09-28T12:00:00Z");
@@ -15,6 +16,10 @@ const input = (over: Record<string, unknown> = {}) => ({
   origin: "inbound", handle: "+15551234567", topic: "coffee", durationMin: 30, offered: [offer], ...over,
 }) as NewRequest;
 const empty = (): Ledger => ({ requests: [] });
+const patchFixture = (home: string, id: string, patch: Patch) => {
+  const path = join(home, "ledger.json");
+  writeJson(path, updateRequest(readJson<Ledger>(path, empty()), id, patch, T0));
+};
 
 test("handles normalize phones and emails", () => {
   assert.equal(normalizeHandle("+1 (555) 123-4567"), "+15551234567");
@@ -90,7 +95,7 @@ test("CLI sender-aware chat lookup prefers open request over closed chat history
   const env = { MEETLY_HOME: home };
   cli("ledger.ts", ["add", "--json", JSON.stringify(input({ chatUid: "c1" }))], env);
   const old = cli("ledger.ts", ["find", "--chat", "c1"], env).json.request;
-  cli("ledger.ts", ["update", "--id", old.id, "--json", '{"status":"dropped"}'], env);
+  patchFixture(home, old.id, { status: "dropped" });
   const replacement = cli("ledger.ts", ["add", "--json", JSON.stringify(input({ offered: [{ ...offer, holdId: "h2" }] }))], env).json.request;
   const current = cli("ledger.ts", ["find", "--chat", "c1", "--handle", "+15551234567"], env);
   assert.equal(current.status, 0, current.stderr);
@@ -103,7 +108,7 @@ test("CLI combined lookup returns a closed chat request when the sender has no o
     const env = { MEETLY_HOME: home };
     const created = cli("ledger.ts", ["add", "--json", JSON.stringify(input({ chatUid: "c1" }))], env);
     const request = created.json.request;
-    cli("ledger.ts", ["update", "--id", request.id, "--json", JSON.stringify({ status })], env);
+    patchFixture(home, request.id, { status });
 
     const result = cli("ledger.ts", ["find", "--chat", "c1", "--handle", "+15551234567"], env);
     assert.equal(result.status, 0, result.stderr);
@@ -280,7 +285,7 @@ test("CLI saves an asked request, finds it by handle but never by chat", () => {
 test("a guest replying in an older group can neither find nor link their asked request", () => {
   const env = { MEETLY_HOME: tmpHome() };
   const old = cli("ledger.ts", ["add", "--json", JSON.stringify(input({ chatUid: "c_old" }))], env).json.request;
-  cli("ledger.ts", ["update", "--id", old.id, "--json", '{"status":"booked"}'], env);
+  patchFixture(env.MEETLY_HOME, old.id, { status: "booked" });
   const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(asked())], env).json.request;
 
   assert.equal(cli("ledger.ts", ["find", "--chat", "c_old", "--handle", "+15551234567"], env).json.request.id, old.id);
@@ -328,7 +333,7 @@ test("CLI add, find, update, expired and cleanup round-trip", () => {
   assert.deepEqual(cli("ledger.ts", ["expired"], env).json, { requests: [] });
   assert.equal(cli("ledger.ts", ["expired", "--hours", "0"], env).json.requests.length, 1);
   assert.deepEqual(cli("ledger.ts", ["cleanup"], env).json, { requests: [] });
-  cli("ledger.ts", ["update", "--id", id, "--json", '{"holdCleanup":[{"holdId":"h1","account":"a"}]}'], env);
+  patchFixture(home, id, { holdCleanup: [{ holdId: "h1", account: "a" }] });
   assert.deepEqual(cli("ledger.ts", ["cleanup"], env).json, { requests: [{ id, holdCleanup: [{ holdId: "h1", account: "a" }] }] });
   const pend = { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T10:30:00-03:00", askedAt: "2026-09-28T12:00:00Z" };
   cli("ledger.ts", ["update", "--id", id, "--json", JSON.stringify({ pendingOwner: pend })], env);
@@ -353,4 +358,17 @@ test("a corrupt ledger.json fails loudly", () => {
   const r = cli("ledger.ts", ["find", "--handle", "+15551234567"], { MEETLY_HOME: home });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /ledger\.json/);
+});
+
+
+test("public ledger updates cannot bypass calendar or reminder commits", () => {
+  const home = tmpHome(), env = { MEETLY_HOME: home };
+  const saved = cli("ledger.ts", ["add", "--json", JSON.stringify(input())], env).json.request;
+  for (const [key, value] of Object.entries({ status: "booked", eventId: "other", offered: [offer], holdCleanup: [],
+    booked: { start: offer.start, end: offer.end, account: offer.account }, meetUrl: null, reminder: null, calendarRevision: "other" })) {
+    const result = cli("ledger.ts", ["update", "--id", saved.id, "--json", JSON.stringify({ [key]: value })], env);
+    assert.equal(result.status, 1, key);
+    assert.match(result.stderr, /managed by/);
+  }
+  assert.deepEqual(cli("ledger.ts", ["find", "--handle", saved.handle], env).json.request, saved);
 });

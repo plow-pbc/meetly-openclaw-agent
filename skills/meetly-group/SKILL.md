@@ -128,7 +128,7 @@ ask which and end the turn.
   `name`, `sourceRowid`, `topic`, `format`, `locale` and `proposed`, and
   `constraints` set to any conditions the owner gave with the yes. Saving
   the offer turns the request into `offered` under the same id.
-- **No:** run `ledger.ts update --id <id> --json '{"status":"dropped"}'`.
+- **No:** run `calendar.ts drop --id <id>`.
   Send nothing to the person.
 
 ## Meeting format

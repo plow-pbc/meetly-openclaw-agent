@@ -95,7 +95,7 @@ test("the owner's yes or no in their DM decides an asked request", () => {
   assert.ok(group.includes("Nobody is contacted until the owner says yes there"));
   assert.ok(group.includes("if it could be more than one, ask which and end the turn"));
   assert.ok(group.includes("**Yes:** follow \"Offer times\" with `origin: inbound`"));
-  assert.ok(group.includes("**No:** run `ledger.ts update --id <id> --json '{\"status\":\"dropped\"}'`. Send nothing to the person."));
+  assert.ok(group.includes("**No:** run `calendar.ts drop --id <id>`. Send nothing to the person."));
   assert.ok(flat(prompt).includes("the owner answers Meetly's \"Want me to offer times?\" → `meetly-group`, \"Asked requests\""));
 });
 
@@ -231,6 +231,7 @@ test("calendar mutations are owned by the writer, never assembled in skills", ()
   for (const { path } of skillFiles) {
     assert.doesNotMatch(flat(readFileSync(path, "utf8")), /(?:plow-gog )?calendar (?:create|update|delete)\b/);
   }
+  assert.ok(pollSkill().includes("calendar.ts resume-pending"));
   assert.ok(pollSkill().includes("calendar.ts expire --id <id>"));
   assert.ok(pollSkill().includes("calendar.ts cleanup --id <id>"));
 });

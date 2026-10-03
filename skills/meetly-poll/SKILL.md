@@ -81,9 +81,9 @@ thread. For a message to the owner with no meeting thread, use
       step 6.
 5. Run `cursor.ts set <highest rowid in the batch>`.
 6. Maintenance:
-   - Run `calendar.ts pending` and `calendar.ts resume --id <id>` for each id
-     before expiry or cleanup. If an operation stays unresolved, skip that
-     request's other mutations and report it to the owner.
+   - Run `calendar.ts resume-pending` before expiry or cleanup. It resumes every
+     pending write and reports each result. For results with an `error`, skip
+     that request's other mutations and report it to the owner.
    - For each request from `ledger.ts expired`, run `calendar.ts expire --id <id>`.
      The writer rechecks expiry while holding the request lock. If it prints
      `skipped`, do not announce expiry. Otherwise, if its returned request has
