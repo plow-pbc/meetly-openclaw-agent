@@ -281,7 +281,7 @@ test("owner group turns keep the script flow and answers use the recorded thread
   assert.ok(group.includes('Read `ledger.ts find --chat <this chat uid>` for the current request, including booked or closed ones'));
   assert.ok(group.includes("verify its `chatUid` is this chat before acting"));
   assert.ok(group.includes("In the owner's DM, run `ledger.ts pending`"));
-  assert.ok(group.includes("The owner can authorize an out-of-hours time or a conflict override"));
+  assert.ok(group.includes("The owner can authorize a time outside the meeting window or a conflict override"));
 });
 
 test("a Meet link is never pasted at booking and never taken from a message", () => {
@@ -298,4 +298,12 @@ test("trust changes remain an explicit owner action and failed group opening is 
   const group = groupSkill();
   assert.ok(group.includes("If `plow_start_thread` definitely fails, tell the owner what it said and stop"));
   assert.doesNotMatch(group, /guest turns are reply-only|full guest tools are needed|on a guest's turn|## Outside the owner's hours/);
+});
+
+
+test("owner approval re-check uses the saved meeting duration and meal", () => {
+  const group = groupSkill();
+  const approval = group.slice(group.indexOf("## Owner confirms"), group.indexOf("## Owner in the group"));
+  assert.ok(approval.includes("slots.ts --at <pendingOwner.start> --duration <request.durationMin>"));
+  assert.ok(approval.includes("--meal <request.meal>"));
 });

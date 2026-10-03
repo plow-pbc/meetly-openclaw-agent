@@ -76,7 +76,7 @@ Lunch/dinner windows replace working hours; the owner's allowed days still apply
    with the fields below except `origin`, `chatUid`, `account` and `allowOverlap`;
    pass `allowOverlapTitles` with only the event names the owner explicitly
    authorized. The tool resolves and saves matching event ids internally.
-   Omit `durationMin` unless explicitly specified. It resolves the configured
+   Omit `durationMin` unless explicitly specified. It resolves the meal or configured
    duration and calendar account internally, records the exact runtime chat uid
    and returns only group-safe offer fields. Otherwise run `calendar.ts offer --json '<request>'` with `origin`, `handle` (the
    resolved phone), `name`, `sourceRowid`, `chatUid` if already known, `topic`,
@@ -225,7 +225,7 @@ disclose private information.
   the DM, send the result to the recorded group with `plow_reply_to`.
 
 - **Yes:**
-  1. Read the calendar and re-check with `slots.ts --at <pendingOwner.start>`.
+  1. Read the calendar and re-check with `slots.ts --at <pendingOwner.start> --duration <request.durationMin>`, adding `--meal <request.meal>` when present.
   2. If it is still free, pass its start and end to the writer, following
      "Book the event". It records the booking and clears `pendingOwner`.
   3. The writer releases the request's other holds.
@@ -246,7 +246,7 @@ If no request matches and the group is exactly the owner, one other member
 and Meetly, the owner's scheduling ask is a request for that member. Use
 the member's handle and known name from the conversation,
 the owner's words for topic and conditions, and thread context for format and
-place. Omit duration unless the owner specifies it; the tool uses the configured default. Preferred dates/times go
+place. Omit duration unless the owner specifies it; the tool uses the meal or configured default. Preferred dates/times go
 in `proposed`; explicit non-relaxable conditions go in `constraints`. Follow
 "Offer times" from step 2, using `meetly_offer_owner_group` to record and hold
 this request. Reply here, never open a new thread or DM the owner. An existing
@@ -271,7 +271,7 @@ are out of scope. A booked or closed request is not a no-match.
   for the confirmation.
 - **Cancel or drop:** run `calendar.ts cancel --id <id>` for a booked meeting,
   or `calendar.ts drop --id <id>` for an open request.
-- The owner can authorize an out-of-hours time or a conflict override. For a
+- The owner can authorize a time outside the meeting window or a conflict override. For a
   group offer, pass their event names as `allowOverlapTitles`; never pass calendar
   ids in group tool arguments. Other writer flows use saved `allowOverlap`.
 
