@@ -242,12 +242,24 @@ test("setup asks only what nobody can infer, and the rest starts at defaults", (
 
 test("the owner's conditions hold for every offer of a request; the person's proposed times only for the first", () => {
   const group = groupSkill();
-  assert.ok(group.includes("`constraints` set to any conditions the owner gave with the yes"));
+  assert.ok(group.includes("preserve the saved `constraints` and merge any conditions the owner gave with the yes"));
   assert.ok(group.includes("with the request's `constraints` (the owner's) and, on its first offer, its `proposed` times"));
   assert.ok(group.includes("run again without them, keeping `constraints`, and say those times don't work"));
   assert.ok(group.includes("`constraints` (the owner's conditions)"));
   assert.ok(!group.includes("for `origin: owner`"));
   assert.ok(pollSkill().includes("`proposed` for any times they proposed"));
+});
+
+test("relative dates resolve to explicit bounds on guest, owner DM and inbound paths", () => {
+  const group = groupSkill();
+  const poll = pollSkill();
+  assert.ok(group.includes('Resolve relative date ranges such as "next week" to explicit `from`/`to` dates in the owner\'s timezone'));
+  assert.ok(group.includes("For owner DM requests, save those bounds in `constraints`"));
+  assert.ok(poll.includes("Resolve relative dates against the source message's timestamp in the owner's timezone"));
+  assert.ok(poll.includes('Save date ranges such as "next week" as explicit `from`/`to` in `constraints`'));
+  assert.ok(flat(prompt).includes('Resolve relative ranges such as "next week" to explicit `from`/`to` dates in the owner\'s timezone before calling `meetly_other_times`'));
+  assert.ok(flat(prompt).includes('confirms `ownerAskSent: true`'));
+  assert.ok(flat(prompt).includes("never invent a question to resolve your own uncertainty"));
 });
 
 test("guests route to their tool descriptions without loading skills or running scripts", () => {

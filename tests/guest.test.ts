@@ -197,6 +197,42 @@ test("an exact in-window other-times request holds that time without asking the 
   assert.equal(f.ownerLines.length, 0);
 });
 
+test("guest date bounds survive fallback when the preferred clock time is unavailable", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = {};
+  f.save(f.ledger);
+  const result = await f.act(context, "other_times", { from: "2026-10-05", to: "2026-10-11", after: "20:00" });
+  assert.ok(!("error" in result));
+  assert.ok(f.request().offered.every(o => o.start.slice(0, 10) >= "2026-10-05" && o.start.slice(0, 10) <= "2026-10-11"));
+  assert.equal(f.ownerLines.length, 0, "a broad preference is not an exact time approval");
+});
+
+test("an unavailable guest week never falls back into a different week", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = {};
+  f.save(f.ledger);
+  f.events.set("week", event("week", "2026-10-05T00:00:00Z", "2026-10-12T00:00:00Z"));
+  const result = await f.act(context, "other_times", { from: "2026-10-05", to: "2026-10-11" });
+  assert.ok("error" in result);
+  assert.deepEqual(f.read(), f.ledger);
+  assert.ok(f.commands.every(c => c[2] === "events"));
+  assert.equal(f.ownerLines.length, 0);
+});
+
+test("other-times automatically sends a lunch-window approval even inside working hours", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.meal = "lunch";
+  f.ledger.requests[0]!.durationMin = 60;
+  f.save(f.ledger);
+  const result = await f.tools.get("meetly_other_times")!.execute("ask", {
+    days: ["tue"], from: "2026-10-06", to: "2026-10-06", after: "15:00", before: "16:00",
+  });
+  assert.equal(JSON.parse(result.content[0]!.text).ownerAskSent, true);
+  assert.equal(f.deliveries.length, 1);
+  assert.deepEqual(f.request().offered, offers);
+  assert.deepEqual(f.request().pendingOwner, { start: "2026-10-06T15:00:00+00:00", end: "2026-10-06T16:00:00+00:00", askedAt: new Date(now).toISOString() });
+});
+
 for (const failure of ["busy", "calendar", "delivery"] as const) test(`outside-window approval never claims an owner ask on ${failure}`, async t => {
   const f = fixture(t);
   if (failure === "busy") f.events.set("busy", event("busy", "2026-10-05T20:00:00Z", "2026-10-05T21:00:00Z"));
@@ -378,9 +414,9 @@ for (const action of ["pick", "ask_owner"] as const) test(`${action} cannot bypa
   assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
-test("a rejected Thursday counterproposal returns fresh times within the owner's conditions", async t => {
+test("a rejected weekday preference without date bounds returns fresh times within the owner's conditions", async t => {
   const f = fixture(t);
-  const result = await guestAction(context, "other_times", { days: ["thu"], from: "2026-10-08", to: "2026-10-08", after: "16:00", before: "18:00" });
+  const result = await guestAction(context, "other_times", { days: ["thu"], after: "16:00", before: "18:00" });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true);
   assert.deepEqual(f.request().constraints, f.ledger.requests[0]!.constraints);
@@ -391,6 +427,15 @@ test("a rejected Thursday counterproposal returns fresh times within the owner's
     assert.ok(!offers.some(old => Date.parse(old.start) === Date.parse(offer.start)));
   }
   assert.ok(offers.every(old => f.events.get(old.holdId)!.status === "cancelled"));
+});
+
+test("guest date bounds outside the owner's dates leave the current offer intact", async t => {
+  const f = fixture(t);
+  const result = await f.act(context, "other_times", { from: "2026-10-08", to: "2026-10-08", after: "16:00", before: "18:00" });
+  assert.ok("error" in result);
+  assert.deepEqual(f.read(), f.ledger);
+  assert.equal(f.ownerLines.length, 0);
+  assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
 test("no fallback availability leaves the existing offer and holds intact", async t => {
