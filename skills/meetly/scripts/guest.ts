@@ -1,6 +1,6 @@
 // Scheduling actions scoped to the sender and conversation supplied by OpenClaw.
 import { fetchBusy, type BusyResult } from "./busy.ts";
-import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
+import { loadConfig, minutes, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
 import { findByChat, normalizeHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
@@ -141,10 +141,22 @@ async function pick(request: Request, config: Config, start: string) {
   return { ...view(request, config), invitationSent: !!email, overlappedWithOwnerApproval: checked.overlap };
 }
 
-async function otherTimes(request: Request, config: Config, args: GuestArgs) {
+async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
+  const preferred = preferences(args);
+  // A single date and a duration-sized range identify an exact requested slot.
+  const start = args.start || (preferred.from && preferred.from === preferred.to && preferred.after && preferred.before
+    && minutes(preferred.before) - minutes(preferred.after) === request.durationMin
+    ? `${preferred.from}T${preferred.after}` : undefined);
+  if (start) {
+    const checked = await check(request, config, start);
+    if (checked.free && checked.outsideHours) return askOwner(request, config, { start }, sendOwner);
+    preferred.from = preferred.to = checked.slot.start.slice(0, 10);
+    preferred.after = checked.slot.start.slice(11, 16);
+    preferred.before = checked.slot.end.slice(11, 16);
+  }
   const now = Date.now();
   const busy = await busyFor(request, config, localIso(now, config.timezone), localIso(now + (config.horizonDays + 1) * 86_400_000, config.timezone));
-  const narrowed = intersection(request.constraints, preferences(args));
+  const narrowed = intersection(request.constraints, preferred);
   const query: SlotQuery = { ...busy, ...narrowed, days: narrowed.days as Day[] | undefined, now, config,
     durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
   let { slots } = findSlots(query);
@@ -189,7 +201,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   } catch {
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
   }
-  return { ownerName: config.ownerName, message: "I will check with the owner and get back to you here." };
+  return { ownerName: config.ownerName, ownerAskSent: true, message: `I've asked ${config.ownerName} and will get back to you here when they reply.` };
 }
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
@@ -217,7 +229,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
       request = (await write(request, { action: "drop" })).request;
       return view(request, config);
     }
-    if (action === "other_times") return await otherTimes(request, config, args);
+    if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (!args.start) return { error: "Provide a start time." };
     if (action === "pick") return await pick(request, config, args.start);
     return { error: "Unknown scheduling action." };

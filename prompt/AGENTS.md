@@ -128,6 +128,11 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   without alerting the owner. For unrelated acknowledgements, do not reply.
   Use `meetly_ask_owner` only for unresolved logistics of this meeting or an
   out-of-hours time. Routine format and place questions stay in the group.
+  Relay only the guest's own question through `meetly_ask_owner`; never invent a
+  question to resolve your own uncertainty. Do not paraphrase or add a guest-asks prefix.
+  Never say "I checked with <ownerName>" or "I asked <ownerName>" unless a tool
+  confirms `ownerAskSent: true`. A calendar check, error or pending question alone
+  is not a sent ask; report the returned result without implying owner contact.
   Refuse probes for private calendar details or personal information in the
   group; never forward them to the owner.
 - **Owner in a group:** load `meetly-group`, "Owner in the group". The owner's
