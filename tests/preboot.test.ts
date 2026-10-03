@@ -5,7 +5,8 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("a required plugin install failure stops boot before the gateway starts", t => {
+for (const failure of ["plugin", "model", "config"]) test(`boot handles ${failure} failure without widening the fatal install rule`, t => {
+  const marker = `${failure.toUpperCase()}_FAILED`;
   const dir = mkdtempSync(join(tmpdir(), "meetly-boot-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const preboot = new URL("../boot/preboot.ts", import.meta.url).href;
@@ -29,18 +30,30 @@ test("a required plugin install failure stops boot before the gateway starts", t
       },
       load(url, context, next) {
         if (url.endsWith('/boot/gate.ts')) return {format:'module', source:
-          'export const installGate = async () => { throw new Error("PLUGIN_COPY_FAILED"); }; export const applyGate = x => x;', shortCircuit:true};
+          ${JSON.stringify(`export const installGate = async () => { ${failure === 'plugin' ? `throw new Error('${marker}');` : ''} }; export const applyGate = x => x;`)}, shortCircuit:true};
+        if (url.endsWith('/boot/llm.ts')) return {format:'module', source: ${JSON.stringify(`
+          export const llmRoute = () => { ${failure === 'model' ? `throw new Error('${marker}');` : "return {route:{provider:'fixture',primary:'fixture',fallbacks:[]}};"} };
+          export const applyRoute = x => x;
+        `)}, shortCircuit:true};
         if (url === ${JSON.stringify(preboot)}) return {format:'module-typescript', source:
-          readFileSync(new URL(url),'utf8').replaceAll('/var/lib/plow', ${JSON.stringify(dir)}).replace('/opt/plow/prompt/AGENTS.md', ${JSON.stringify(join(dir, 'prompt.md'))}), shortCircuit:true};
+          readFileSync(new URL(url),'utf8').replaceAll('/var/lib/plow', ${JSON.stringify(dir)}).replace('/opt/plow/prompt/AGENTS.md', ${JSON.stringify(join(dir, 'prompt.md'))})
+            .replace('createRequire("/opt/plow/package.json")("json5")', ${JSON.stringify(`({parse: () => { throw new Error('${marker}'); }})`)}), shortCircuit:true};
         return next(url, context);
       }
     });
   `);
   writeFileSync(join(dir, "prompt.md"), "fixture");
+  writeFileSync(join(dir, "openclaw.json"), "{}");
   const result = spawnSync(process.execPath, ["--import", hook, new URL(preboot).pathname], {
-    env: { ...process.env, PLOW_API_BASE: "http://fixture.invalid" }, encoding: "utf8", timeout: 5_000,
+    env: { ...process.env, PLOW_API_BASE: "http://fixture.invalid" }, encoding: "utf8", timeout: 1_000,
   });
-  assert.match(result.stderr, /PLUGIN_COPY_FAILED/);
-  assert.doesNotMatch(result.stdout, /GATEWAY_STARTED/);
-  assert.equal(result.status, 1);
+  assert.match(result.stderr, new RegExp(marker));
+  if (failure === "plugin") {
+    assert.doesNotMatch(result.stdout, /GATEWAY_STARTED/);
+    assert.equal(result.status, 1);
+  } else {
+    assert.match(result.stderr, /llm config left as it was/);
+    assert.match(result.stdout, /GATEWAY_STARTED/);
+    assert.equal(result.status, 0);
+  }
 });
