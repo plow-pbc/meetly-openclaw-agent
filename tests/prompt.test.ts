@@ -223,15 +223,16 @@ test("closed request responses are limited to scheduling intent, not acknowledge
   assert.ok(group.includes("For a conversational acknowledgement or other message unrelated to scheduling"));
   assert.ok(group.includes("do not reply and do not alert the owner"));
   assert.ok(group.includes("decline, cancel or give up"));
-  assert.ok(group.includes("**They decline or give up:** delete the holds"));
+  assert.ok(group.includes("**They decline or give up:** run `calendar.ts drop --id <id>`"));
   assert.ok(group.includes("use this only when a scheduling-related message tries to choose, change or resume the request, or asks its status"));
 });
 
-test("every calendar delete a skill names passes --force, which gog requires when it cannot prompt", () => {
-  const deletes = skillFiles.flatMap((s) =>
-    [...flat(readFileSync(s.path, "utf8")).matchAll(/`plow-gog calendar delete [^`]*`/g)].map((m) => m[0]));
-  assert.ok(deletes.length > 0);
-  for (const d of deletes) assert.ok(d.includes("--force"), `missing --force: ${d}`);
+test("calendar mutations are owned by the writer, never assembled in skills", () => {
+  for (const { path } of skillFiles) {
+    assert.doesNotMatch(flat(readFileSync(path, "utf8")), /(?:plow-gog )?calendar (?:create|update|delete)\b/);
+  }
+  assert.ok(pollSkill().includes("calendar.ts expire --id <id>"));
+  assert.ok(pollSkill().includes("calendar.ts cleanup --id <id>"));
 });
 
 const groupSkill = () => flat(readFileSync(join(SKILLS, "meetly-group", "SKILL.md"), "utf8"));
@@ -250,17 +251,11 @@ test("the format is read only from explicit words, and ambiguous ones are asked"
   assert.ok(pollSkill().includes("the format if their words say it"));
 });
 
-test("every booking goes through Book the event: --with-meet, --json and record-booking.ts", () => {
+test("every booking uses the calendar writer instead of recording a separate mutation", () => {
   const group = groupSkill();
-  assert.ok(group.includes("## Book the event"));
-  assert.ok(group.includes("`format` `meet`: `--with-meet`"));
-  assert.ok(group.includes("always with `--json` and `--send-updates all`"));
-  assert.ok(group.includes("Run `record-booking.ts --id <request id> --event-file"));
-  assert.ok(group.includes("Never write those fields with `ledger.ts update` yourself"));
-  // Pick, the hold-gone fallback, the owner's yes and the late format answer all use it.
+  assert.ok(group.includes("calendar.ts book --id <request id>"));
+  assert.ok(group.includes("Never write booking fields with `ledger.ts update` yourself"));
   assert.ok((group.match(/following "Book the event"/g) ?? []).length >= 3);
-  assert.ok(group.includes("the same details, the same way"));
-  // No skill marks a request booked by hand any more.
   for (const { dir, path } of skillFiles) {
     assert.ok(!readFileSync(path, "utf8").includes('"status":"booked"'), `${dir} books by hand`);
   }

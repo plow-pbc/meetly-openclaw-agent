@@ -33,6 +33,7 @@ export type Request = {
   name?: string;
   sourceRowid?: number;
   chatUid?: string;
+  calendarRevision?: string;
   topic: string;
   location?: string;
   durationMin: number;
@@ -63,7 +64,7 @@ export type Request = {
 export type Ledger = { requests: Request[] };
 
 export type NewRequest = Omit<Request,
-  "id" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
+  "id" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
   | "notifyAttemptedAt" | "notifiedAt" | "startedAt" | "startCompletedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
@@ -170,6 +171,7 @@ function checkOffers(offered: unknown): Offer[] {
 }
 
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
+  if ("calendarRevision" in input) throw new Error("calendarRevision is managed by calendar.ts");
   for (const key of ["notifyAttemptedAt", "notifiedAt", "startedAt", "startCompletedAt"]) {
     if (key in input) throw new Error(`${key} is managed by ledger.ts delivery`);
   }

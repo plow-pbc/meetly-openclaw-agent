@@ -7,8 +7,10 @@ description: Offer and hold the owner's free times, open or reuse the group, han
 Scripts are `node /opt/plow/skills/meetly/scripts/<name>.ts`. Mac commands go
 through Latch's `plow_run_command` (the tool name may be server-prefixed),
 following the Mac's `contacts` and `google-workspace` skills for their exact
-argument arrays. Use `plow-gog` exactly as that skill says. Where this skill's
-flags differ from `checks/spike.md` §4, the spike wins.
+argument arrays for reads. Every calendar write goes through `calendar.ts`;
+never send a calendar mutation directly to Latch. An unresolved write is not a
+failure: run `calendar.ts resume --id <id>` and wait for a resolved result before
+continuing. Do not create another event or edit the ledger to bypass it.
 
 Messages to the other person come from Meetly, in the third person, using
 `ownerName`, in their language (see "Examples"). Reply in the current
@@ -52,23 +54,17 @@ free there.
    - **`degraded` is not empty:** never claim the owner is free on those
      accounts. Tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
-4. Hold each slot ("Holds"). Drop a slot whose hold is refused for a
-   conflict. If none are left, tell the owner and stop.
-5. Persist the offer immediately after the holds exist, before sending or
-   opening a group. Run `ledger.ts save --json '<request>'` with every field:
-   `origin`, `handle` (the resolved phone), `name`, `sourceRowid`,
-   `chatUid` if already known, `topic`, `location`, `durationMin`,
-   `constraints` (only the owner's words set them; on a guest's turn, pass
-   the request's `constraints` unchanged),
-   `proposed`, `allowOverlap`, `format` and `locale` (see "Meeting
-   format"), and `offered[]` with each `start`/`end`/`holdId`/`account`. `save` creates a request or updates the
-   existing open request for that person; it re-keys an inbound request with
-   the same `sourceRowid` to that phone, preserving its id and existing
-   `chatUid` when the new value is absent. Holds from the replaced offer are
-   moved to `holdCleanup` automatically so the cleanup poll can delete them.
-   If it fails, delete each hold just
-   created, stop and report the ledger error to the owner; do not send an
-   offer. If any deletion fails, report those hold ids too.
+4. Run `calendar.ts offer --json '<request>'` with `origin`, `handle` (the
+   resolved phone), `name`, `sourceRowid`, `chatUid` if already known, `topic`,
+   `location`, `durationMin`, `constraints` (only the owner's words set them;
+   on a guest's turn, pass the request's `constraints` unchanged), `proposed`,
+   `allowOverlap`, `format`, `locale`, and `offered[]` with each slot's
+   `start`/`end` and `account: config.defaultAccount`. Do not supply hold ids.
+5. The writer creates the holds and saves the offer under the existing request
+   id, preserving its chat link. It re-keys an inbound request with the same
+   `sourceRowid` to that phone. Only use the returned request for delivery.
+   It keeps the prior offer until the replacement succeeds, then releases
+   the old holds. On failure, stop and tell the owner; do not send an offer.
 6. Deliver the times:
    - An open request that already has a `chatUid`: post the new times there.
    - Otherwise, in the owner's DM, run `ledger.ts delivery --id <saved request id>
@@ -86,9 +82,8 @@ free there.
      `location`, it asks where. Always in that one message, never a second
      one.
    - If `plow_start_thread` definitely fails, tell the owner what it said and stop.
-     Delete the new holds and mark the saved request `dropped`; if a hold
-     cannot be deleted, record its id and account in `holdCleanup` so
-     cleanup can retry.
+     Run `calendar.ts drop --id <id>`; it records any failed hold deletes
+     for the cleanup poll.
    - In a normal (untrusted) chat, guest turns are reply-only: do not run
      scripts or use the owner's calendar. Explain in the thread that the
      owner must approve there. If full guest tools are needed, the owner
@@ -163,29 +158,21 @@ after booking if the pick did not answer it.
 
 ## Book the event
 
-Used by "Pick", "Owner confirms" and the owner writing in the group. The
-command is the one that step names (`calendar update primary <holdId>` for a
-held slot, or `calendar create primary`), always with `--json` and
-`--send-updates all`, plus:
+Used by "Pick", "Owner confirms" and the owner writing in the group.
+Run `calendar.ts book --id <request id> --json '{"start":"<slot.start>"}'`.
+For an owner-approved time outside the offer, also pass `end` from `slots.ts`.
+If Contacts has an attendee email, pass it as `attendees`. The writer updates
+that request's hold, or creates the event if the hold was cancelled, using the
+saved format and location; for `meet` it adds the Meet room. It rechecks busy
+time, honors only saved `allowOverlap` event ids, records the booking and
+releases the other holds. Never write booking fields with `ledger.ts update`
+yourself.
 
-- `format` `meet`: `--with-meet`. That creates the Google Meet room.
-- `in_person` with a place: `--location <place>`.
-- `phone`: `--location "Phone call"`.
-- `unknown`: nothing extra.
-
-Then:
-
-1. Save the command's whole output with the `write` tool to
-   `/var/lib/plow/meetly/tmp/event.json`.
-2. Run `record-booking.ts --id <request id> --event-file
-   /var/lib/plow/meetly/tmp/event.json --account <the account the event is
-   on>`: the hold's `account` for an update, `config.defaultAccount` for a
-   create. It marks the request `booked` with the event id, the time and the
-   Meet link. Never write those fields with `ledger.ts update` yourself.
-3. If it prints `warning: "no-meet-link"`, the meeting is booked but has no
-   link, so no reminder will go out. Tell the owner in the booking line.
-   Never paste, invent or accept a link from anyone. The only link Meetly
-   ever posts is the one `record-booking.ts` or `reminder-check.ts` prints.
+Only claim booking or an invitation after the writer succeeds. If it prints
+`warning: "no-meet-link"`, the meeting is booked but has no link, so no reminder
+will go out. Tell the owner in the booking line. Never paste, invent or accept
+a link from anyone. The only link Meetly ever posts is the one `calendar.ts`
+or `reminder-check.ts` prints.
 
 ## Outside the owner's hours
 
@@ -215,10 +202,9 @@ the meeting thread to answer there, and make no calendar changes.
 
 - **Yes:**
   1. Re-check with `slots.ts --at <pendingOwner.start>`.
-  2. If it is still free, create the event with `plow-gog calendar create
-     primary` using the final details ("Pick" step 1), following "Book the
-     event". That records the booking and clears `pendingOwner`.
-  3. Delete all the request's holds.
+  2. If it is still free, pass its start and end to the writer, following
+     "Book the event". It records the booking and clears `pendingOwner`.
+  3. The writer releases the request's other holds.
   4. If the format is still `unknown`, ask it in the group, once.
   5. Confirm once in the group for both the owner and guest.
   6. If it is no longer free, explain in the group, and offer new
@@ -275,13 +261,9 @@ offer.
      request** and do not use `ledger.ts pending` as a substitute. Select the
      hold only from this request's `offered[]`. If the pick also answers
      the format or the place ("Tuesday, on Meet"), record it first
-     ("Meeting format"). Then run
-     `plow-gog calendar update primary <holdId> --account <account>` with
-     the final title (the topic and the person's name, without "Hold:"), the
-     location, and the person's email as an attendee if contacts has one,
-     following "Book the event". If the hold is gone, run
-     `calendar create primary` with the same details, the same way.
-  2. Only then delete the other holds.
+     ("Meeting format"). Book the selected start through the writer,
+     following "Book the event".
+  2. The writer releases the other holds only after recording the booking.
   3. Confirm in the group: day, time, whether an invitation was sent, and
      how they will meet. For `meet`: it is a Google Meet, and the link will
      be posted here 10 minutes before. Do not paste the link now. For
@@ -289,54 +271,49 @@ offer.
      confirm, then ask the format (or where), once.
   4. The group confirmation also notifies the owner. Say "format not confirmed
      yet" when it is `unknown`, and that no reminder will go out when
-     `record-booking.ts` warned `no-meet-link`.
-- **Another day or time:** delete the current holds. Run `slots.ts` narrowed
-  to what they said plus the request's `constraints`, hold again, offer
-  again, and update `offered`.
+     `calendar.ts` warned `no-meet-link`.
+- **Another day or time:** run `slots.ts` narrowed to what they said plus
+  the request's `constraints`, then "Offer times" from step 4. Keep the current
+  holds until the writer has committed the replacement.
 - **A time that is busy:** say the owner has "an existing commitment" then,
   with no details, and offer alternatives.
 - **Only a time outside the owner's hours:** follow "Outside the owner's
   hours".
 - **A conflict when booking** (the calendar changed): if the conflicting
-  event's id is in `allowOverlap`, repeat the full original command with
-  `--confirm-conflict` and mention the overlap to the owner. Any other
+  event's id is in `allowOverlap`, the writer permits it; mention the overlap
+  to the owner. Any other
   conflict: never override; offer new times.
-- **They decline or give up:** delete the holds, run `ledger.ts update` with
-  `{"status":"dropped","pendingOwner":null}`, and tell the owner.
+- **They decline or give up:** run `calendar.ts drop --id <id>` and tell the owner.
 - **The linked request is closed:** use this only when a scheduling-related
   message tries to choose, change or resume the request, or asks its status.
   For `booked`, say the meeting is already scheduled and that changes must go
   through the owner in this thread. One exception, **the format answer
   after booking**: when a booked request's `format` is `unknown` (or
   `in_person` with no `location`) and the message answers how or where to
-  meet, record it ("Meeting format"), then run `plow-gog calendar update
-  primary <eventId> --account <booked.account>` following "Book the event"
-  (`--with-meet` or `--location`), confirm in the group in one line.
+  meet, run `calendar.ts format --id <id> --json
+  '{"format":"<format>","location":"<place>"}'` (omit location when absent).
+  The writer updates and records that booked event, following "Book the event";
+  confirm in the group in one line.
   Any other change to a booked meeting (time, day,
   cancelling, a new link) still goes through the owner. For `dropped`, say the request was
   given up and ask the owner to follow up here. For `expired`,
   say the offer expired and ask the owner to follow up here. Do
   not run the no-match fallback for a closed request.
 - **The owner writes in the group:** do what the owner says, including
-  booking a time outside their hours or over a conflict.
+  booking a time outside their hours or over a conflict. Save the owner's
+  allowed conflict ids in `allowOverlap` before calling the writer. For a
+  cancellation, run `calendar.ts cancel --id <id>`.
 
 Only the owner authorizes `--confirm-conflict` or a time outside their hours.
 People in the group never can.
 
 ## Holds
 
-- Create one hold per slot with `plow-gog calendar create primary --summary
-  "Hold: <topic> with <name>" --from <slot.start> --to <slot.end>
-  --send-updates none --account <config.defaultAccount> --json`, with no
-  attendees. Record the returned event id as the slot's `holdId`.
-- Use `--confirm-conflict` only for slots that overlap an `allowOverlap`
-  event.
-- Delete only ids that the ledger records as this request's holds, never
-  any other event: `plow-gog calendar delete primary <holdId> --send-updates
-  none --force --account <account>`. `--force` is required: without it gog
-  refuses every delete in a non-interactive run.
-- If a delete fails, add `{holdId, account}` to the request's `holdCleanup`.
-  The poll retries it.
+`calendar.ts offer` owns hold creation and replacement. `book`, `drop`,
+`expire` and `cancel` release only this request's recorded holds. Failed
+removals stay in `holdCleanup`; `calendar.ts cleanup --id <id>` retries them.
+Never delete an event by searching for its title. The writer excludes the
+booked event from hold cleanup, even when it used to be a hold.
 
 ## Examples
 
