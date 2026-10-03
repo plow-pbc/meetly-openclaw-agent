@@ -795,3 +795,44 @@ test("guests can re-offer and book dinner but cannot widen its meal window", asy
   assert.ok(!("error" in booked), JSON.stringify(booked));
   assert.equal(f.request().status, "booked");
 });
+
+
+test("an owner duration change keeps an unanswered opener question suppressed on guest re-offers", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.detailsAskedAt = new Date(now).toISOString();
+  f.ledger.requests[0]!.durationMin = 60;
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { days: ["tue"] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal("askDetails" in result && result.askDetails, false);
+  assert.equal(f.request().detailsAskedAt, new Date(now).toISOString());
+  assert.equal(f.request().format, "unknown");
+  assert.equal(f.request().durationMin, 60);
+});
+
+
+test("lunch approval describes the meal window even within configured working hours", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.meal = "lunch";
+  f.ledger.requests[0]!.durationMin = 60;
+  f.save(f.ledger);
+  const within = await f.act(context, "ask_owner", { start: "2026-10-05T12:00:00Z" });
+  assert.match(JSON.stringify(within), /within the meeting window/);
+  await f.act(context, "ask_owner", { start: "2026-10-05T10:30:00Z" });
+  assert.match(f.ownerLines[0]!, /outside the meeting window/);
+  assert.doesNotMatch(f.ownerLines[0]!, /working hours/);
+  assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T10:30:00+00:00", end: "2026-10-05T11:30:00+00:00", askedAt: new Date(now).toISOString() });
+});
+
+
+test("owner-group lunch resolves its default duration without model-supplied config", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  f.events.clear();
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { handle: context.requesterSenderId, topic: "Lunch", meal: "lunch", offered: [{ start: "2026-10-05T12:00:00Z", end: "2026-10-05T13:00:00Z" }] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().meal, "lunch");
+  assert.equal(f.request().durationMin, 60);
+  assert.equal(f.request().offered[0]!.account, "owner@example.com");
+});

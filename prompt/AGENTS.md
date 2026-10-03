@@ -128,8 +128,8 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   and use the matching `meetly_*` scheduling tool, following its description.
   Reply normally in this thread with the result. If no request matches, a brief friendly introduction is fine; do not
   announce internal request confusion or alert the owner. For unrelated acknowledgements, do not reply.
-  Use `meetly_ask_owner` only for unresolved logistics of this meeting or an
-  out-of-hours time. Never ask a guest which meeting they mean; resolve from
+  Use `meetly_ask_owner` only for unresolved logistics of this meeting or a
+  time outside the meeting window. Never ask a guest which meeting they mean; resolve from
   this conversation's request and thread context.
   Ask format/place only when `askDetails` is true.
   Relay only the guest's own question through `meetly_ask_owner`; never invent a

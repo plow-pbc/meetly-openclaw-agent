@@ -138,9 +138,9 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   } else {
     const checked = await check(request, config, args.start!);
     if (!checked.free) return { error: "That time is not available. Offer the current times or ask for other times." };
-    if (!checked.outsideHours) return { error: "That time is within working hours. Ask for other times to get an offer." };
+    if (!checked.outsideHours) return { error: "That time is within the meeting window. Ask for other times to get an offer." };
     pendingOwner = { start: checked.slot.start, end: checked.slot.end, askedAt };
-    question = `Can we meet ${localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(checked.slot.start))} (${config.timezone}), outside your working hours?`;
+    question = `Can we meet ${localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(checked.slot.start))} (${config.timezone}), outside the meeting window?`;
   }
   patch(request, { pendingOwner });
   // Keep the slot on an uncertain send so another turn cannot duplicate it.
