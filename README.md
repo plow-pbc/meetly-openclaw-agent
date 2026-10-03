@@ -181,7 +181,7 @@ message is skipped.
 - **Scripts.** Small TypeScript CLIs in `skills/meetly/scripts/`, run directly
   by the image's Node (`node <script>.ts`, no build): setup, the message
   cursor, the request ledger, busy/free-slot math in your time zone, cron
-  registration, the owner-DM lookup and the poll's group start. The model
+  registration and the owner-DM lookup. The model
   decides; the scripts count.
 - **State.** `/var/lib/plow/meetly`: `config.json` (your setup),
   `cursor.json` (last message read), `ledger.json` (requests, offered times,
@@ -224,8 +224,8 @@ Meetly reads your messages, so use it on an install only you talk to.
 
 - Only direct iMessage chats; group chats and email requests are not read.
 - One person per request.
-- A sender known only by an email (no phone number) cannot get a group; Meetly
-  tells you instead.
+- An iMessage email can be a group recipient. If the base tool refuses it,
+  Meetly tells you and releases the new holds.
 - Rescheduling or cancelling a meeting that is already booked is left to you.
 - If the model provider is unreachable, that five-minute check is skipped and
   the next one catches up from the same cursor.

@@ -30,10 +30,10 @@ free there.
 
 ## Offer times
 
-1. Resolve the person and the handle their group opens on. For an approved
-   inbound request, use the `asked` request's `handle` and `name` (a missing
-   name never stops the request). For an owner request, use the phone
-   `contacts` gives, or their email when there is no phone.
+1. Resolve exactly one recipient before any calendar read or hold. For an
+   approved inbound request, use the `asked` request's `handle` and `name`
+   (a missing name never stops the request). For an owner request, use the
+   handle resolved in "Owner request". An iMessage email is a valid recipient.
 2. Read the calendar.
 3. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
@@ -100,7 +100,10 @@ In the owner's DM:
 
 1. Look the person up with `contacts`, including all their handles. If more
    than one contact matches, or there is no phone or email, ask the owner and end the
-   turn.
+   turn. If the contact has several phones, ask the owner which one in this
+   DM and end the turn. Resolve the chosen phone to E.164 before any calendar
+   read or hold. Use their email when there is no phone; if several emails
+   are available, ask the owner which one first.
 2. Extract the topic, days or dates, time range, duration, location, the
    format ("Meeting format"), and any events the owner says may be
    overlapped ("you can override Weekly Claw").

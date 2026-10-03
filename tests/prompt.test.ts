@@ -134,6 +134,17 @@ test("setup fills the owner's name and time zone by itself and asks only when th
   assert.ok(setup.includes("translated into the owner's language"));
 });
 
+test("recipient selection precedes calendar access and asks the owner to resolve ambiguity", () => {
+  const group = groupSkill();
+  const offer = group.slice(group.indexOf("## Offer times"), group.indexOf("## Owner request"));
+  assert.ok(offer.includes("Resolve exactly one recipient before any calendar read or hold"));
+  assert.ok(offer.includes("use the `asked` request's `handle` and `name`"));
+  const owner = group.slice(group.indexOf("## Owner request"), group.indexOf("## Asked requests"));
+  assert.ok(owner.includes("If the contact has several phones, ask the owner which one in this DM and end the turn"));
+  assert.ok(owner.includes("Use their email when there is no phone"));
+  assert.ok(owner.indexOf("ask the owner which one") < owner.indexOf("calendar read"));
+});
+
 test("every Meetly group is opened with plow_start_thread from the owner's DM", () => {
   const group = groupSkill();
   assert.ok(flat(prompt).includes("Meetly opens a group only with plow_start_thread, from the owner's main DM"));

@@ -86,7 +86,7 @@ Shortcuts:
    - Expect: after the owner's yes, a group on that email, or the owner is
      told why it could not open.
 9. [ ] **Expiry.** Set `MEETLY_HOLD_HOURS=0.1` in compose, then make a request
-   and don't answer.
+   and approve it in the owner's DM. Leave the offered times unanswered.
    - Expect: within ~15 min the holds are deleted, the status is `expired`,
      the group is told the times were released, and the owner is told.
 10. [ ] **Mac asleep.** Put the Mac to sleep (or quit Latch) for 35 min, then

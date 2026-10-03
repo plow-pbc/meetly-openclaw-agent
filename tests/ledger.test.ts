@@ -184,7 +184,6 @@ test("the owner's conditions from the yes survive a later offer; the person's pr
   l = saveRequest(l, input({ offered: [{ ...offer, holdId: "h3" }] }), T0 + 3 * HOUR, "r_4");
   const r = l.requests[0]!;
   assert.deepEqual([l.requests.length, r.id, r.origin, r.constraints, r.proposed], [1, "r_1", "inbound", owner, proposed]);
-  assert.deepEqual(updateRequest(l, "r_1", { proposed: { days: ["mon"] } }, T0).requests[0]!.proposed, { days: ["mon"] });
 });
 
 test("asked becomes dropped when the owner says no", () => {
