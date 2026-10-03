@@ -6,6 +6,7 @@ import {
   addRequest, saveRequest, cleanupList, pendingOwnerList, expiredRequests, findByChat, findOpenByHandle, normalizeHandle, sameHandle, updateRequest,
   type Ledger, type NewRequest, type Patch,
 } from "../skills/meetly/scripts/ledger.ts";
+import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
@@ -184,6 +185,8 @@ test("asked becomes offered by saving the offer over it, keeping the request", (
 test("CLI re-keys an inbound email request by source row so a phone reply finds the same offer", () => {
   const env = { MEETLY_HOME: tmpHome() };
   const saved = cli("ledger.ts", ["save", "--json", JSON.stringify(asked({ handle: "ana@example.com" }))], env).json.request;
+  writeJson(join(env.MEETLY_HOME, "config.json"), { ...DEFAULTS, ownerName: "Owner", timezone: "UTC",
+    defaultAccount: offer.account, calendars: [{ account: offer.account, id: offer.account }], setupDoneAt: new Date(T0).toISOString() });
   const batch = cli("pipeline.ts", ["nudge"], env).json;
   const offered = cli("ledger.ts", ["save", "--json", JSON.stringify(input({ sourceRowid: 42 }))], env);
   assert.equal(offered.status, 0, offered.stderr);

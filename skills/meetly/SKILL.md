@@ -24,8 +24,9 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `delivery --id X --kind start\|answer --action begin\|complete\|clear` | `{request}`; `begin` records `startedAt`; `complete` records `startCompletedAt` after success or unknown delivery. Starts refuse a second attempt. `answer begin` records `pendingOwner.answerAttemptedAt` before sending and refuses another attempt; successful answer delivery clears the pending question or time approval. `clear` is for an unlinked start or an answer attempt, on the owner's explicit instruction (answers use only `begin`/`clear`). Delivery fields cannot be set through `save` or `update`. |
 | | `reminders [--lead-min N]` | `{requests}`: booked Meets whose link is due (default 10 min before, until 5 min after the start) |
 | `event.ts` | `--in F` | `{id, status, start, end, meetUrl}` from a saved calendar event read |
-| `pipeline.ts` | `view` | `{items, text}`: derived pending pipeline and short dated request logs; read-only |
-| | `nudge` | `{items, text}`: atomically reserve one owner DM batch; null text means nothing new; never repeat a reserved batch |
+| `pipeline.ts` | `view [--locale TAG]` | `{items, text}`: derived pending pipeline and short dated request logs; read-only |
+| | `nudge [--locale TAG]` | `{items, text, reservations}`: atomically reserve one owner DM batch; null text means nothing new; never repeat a reserved batch |
+| | `retry-failed --json '<reservations array>'` \| `--json-file F` | `{released}`: release only the matching batch after a confirmed send failure, so the next poll retries it |
 | | `contact --handle H [--blocked true\|false] [--name NAME]` | `{doNotContact}`: read the flag, or set/clear it only on the owner's DM instruction |
 | `calendar.ts` | `offer [--id X] [--confirm-contact] --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer (`--id` selects a booked request for a reoffer); retains an existing offer on failure; drops a failed new request while retaining cleanup |
 | | `book --id X [--confirm-contact] --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book or move the existing event and release its holds |
@@ -54,9 +55,14 @@ Notes:
 - `--confirm-contact` is only for a specific owner request confirmed in the owner's
   DM after the warning. It leaves the flag set; never infer confirmation from a
   guest message. Guest actions on an existing meeting do not initiate new outreach.
-- Monitor fingerprints are reserved before the poll sends, including on unknown
-  or failed delivery. This prevents duplicate nudges; `view` still lists pending work.
-  Unresolved calendar journals are shown in the view but skipped by the monitor.
+- Monitor fingerprints are reserved before the poll sends. On a confirmed send
+  failure, `retry-failed` releases only matching reservations for the next poll.
+  On success or unknown delivery, keep them to prevent duplicate nudges.
+  Guest owner-asks reserve the same fingerprint before their own DM, so the monitor
+  does not repeat them. Unresolved calendar journals stay with reconciliation.
+- Displayed pipeline times and history labels use `localeFormatter` in the owner's
+  configured timezone. `--locale` chooses their language tag (default en-US).
+  Raw timestamps in items and reservations are machine data, not display text.
 - A booked request may have `reoffer: {offered, offeredAt}`. Expiry releases only
   those replacement holds; the original event remains until a move or cancellation.
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.

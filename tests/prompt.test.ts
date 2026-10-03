@@ -88,7 +88,9 @@ test("poll maintenance sends only the reserved monitor batch to the owner DM", (
   assert.ok(maintenance.indexOf("calendar.ts resume-pending") < maintenance.indexOf("pipeline.ts nudge"));
   assert.ok(maintenance.indexOf("owner-chat.ts") < maintenance.indexOf("pipeline.ts nudge"));
   assert.ok(maintenance.includes("send exactly that `text` once"));
-  assert.ok(maintenance.includes("On a failed or unknown send, do not retry or clear it"));
+  assert.ok(maintenance.includes("If the message tool confirms a definite failure, run `pipeline.ts retry-failed"));
+  assert.ok(maintenance.includes("The next poll retries released items, including asked requests"));
+  assert.ok(maintenance.includes("On success or unknown delivery, keep the reservation and never resend automatically"));
   assert.ok(!maintenance.includes("ledger.ts asked --unnotified"));
   assert.ok(pollSkill().includes('If the save prints `skipped: "do-not-contact"`, run `cursor.ts release`'));
 });

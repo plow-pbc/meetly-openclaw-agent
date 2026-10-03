@@ -8,6 +8,8 @@ import { registerPipelineHooks } from "../plugin/pipeline.js";
 import { addRequest, appendLog, checkContact, doNotContact, recordGuestReply, sameRequest, saveRequest, setDoNotContact, updateRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { pipeline, reserveNudges, STALE_OFFER_MS } from "../skills/meetly/scripts/pipeline.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
+import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
+import { localeFormatter } from "../skills/meetly/scripts/slots.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
 const HOUR = 3_600_000, T0 = Date.parse("2026-10-05T08:00:00Z");
@@ -20,6 +22,8 @@ const request = (ledger: Ledger, id = "offer") => ledger.requests.find(r => r.id
 function fixture(t: TestContext) {
   const home = tmpHome();
   t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeJson(join(home, "config.json"), { ...DEFAULTS, ownerName: "Owner", timezone: "America/Los_Angeles",
+    defaultAccount: offer.account, calendars: [{ account: offer.account, id: offer.account }], setupDoneAt: iso(T0) });
   return { home, env: { MEETLY_HOME: home, PLOW_MCP_BRIDGE_TOKEN: "" }, path: join(home, "ledger.json") };
 }
 function mixed(now = T0): Ledger {
@@ -170,7 +174,7 @@ test("CLI prints a readable pending view and one durable batch even with overlap
   const results = await Promise.all([1, 2].map(() => exec(process.execPath, [resolve("skills/meetly/scripts/pipeline.ts"), "nudge"], { env: { ...process.env, ...f.env } })));
   const batches = results.map(result => JSON.parse(result.stdout));
   assert.deepEqual(batches.map(batch => batch.items.length).sort(), [0, 3]);
-  assert.equal(cli("pipeline.ts", ["nudge"], f.env).json.text, null, "an uncertain or failed send is never automatically repeated");
+  assert.equal(cli("pipeline.ts", ["nudge"], f.env).json.text, null, "an uncertain send is never automatically repeated without a confirmed failure receipt");
   t.diagnostic(view.json.text);
   t.diagnostic("Two concurrent local polls: one three-item owner DM batch; the other poll and subsequent poll print no message. No message was sent live.");
 });
@@ -199,4 +203,50 @@ test("calendar CLI refuses flagged owner requests before any calendar or ledger 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /marked do not contact.*Confirm in the owner's DM/);
   assert.deepEqual(readJson(f.path, empty()), JSON.parse(JSON.stringify(ledger)));
+});
+
+
+test("a definitely failed batch retries asked requests, but an old failure cannot release a newer send", async t => {
+  const f = fixture(t);
+  writeJson(f.path, mixed(Date.now() - 25 * HOUR));
+  const first = cli("pipeline.ts", ["nudge"], f.env);
+  assert.equal(first.status, 0, first.stderr);
+  assert.ok(first.json.items.some((item: { id: string }) => item.id === "asked"));
+  const failed = cli("pipeline.ts", ["retry-failed", "--json", JSON.stringify(first.json.reservations ?? [])], f.env);
+  assert.equal(failed.status, 0, failed.stderr);
+  assert.deepEqual(failed.json.released.sort(), ["asked", "offer", "question"]);
+  const retry = cli("pipeline.ts", ["nudge"], f.env);
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(retry.json.text, first.json.text);
+  assert.equal(retry.json.reservations.length, 3);
+  const stale = cli("pipeline.ts", ["retry-failed", "--json", JSON.stringify(first.json.reservations)], f.env);
+  assert.deepEqual(stale.json.released, []);
+  assert.equal(cli("pipeline.ts", ["nudge"], f.env).json.text, null, "successful or unknown delivery stays reserved");
+  t.diagnostic("Mock send failed → batch released → same asked request retried → later polls remain silent after delivery.");
+});
+
+test("owner-facing pipeline times use localeFormatter in the configured owner zone", t => {
+  const f = fixture(t);
+  const ledger = updateRequest(mixed(), "question", {
+    pendingOwner: { start: "2026-10-05T17:00:00Z", end: "2026-10-05T17:30:00Z", askedAt: iso(T0) },
+  }, T0);
+  writeJson(f.path, ledger);
+  const view = cli("pipeline.ts", ["view"], f.env);
+  assert.equal(view.status, 0, view.stderr);
+  const format = localeFormatter("en-US", "America/Los_Angeles");
+  assert.ok(view.json.text.includes(format.format(new Date(T0))));
+  assert.ok(view.json.text.includes(format.format(new Date("2026-10-05T17:00:00Z"))));
+  assert.match(view.json.text, /01:00 AM/);
+  assert.match(view.json.text, /10:00 AM/);
+  assert.match(view.json.text, /America\/Los_Angeles/);
+  assert.doesNotMatch(view.json.text, /\d{4}-\d{2}-\d{2}T/);
+  const nudge = cli("pipeline.ts", ["nudge"], f.env);
+  assert.equal(nudge.status, 0, nudge.stderr);
+  assert.ok(nudge.json.text.includes(format.format(new Date(T0))));
+  assert.doesNotMatch(nudge.json.text, /\d{4}-\d{2}-\d{2}T/);
+  assert.ok(view.json.items[0].log[0].label.includes(format.format(new Date(T0))));
+  const localized = cli("pipeline.ts", ["view", "--locale", "pt-BR"], f.env);
+  assert.equal(localized.status, 0, localized.stderr);
+  assert.ok(localized.json.text.includes(localeFormatter("pt-BR", "America/Los_Angeles").format(new Date(T0))));
+  t.diagnostic(view.json.text);
 });
