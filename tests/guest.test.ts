@@ -131,14 +131,66 @@ for (const [action, args] of actions) test(`${action} refuses an unlinked offer 
   assert.deepEqual(f.commands, []);
 });
 
-test("other-times guidance offers owner approval for a time outside the meeting window", () => {
+test("other-times guidance reports automatic approval delivery instead of a second ask", () => {
   let description = "";
   registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
     const tool = factory(context); if (tool.name === "meetly_other_times") description = tool.description;
   } });
-  assert.match(description, /outside the meeting window, offer to check with the owner/);
-  assert.match(description, /If the guest agrees, call meetly_ask_owner with start/);
+  assert.match(description, /automatically asks the owner/);
+  assert.match(description, /ownerAskSent is true/);
   assert.match(description, /ask for a specific date and time if needed/);
+});
+
+for (const args of [
+  { start: "2026-10-05T20:00" },
+  { from: "2026-10-05", to: "2026-10-05", after: "20:00", before: "20:30" },
+]) test(`other-times files a free outside-window approval without replacing holds: ${JSON.stringify(args)}`, async t => {
+  const f = fixture(t);
+  const tool = f.tools.get("meetly_other_times")!;
+  const result = JSON.parse((await tool.execute("ask", args)).content[0]!.text);
+  assert.equal(result.ownerAskSent, true);
+  assert.match(result.message, /asked Alex/);
+  assert.deepEqual(f.request().offered, offers);
+  assert.equal(f.request().status, "offered");
+  assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T20:00:00+00:00", end: "2026-10-05T20:30:00+00:00", askedAt: new Date(now).toISOString() });
+  assert.equal(f.deliveries.length, 1);
+  assert.ok(f.commands.every(c => c[2] === "events"));
+  const again = JSON.parse((await tool.execute("again", args)).content[0]!.text);
+  assert.match(again.error, /already open/);
+  assert.notEqual(again.ownerAskSent, true);
+  assert.equal(f.deliveries.length, 1);
+});
+
+test("an exact in-window other-times request holds that time without asking the owner", async t => {
+  const f = fixture(t);
+  const result = await f.act(context, "other_times", { start: "2026-10-05T11:00" });
+  assert.ok(!("error" in result));
+  assert.deepEqual(f.request().offered.map(o => o.start), ["2026-10-05T11:00:00+00:00"]);
+  assert.equal(f.ownerLines.length, 0);
+});
+
+for (const failure of ["busy", "calendar", "delivery"] as const) test(`outside-window approval never claims an owner ask on ${failure}`, async t => {
+  const f = fixture(t);
+  if (failure === "busy") f.events.set("busy", event("busy", "2026-10-05T20:00:00Z", "2026-10-05T21:00:00Z"));
+  if (failure === "calendar") f.fail.add("events");
+  if (failure === "delivery") f.delivery.status = "queued";
+  const tool = f.tools.get(failure === "busy" ? "meetly_ask_owner" : "meetly_other_times")!;
+  const result = JSON.parse((await tool.execute("ask", { start: "2026-10-05T20:00" })).content[0]!.text);
+  assert.ok(result.error);
+  assert.notEqual(result.ownerAskSent, true);
+  assert.equal(result.message, undefined);
+  assert.equal(f.deliveries.length, failure === "delivery" ? 1 : 0);
+  assert.deepEqual(f.request().offered, offers);
+});
+
+test("owner questions relay the guest's own words and delivery claims require a sent ask", () => {
+  let description = "";
+  registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
+    const tool = factory(context); if (tool.name === "meetly_ask_owner") description = tool.description;
+  } });
+  assert.match(description, /Never invent a question or turn your own uncertainty into a guest question/);
+  assert.match(description, /ownerAskSent is true/);
+  assert.match(description, /Do not paraphrase or add a guest-asks prefix/);
 });
 
 test("decline requires the guest's clear refusal, never an other-times refusal", () => {
