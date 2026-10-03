@@ -651,11 +651,20 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
     sessionKey: "agent:main:plow:group:cht_mixed", nativeChannelId: "cht_MiXeD" };
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory(ctx); } }, offerOwnerGroup);
   assert.equal(tool.parameters.properties.chatUid, undefined);
-  const args = { ...f.ledger.requests[0], offered: offers.map(({ holdId, ...slot }) => slot), chatUid: "other-group" };
+  const args = { handle: context.requesterSenderId, topic: "Planning", offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
   const result = await tool.execute("offer", args);
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.request().chatUid, "cht_MiXeD");
   assert.equal(f.request().origin, "owner-group");
+  assert.equal(f.request().durationMin, DEFAULTS.durationMin);
+  assert.ok(f.request().offered.every(o => o.account === "owner@example.com" && o.holdId !== "injected-hold"));
+  assert.equal(result.details.ownerName, "Alex");
+  assert.equal(result.details.offered.length, 2);
+  assert.equal(result.content[0].text, JSON.stringify(result.details));
+  assert.doesNotMatch(JSON.stringify(result), /account|holdId|calendarRevision|chatUid|example\.com|injected|new-\d|r_[a-f0-9]/);
+  assert.equal(tool.parameters.properties.offered.items.properties.account, undefined);
+  assert.ok(!tool.parameters.properties.offered.items.required.includes("account"));
+  assert.ok(!tool.parameters.required.includes("durationMin"));
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "other-group" }, "view"));
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "cht_mixed" }, "view"));
   assert.ok(!("error" in await guestAction({ ...context, nativeChannelId: "cht_MiXeD" }, "view")));
@@ -674,27 +683,6 @@ test("the owner-group tool refuses guests, DMs and requests already linked elsew
 });
 
 
-test("owner-group offers keep calendar identifiers out of tool content and details", async t => {
-  const f = fixture(t);
-  f.save({ requests: [] });
-  f.events.clear();
-  const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
-  let tool: any;
-  registerOwnerGroupTool({ registerTool(factory: any) { tool = factory(ctx); } }, offerOwnerGroup);
-  const args = { handle: context.requesterSenderId, topic: "Planning", offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })) };
-  const result = await tool.execute("offer", args);
-  assert.equal(result.isError, false, JSON.stringify(result));
-  assert.equal(f.request().durationMin, DEFAULTS.durationMin);
-  assert.ok(f.request().offered.every(o => o.account === "owner@example.com" && o.holdId !== "injected-hold"));
-  assert.equal(result.details.ownerName, "Alex");
-  assert.equal(result.details.offered.length, 2);
-  assert.equal(result.content[0].text, JSON.stringify(result.details));
-  assert.doesNotMatch(JSON.stringify(result), /account|holdId|calendarRevision|chatUid|example\.com|injected|new-\d|r_[a-f0-9]/);
-  assert.equal(tool.parameters.properties.offered.items.properties.account, undefined);
-  assert.ok(!tool.parameters.properties.offered.items.required.includes("account"));
-  assert.ok(!tool.parameters.required.includes("durationMin"));
-});
-
 test("owner-group failures never echo private validation details", async t => {
   const f = fixture(t);
   f.save({ requests: [] });
@@ -704,4 +692,27 @@ test("owner-group failures never echo private validation details", async t => {
   assert.ok("error" in result);
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE|example\.com|hold-one/);
   assert.equal(f.commands.length, 0);
+});
+
+test("owner-group conflict authorization resolves only named events and stays private", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  f.events.clear();
+  for (const [i, slot] of offers.entries()) f.events.set(`private-approved-${i}`, { ...event(`private-approved-${i}`, slot.start, slot.end), summary: "Weekly Claw" });
+  f.events.set("private-unapproved", { ...event("private-unapproved", offers[1]!.start, offers[1]!.end), summary: "Weekly Claw extra" });
+  let tool: any;
+  registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
+  f.hooks.before = async argv => {
+    if (argv[2] === "create") assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"], "persist authorization before writing holds");
+  };
+  const result = await tool.execute("offer", { handle: context.requesterSenderId, topic: "Lunch", allowOverlapTitles: ["Weekly Claw"],
+    allowOverlap: ["private-unapproved"], offered: offers.map(({ start, end }) => ({ start, end })) });
+  assert.equal(result.isError, false, JSON.stringify(result));
+  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"]);
+  assert.deepEqual(f.request().offered.map(o => o.start), [offers[0]!.start]);
+  assert.equal(f.commands.filter(c => c[2] === "create").length, 1);
+  assert.ok(f.commands.find(c => c[2] === "create")!.includes("--confirm-conflict"));
+  assert.equal(tool.parameters.properties.allowOverlap, undefined);
+  assert.equal(tool.parameters.properties.allowOverlapTitles.items.type, "string");
+  assert.doesNotMatch(JSON.stringify(result), /private-|Weekly Claw|Weekly Claw extra|allowOverlap|owner@example.com/);
 });

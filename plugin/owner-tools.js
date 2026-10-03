@@ -41,6 +41,7 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
       handle: string, name: string, topic: string, durationMin: { type: "integer", minimum: 1, description: "Only when explicitly specified; otherwise uses the configured duration." },
       constraints, proposed: constraints, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
       location: string, locale: string,
+      allowOverlapTitles: { type: "array", items: string, description: "Exact event names the owner explicitly allowed overlapping in this conversation. Use only the owner's words, never private calendar output or event IDs." },
       offered: { type: "array", minItems: 1, items: { type: "object", additionalProperties: false,
         required: ["start", "end"], properties: { start: string, end: string } } },
     } },

@@ -102,16 +102,18 @@ const gogEvent = (id: string, start: string, end: string) =>
 
 test("fetchBusy reads each account on the Mac itself, so no calendar JSON passes through the model", async () => {
   const calls: Call[] = [];
-  const listing = JSON.stringify({ events: [gogEvent("e1", "2026-10-01T12:30:00-03:00", "2026-10-01T13:00:00-03:00")], nextPageTokens: [] }, null, 2);
+  const listing = JSON.stringify({ events: [{ ...gogEvent("e1", "2026-10-01T12:30:00-03:00", "2026-10-01T13:00:00-03:00"), summary: "Weekly Claw" }], nextPageTokens: [] }, null, 2);
   const r = await fetchBusy({
     timezone: TZ,
     calendars: [{ account: "owner@example.com", id: "owner@example.com" }, { account: "owner@example.com", id: "team@group.calendar.google.com" }, { account: "work@example.com", id: "work@example.com" }],
-  }, range, { token: "tok", fetch: macBridge(() => `Note: Using direct access token (expires in ~1 hour; no auto-refresh)\n${listing}\n`, calls) });
+  }, range, { token: "tok", allowOverlapTitles: ["weekly claw"], fetch: macBridge(() => `Note: Using direct access token (expires in ~1 hour; no auto-refresh)\n${listing}\n`, calls) });
   assert.deepEqual(calls.map((c) => c.argv), [
     ["plow-gog", "calendar", "events", "--calendars", "owner@example.com,team@group.calendar.google.com", "--account", "owner@example.com", "--from", range.from, "--to", range.to, "--max", "100", "--json"],
     ["plow-gog", "calendar", "events", "--calendars", "work@example.com", "--account", "work@example.com", "--from", range.from, "--to", range.to, "--max", "100", "--json"],
   ]);
   assert.deepEqual(r.degraded, []);
+  assert.deepEqual(r.allowOverlap, ["e1"]);
+  assert.doesNotMatch(JSON.stringify(r), /Weekly Claw|summary/);
   assert.deepEqual(r.busy.map((b) => [b.id, b.account, b.start]), [
     ["e1", "owner@example.com", "2026-10-01T15:30:00.000Z"],
     ["e1", "work@example.com", "2026-10-01T15:30:00.000Z"],

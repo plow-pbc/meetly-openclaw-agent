@@ -127,6 +127,12 @@ test("the CLI reads busy.ts output and the stored config", () => {
   });
   assert.equal(cli("slots.ts", ["--in", busyFile, "--at", "2026-10-03T10:00:00-03:00", "--days", "sat"], env).status, 1);
   assert.equal(cli("slots.ts", ["--in", busyFile, "--owner"], env).status, 1);
+  const authorizedFile = join(home, "authorized-busy.json");
+  writeJson(authorizedFile, { busy: [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly" }], allowOverlap: ["weekly"] });
+  const authorized = cli("slots.ts", ["--in", authorizedFile, ...now, "--count", "1"], env);
+  assert.deepEqual(authorized.json.slots, allowed.json.slots);
+  assert.equal(cli("slots.ts", ["--in", authorizedFile, ...now, "--at", "2026-09-28T10:00:00-03:00"], env).json.free, true);
+  assert.doesNotMatch(authorized.stdout, /weekly|allowOverlap/);
   const us = cli("slots.ts", ["--in", busyFile, ...now, "--locale", "en-US", "--count", "1"], env);
   assert.deepEqual(us.json.slots.map((s: { label: string }) => s.label), ["Mon, 9/28, 11:00 AM"]);
   assert.equal(cli("slots.ts", ["--in", busyFile, "--locale", "??"], env).status, 1);
