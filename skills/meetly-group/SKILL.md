@@ -39,8 +39,12 @@ write failures still need attention; never override a real conflict.
 
 ## Offer times
 
-Resolve relative dates in the owner's timezone. In the owner's DM, save date
-bounds and weekday requirements as `constraints`; for a request started here,
+Resolve relative date ranges such as "next week" to explicit `from`/`to` dates
+in the owner's timezone before searching. "Next week" means the following
+Monday through Sunday; intersect any named weekdays with that range. For owner
+DM requests, save those bounds in `constraints`, along with weekday requirements;
+pass the same bounds as `--from`/`--to` on the first search and every re-offer.
+For a request started here,
 suggested dates/times are `proposed` and only explicit non-relaxable conditions
 are `constraints`. Carry constraints into every re-offer unless the owner changes them.
 
@@ -158,7 +162,7 @@ ask which and end the turn.
 
 - **Yes:** follow "Offer times" with `origin: inbound`, the request's
   `name`, `sourceRowid`, `topic`, `meal`, `format`, `locale` and `proposed`, and
-  `constraints` set to any conditions the owner gave with the yes. Saving
+  preserve the saved `constraints` and merge any conditions the owner gave with the yes. Saving
   the offer turns the request into `offered` under the same id.
 - **No:** run `calendar.ts drop --id <id>`.
   Send nothing to the person.

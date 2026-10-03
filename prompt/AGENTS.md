@@ -124,6 +124,9 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   `meetly-poll`.
 - **Guest phone turns:** for scheduling messages, call `meetly_view_request`
   and use the matching `meetly_*` scheduling tool, following its description.
+  Resolve relative ranges such as "next week" to explicit `from`/`to` dates in
+  the owner's timezone before calling `meetly_other_times`. Use the message's
+  date: next week is the following Monday through Sunday, narrowed by named weekdays.
   Reply normally in this thread with the result. If no request matches, a brief friendly introduction is fine; do not
   announce internal request confusion or alert the owner. For unrelated acknowledgements, do not reply.
   Use `meetly_ask_owner` only for unresolved logistics of this meeting or a
