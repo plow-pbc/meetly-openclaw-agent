@@ -175,7 +175,11 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs) {
   const narrowed = intersection(request.constraints, preferences(args));
   const query: SlotQuery = { ...busy, ...narrowed, days: narrowed.days as Day[] | undefined, now, config,
     durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
-  const { slots } = findSlots(query);
+  let { slots } = findSlots(query);
+  const preferencesUnavailable = slots.length === 0;
+  if (preferencesUnavailable) {
+    slots = findSlots({ ...query, ...intersection(request.constraints), days: request.constraints?.days as Day[] | undefined }).slots;
+  }
   if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
   request = await cleanup(request, holds(request));
   const offered: Offer[] = [];
@@ -196,7 +200,8 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs) {
     await cleanup(request, offered.flatMap(o => o.holdId ? [{ holdId: o.holdId, account: o.account }] : []));
     throw error;
   }
-  return view(request, config);
+  return { ...view(request, config), ...(preferencesUnavailable
+    ? { message: "The requested preferences are unavailable. Offer these new times within the owner's conditions instead." } : {}) };
 }
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}): Promise<object> {
