@@ -114,7 +114,9 @@ function fixture(t: TestContext) {
 for (const [action, args] of actions) test(`${action} refuses missing or mismatched runtime sender/chat and ignores identity arguments`, async t => {
   const f = fixture(t);
   for (const ctx of [ {}, { ...context, requesterSenderId: "+15557654321" }, { ...context, nativeChannelId: "other-chat" },
-    { ...context, messageChannel: "webchat" }, { ...context, agentAccountId: "email" }]) {
+    { ...context, messageChannel: "webchat" }, { ...context, agentAccountId: "email" },
+    ...["+115551234567", "5551234567", "+15551234567junk"].map(requesterSenderId => ({ ...context, requesterSenderId })),
+    { ...context, nativeChannelId: `plow:${context.nativeChannelId}` }]) {
     const result = await guestAction(ctx, action, { ...args, ...context, id: "request-one", handle: context.requesterSenderId } as GuestArgs);
     assert.match(JSON.stringify(result), /No scheduling request matches/);
   }
@@ -122,16 +124,15 @@ for (const [action, args] of actions) test(`${action} refuses missing or mismatc
   assert.deepEqual(f.commands, []);
 });
 
-for (const [action, args] of actions) test(`${action} links the sender's unlinked offer and touches only that request`, async t => {
+for (const [action, args] of actions) test(`${action} refuses an unlinked offer without claiming the current chat`, async t => {
   const f = fixture(t);
   delete f.ledger.requests[0]!.chatUid;
   f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "other", chatUid: "other-chat", handle: "+15557654321" });
   f.save(f.ledger);
   const result = await guestAction(context, action, args);
-  assert.ok(!("error" in result), JSON.stringify(result));
-  assert.equal(f.request().chatUid, context.nativeChannelId);
-  assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
-  assert.doesNotMatch(JSON.stringify(result), /PRIVATE|owner@example.com|hold-one|hold-two|approved/);
+  assert.match(JSON.stringify(result), /No scheduling request matches/);
+  assert.deepEqual(f.read(), f.ledger);
+  assert.deepEqual(f.commands, []);
 });
 
 test("decline requires the guest's clear refusal, never an other-times refusal", () => {
@@ -226,6 +227,7 @@ test("format before and after booking updates the event and records only the bac
   await guestAction(context, "format", { format: "in_person", location: "Library" });
   assert.equal(f.commands.length, 0); assert.equal(f.request().location, "Library");
   await guestAction(context, "pick", { start: offers[0]!.start });
+  assert.equal(f.events.get("hold-one")!.location, "Library");
   f.commands.length = 0;
   const result = await guestAction(context, "format", { format: "meet" });
   assert.equal(f.request().format, "meet"); assert.equal(f.request().meetUrl, "https://meet.google.com/abc-defg-hij");
@@ -233,6 +235,9 @@ test("format before and after booking updates the event and records only the bac
   assert.equal(writes.length, 1);
   assert.equal(writes[0]![4], "hold-one");
   assert.ok(writes[0]!.includes("--with-meet"));
+  assert.ok(writes[0]!.includes("--location="));
+  assert.equal(f.events.get("hold-one")!.location, "");
+  assert.equal(f.request().location, "");
   assert.equal(f.events.get("hold-one")!.status, "confirmed");
   assert.doesNotMatch(JSON.stringify(result), /https:\/\/meet|PRIVATE/);
 });
@@ -261,20 +266,20 @@ for (const scenario of ["different open request in chat", "sender offer linked e
   if (scenario === "different open request in chat") f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "different", handle: "+15557654321" });
   else if (scenario === "sender offer linked elsewhere") {
     f.ledger.requests[0]!.chatUid = "another-chat";
-    f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "closed", status: "booked", chatUid: context.nativeChannelId });
   } else { f.ledger.requests[0]!.status = "asked"; delete f.ledger.requests[0]!.chatUid; }
   f.save(f.ledger);
   for (const [action, args] of actions) assert.match(JSON.stringify(await guestAction(context, action, args)), /No scheduling request matches/);
   assert.deepEqual(f.commands, []); assert.deepEqual(f.read(), f.ledger);
 });
 
-test("an unlinked replacement supersedes a closed request and collected turns retain their runtime chat", async t => {
+test("an unlinked replacement cannot be claimed from a closed group", async t => {
   const f = fixture(t);
   delete f.ledger.requests[0]!.chatUid;
   f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "old", status: "dropped", chatUid: context.nativeChannelId }); f.save(f.ledger);
   const result = await guestAction({ ...context, nativeChannelId: undefined, deliveryContext: { to: `plow:${context.nativeChannelId}` } }, "format", { format: "phone" });
-  assert.ok(!("error" in result)); assert.equal(f.request().format, "phone"); assert.equal(f.request().chatUid, context.nativeChannelId);
-  assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
+  assert.equal((result as { status: string }).status, "dropped");
+  assert.deepEqual(f.read(), f.ledger);
+  assert.deepEqual(f.commands, []);
 });
 
 for (const action of ["pick", "ask_owner"] as const) test(`${action} cannot bypass the current offer or authorize a busy time`, async t => {
@@ -359,19 +364,6 @@ test("guest location text cannot become a Latch conflict-override flag", async t
   assert.ok(command.includes("--location=--confirm-conflict"));
 });
 
-for (const sender of ['+115551234567', '5551234567', '+15551234567junk']) test(`suffix or malformed identity ${sender} is refused by every guest tool`, async t => {
-  const f = fixture(t);
-  for (const [action, args] of actions) assert.match(JSON.stringify(await guestAction({ ...context, requesterSenderId: sender }, action, args)), /No scheduling request matches/);
-  assert.deepEqual(f.commands, []);
-  assert.deepEqual(f.read(), f.ledger);
-});
-
-test('native chat uid is exact, without stripping a transport prefix', async t => {
-  const f = fixture(t);
-  assert.match(JSON.stringify(await guestAction({ ...context, nativeChannelId: `plow:${context.nativeChannelId}` }, 'view')), /No scheduling request matches/);
-  assert.deepEqual(f.read(), f.ledger);
-});
-
 test('canonical email equality is case insensitive but never suffix based', async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.handle = 'Guest@Example.com'; f.save(f.ledger);
@@ -418,5 +410,26 @@ test('a concurrent owner booking cannot turn a stale guest pick into a reschedul
   assert.ok('error' in await guest);
   assert.equal(f.request().eventId, 'hold-two');
   assert.equal(f.request().booked!.start, offers[1]!.start);
+  assert.equal(f.commands.filter(c => c[2] === 'update').length, 1);
+});
+
+
+test('an offered format change waits for a concurrent booking and cannot change its snapshot', async t => {
+  const f = fixture(t);
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  f.hooks.before = async argv => {
+    if (argv[2] === 'update') { f.hooks.before = undefined; entered(); await gate; }
+  };
+  const booking = guestAction(context, 'pick', { start: offers[0]!.start });
+  await waiting;
+  const changing = guestAction(context, 'format', { format: 'meet' });
+  release();
+  assert.ok(!('error' in await booking));
+  assert.ok('error' in await changing);
+  assert.equal(f.request().format, 'unknown');
+  assert.equal(f.request().meetUrl, undefined);
+  assert.equal(f.events.get('hold-one')!.hangoutLink, undefined);
   assert.equal(f.commands.filter(c => c[2] === 'update').length, 1);
 });

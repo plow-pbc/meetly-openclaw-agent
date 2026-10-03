@@ -5,9 +5,9 @@ import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
 import { findByChat, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
-import { checkTime, findSlots, localeFormatter, type SlotQuery } from "./slots.ts";
+import { checkTime, findSlots, localeFormatter, withinConstraints, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
-import { DAYS, localIso, wallParts } from "./time.ts";
+import { DAYS, localIso } from "./time.ts";
 
 export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
@@ -25,24 +25,9 @@ function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
   const chat = chatId(ctx);
   const sender = ctx.requesterSenderId;
   if (ctx.messageChannel !== "plow" || ctx.agentAccountId !== "chat" || !chat || !sender) return;
-  const linked = findByChat(ledger, chat);
+  const request = findByChat(ledger, chat);
   const senderId = identity(sender);
-  if (!senderId) return;
-  const open = ledger.requests.find(r => r.status === "offered" && identity(r.handle) === senderId);
-  if (open && ((open.chatUid && open.chatUid !== chat) || (linked?.status === "offered" && linked.id !== open.id))) return;
-  const request = open ?? linked;
-  return request && identity(request.handle) === senderId && request.status !== "asked" ? request : undefined;
-}
-
-function resolveRequest(ctx: GuestContext): Request | undefined {
-  const request = current(readJson<Ledger>(file("ledger.json"), EMPTY), ctx);
-  if (!request || request.chatUid) return request;
-  const ledger = updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
-    const latest = current(l, ctx);
-    if (!latest || latest.id !== request.id) throw new Error("request changed");
-    return updateRequest(l, latest.id, { chatUid: chatId(ctx)! }, Date.now());
-  });
-  return ledger.requests.find(r => r.id === request.id);
+  return senderId && request && identity(request.handle) === senderId ? request : undefined;
 }
 
 function patch(request: Request, change: Patch): Request {
@@ -108,17 +93,6 @@ function preferences(args: GuestArgs): Constraints {
   return out;
 }
 
-function withinConditions(request: Request, start: string, config: Config): boolean {
-  const constraints = request.constraints ?? {};
-  const p = wallParts(Date.parse(start), config.timezone);
-  const date = localIso(Date.parse(start), config.timezone).slice(0, 10);
-  const end = localIso(Date.parse(start) + request.durationMin * 60_000, config.timezone);
-  const clock = localIso(Date.parse(start), config.timezone).slice(11, 16);
-  return !(constraints.days && !constraints.days.includes(p.weekday)) && !(constraints.from && date < constraints.from)
-    && !(constraints.to && date > constraints.to) && !(constraints.after && clock < constraints.after)
-    && !(constraints.before && (end.slice(0, 10) !== date || end.slice(11, 16) > constraints.before));
-}
-
 async function check(request: Request, config: Config, start: string) {
   const query = { now: Date.now(), config, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
   const { slot } = checkTime({ ...query, busy: [] });
@@ -133,7 +107,7 @@ async function pick(request: Request, config: Config, start: string) {
   const offer = request.offered.find(o => Date.parse(o.start) === Date.parse(start));
   if (!offer) return { error: "Choose one of the currently offered start times." };
   const checked = await check(request, config, offer.start);
-  if (!checked.free || checked.outsideHours || !withinConditions(request, offer.start, config)) return { error: "That time is no longer available. Ask for other times." };
+  if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available. Ask for other times." };
   const contact = await lookupContact(request.handle);
   const email = request.handle.includes("@") ? request.handle : contact.found && contact.matches === 1 ? contact.emails[0] : undefined;
   request = (await write(request, { action: "book", start: offer.start, attendees: email })).request;
@@ -160,7 +134,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs) {
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}): Promise<object> {
   try {
-    let request = resolveRequest(ctx);
+    let request = current(readJson<Ledger>(file("ledger.json"), EMPTY), ctx);
     if (!request) return { error: "No scheduling request matches you in this conversation." };
     const config = loadConfig();
     if (action === "view") return view(request, config);
@@ -170,9 +144,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
       if (!["meet", "in_person", "phone", "unknown"].includes(args.format ?? "")) return { error: "Choose meet, in_person, phone, or unknown." };
       if (args.location !== undefined && (typeof args.location !== "string" || args.location.length > 1000)) return { error: "Provide a short meeting place." };
       const change = { format: args.format!, location: args.location ?? "" };
-      if (request.status === "booked") {
-        request = (await write(request, { action: "format", ...change })).request;
-      } else request = patch(request, change);
+      request = (await write(request, { action: "format", ...change })).request;
       return view(request, config);
     }
     if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
@@ -183,14 +155,11 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     if (action === "other_times") return await otherTimes(request, config, args);
     if (!args.start) return { error: "Provide a start time." };
     if (action === "pick") return await pick(request, config, args.start);
-    if (action === "ask_owner") {
-      const checked = await check(request, config, args.start);
-      if (!checked.free) return { error: "That time is not available. Offer the current times or ask for other times." };
-      if (!checked.outsideHours) return { error: "That time is within working hours. Ask for other times to get an offer." };
-      request = patch(request, { pendingOwner: { start: checked.slot.start, end: checked.slot.end, askedAt: new Date(Date.now()).toISOString() } });
-      return { ...view(request, config), message: "Ask the owner in this thread whether to book this out-of-hours time. Nothing is booked; wait for their own turn." };
-    }
-    return { error: "Unknown scheduling action." };
+    const checked = await check(request, config, args.start);
+    if (!checked.free) return { error: "That time is not available. Offer the current times or ask for other times." };
+    if (!checked.outsideHours) return { error: "That time is within working hours. Ask for other times to get an offer." };
+    request = patch(request, { pendingOwner: { start: checked.slot.start, end: checked.slot.end, askedAt: new Date(Date.now()).toISOString() } });
+    return { ...view(request, config), message: "Ask the owner in this thread whether to book this out-of-hours time. Nothing is booked; wait for their own turn." };
   } catch {
     // Backend output can contain private event details, contact data, and accounts.
     return { error: "The scheduling action could not be completed. Check the request before trying again." };

@@ -138,6 +138,10 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null,
           holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...refs]) }); await cleanup(); return { request: requestById(id) };
       }
+      if (input.action === "format" && request.status === "offered") {
+        patch({ format: input.format, location: input.location });
+        return { request: requestById(id) };
+      }
       if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked") throw new Error(`request is ${request.status}`);
       const steps: Step[] = [];
       const add = (verb: Step["verb"], slot: Offer, args: string[]) => steps.push({ verb, account: slot.account, eventId: slot.holdId, start: slot.start, end: slot.end, args, token: randomUUID() });
@@ -169,7 +173,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const location = input.action === "format" ? input.location ?? request.location : request.location;
         add(verb, slot, ["--summary", `${request.topic} with ${request.name ?? request.handle}`, "--send-updates", "all",
           ...(format === "meet" ? ["--with-meet"] : []),
-          ...(format === "phone" ? ["--location=Phone call"] : location ? [`--location=${location}`] : []),
+          ...(format === "phone" ? ["--location=Phone call"] : location !== undefined ? [`--location=${location}`] : []),
           ...(input.action === "book" && input.attendees ? ["--attendees", input.attendees] : [])]);
       }
       intent = { id: randomUUID(), input, steps };

@@ -8,6 +8,8 @@ import { isMain, run } from "./cli.ts";
 import { holdHours, reminderLeadMin } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { file } from "./paths.ts";
+import type { Constraints } from "./slots.ts";
+export type { Constraints } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
 
 // `asked`: a request seen in the owner's messages, waiting for the owner's
@@ -25,7 +27,6 @@ export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
 // A time outside the owner's days or window that the other person asked for,
 // waiting for the owner's yes or no.
 export type PendingOwner = { start: string; end: string; askedAt: string };
-export type Constraints = { days?: string[]; after?: string; before?: string; from?: string; to?: string };
 // How the meeting happens. `unknown` until the request or an answer says it.
 export type Format = "meet" | "in_person" | "phone" | "unknown";
 // The booked event's time, and the Google account it lives on.
