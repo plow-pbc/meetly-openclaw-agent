@@ -3,7 +3,7 @@ import { fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
-import { findByChat, normalizeHandle, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type Request } from "./ledger.ts";
+import { findByChat, sameHandle, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { checkTime, findSlots, localeFormatter, withinConstraints, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -15,18 +15,13 @@ export type GuestArgs = Constraints & { start?: string; format?: Format; locatio
 const EMPTY: Ledger = { requests: [] };
 
 const chatId = (ctx: GuestContext) => ctx.nativeChannelId ?? ctx.deliveryContext?.to?.replace(/^plow:/, "");
-const identity = (handle: string) => {
-  try { return normalizeHandle(handle); }
-  catch { return undefined; }
-};
 
 function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
   const chat = chatId(ctx);
   const sender = ctx.requesterSenderId;
   if (ctx.messageChannel !== "plow" || ctx.agentAccountId !== "chat" || !chat || !sender) return;
   const request = findByChat(ledger, chat);
-  const senderId = identity(sender);
-  return senderId && request && identity(request.handle) === senderId ? request : undefined;
+  return request && sameHandle(request.handle, sender) ? request : undefined;
 }
 
 function patch(request: Request, change: Patch): Request {

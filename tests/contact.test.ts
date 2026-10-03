@@ -1,18 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { contactQuery, isHandle, lookupContact, parseContacts } from "../skills/meetly/scripts/contact.ts";
+import { contactQuery, lookupContact, parseContacts } from "../skills/meetly/scripts/contact.ts";
 
-test("a handle is a phone in E.164 or an email", () => {
-  for (const h of ["+5511999990000", "ana@example.com"]) assert.equal(isHandle(h), true, h);
-  for (const h of ["11 99999-0000", "ana", "a@b", "x' or 1=1 --@a.b"]) assert.equal(isHandle(h), false, h);
+test("contact queries accept canonical ledger handles", () => {
+  for (const h of ["a@b", "+5511999990000", " +55 (11) 99999-0000 ", "ana@example.com"]) assert.doesNotThrow(() => contactQuery(h), h);
+  for (const h of ["11 99999-0000", "ana", "x' or 1=1 --@a.b"]) assert.throws(() => contactQuery(h), /E\.164/, h);
 });
 
 test("the query filters on the handle's last eight digits and never reads notes or addresses", () => {
   const q = contactQuery("+5547992547532");
   assert.match(q, /like '%92547532'/);
   assert.doesNotMatch(q, /ZNOTE|ZABCDPOSTALADDRESS/);
-  assert.match(contactQuery("Ana@Example.com"), /lower\(e\.ZADDRESS\) = 'ana@example\.com'/);
-  assert.throws(() => contactQuery("ana"), /E\.164.*or an email/);
+  assert.match(contactQuery(" Ana@Example.com "), /lower\(e\.ZADDRESS\) = 'ana@example\.com'/);
+  assert.match(contactQuery("o'brien@example.com"), /lower\(e\.ZADDRESS\) = 'o''brien@example\.com'/);
+  assert.throws(() => contactQuery("ana"), /E\.164.*or email/);
 });
 
 test("a card matches a phone handle when one number is a suffix of the other", () => {
@@ -44,8 +45,10 @@ function bridge(output: string | undefined): typeof fetch {
 }
 
 test("lookupContact says found, not found, or no Mac, and never throws for a missing card", async () => {
-  assert.deepEqual(await lookupContact("+5547992547532", { token: "tok", fetch: bridge("S|0\nR|7|Ana|Souza|\nP|7|47992547532\n") }),
+  assert.deepEqual(await lookupContact(" +55 (47) 99254-7532 ", { token: "tok", fetch: bridge("S|0\nR|7|Ana|Souza|\nP|7|47992547532\n") }),
     { found: true, handle: "+5547992547532", name: "Ana Souza", phones: ["47992547532"], emails: [], matches: 1 });
   assert.deepEqual(await lookupContact("+5547992547532", { token: "tok", fetch: bridge("S|0\n") }), { found: false, handle: "+5547992547532" });
+  assert.deepEqual(await lookupContact(" A@B ", { token: "tok", fetch: bridge("S|0\nR|7|Ana|Souza|\nE|7|a@b\n") }),
+    { found: true, handle: "a@b", name: "Ana Souza", phones: [], emails: ["a@b"], matches: 1 });
   assert.deepEqual(await lookupContact("+5547992547532", { token: "" }), { found: false, handle: "+5547992547532", reason: "mac-unavailable" });
 });

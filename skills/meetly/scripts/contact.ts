@@ -5,13 +5,7 @@
 import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
 import { runOnMac, type BridgeOptions } from "./mac.ts";
-
-const E164 = /^\+[1-9][0-9]{1,14}$/;
-const EMAIL = /^[^\s@'"]+@[^\s@'"]+\.[^\s@'"]+$/;
-
-export function isHandle(h: string): boolean {
-  return E164.test(h) || EMAIL.test(h);
-}
+import { normalizeHandle } from "./ledger.ts";
 
 export type Person = { name: string | null; phones: string[]; emails: string[] };
 export type Lookup =
@@ -24,9 +18,9 @@ const STRIPPED = "replace(replace(replace(replace(replace(replace(p.ZFULLNUMBER,
 // Lines `R|id|first|last|org`, `P|id|number`, `E|id|email` for each card with
 // the handle; the digits filter is loose, parseContacts makes it exact.
 export function contactQuery(handle: string): string {
-  if (!isHandle(handle)) throw new Error(`not a phone in E.164 (like +15551234567) or an email: ${handle}`);
+  handle = normalizeHandle(handle);
   const phone = handle.startsWith("+") ? digits(handle).slice(-8) : "";
-  const email = phone ? "" : handle.toLowerCase().replaceAll("'", "''");
+  const email = phone ? "" : handle.replaceAll("'", "''");
   const match = phone
     ? `select p.ZOWNER from ZABCDPHONENUMBER p where ${STRIPPED} like '%${phone}'`
     : `select e.ZOWNER from ZABCDEMAILADDRESS e where lower(e.ZADDRESS) = '${email}'`;
@@ -60,6 +54,7 @@ export function parseContacts(output: string, handle: string): Person[] {
 }
 
 export async function lookupContact(handle: string, opts: BridgeOptions = {}): Promise<Lookup> {
+  handle = normalizeHandle(handle);
   const query = contactQuery(handle);
   const output = await runOnMac({
     argv: ["/bin/sh", "-c",
