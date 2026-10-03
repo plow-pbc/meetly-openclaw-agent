@@ -234,7 +234,6 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
     id: existing.id,
     chatUid: input.chatUid ?? existing.chatUid,
     startedInGroup: existing.startedInGroup ?? input.startedInGroup,
-    constraints: { ...existing.constraints, ...input.constraints },
     // A new offer that does not name a format keeps the one already answered.
     format: validated.format === "unknown" ? existing.format ?? "unknown" : validated.format,
     locale: input.locale ?? existing.locale,
