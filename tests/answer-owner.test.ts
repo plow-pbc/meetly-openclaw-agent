@@ -8,7 +8,7 @@ import { registerOwnerTools } from "../plugin/owner-tools.js";
 import { addRequest, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
-import { tmpHome } from "./helpers.ts";
+import { cli, tmpHome } from "./helpers.ts";
 
 const ctx = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "plow-owner",
   sessionKey: "agent:main:main", nativeChannelId: "owner-dm", config: {} };
@@ -50,7 +50,7 @@ test("the owner answer sends once to the matched group, clears its question, and
   } } }, answerOwner, async () => ({
     buildOutboundSessionContext: (input: any) => input,
     sendDurableMessageBatch: async (input: any) => {
-      assert.ok(f.read().requests[0]!.pendingOwner, "keep pending until delivery succeeds");
+      assert.ok(f.read().requests[0]!.pendingOwner?.answerAttemptedAt, "persist the attempt before delivery");
       deliveries.push(input); return { status: "sent" };
     },
   }));
@@ -95,20 +95,32 @@ test("only a question, not a time approval, can be answered", async t => {
   assert.deepEqual(f.read(), f.ledger);
 });
 
-for (const status of ["queued", "throw"]) test(`answer delivery ${status} preserves the pending question`, async t => {
+for (const status of ["queued", "throw"]) test(`answer delivery ${status} requires a durable clear before another attempt`, async t => {
   const f = fixture(t);
-  let tool: any;
+  let tool: any, sends = 0;
   registerOwnerTools({ registerTool(factory: any) { tool = factory(ctx); }, runtime: { channel: {
     routing: { resolveAgentRoute: () => ({ agentId: "main", sessionKey: "group-mia" }) },
     session: { resolveStorePath: () => "/sessions", updateLastRoute: async () => {} },
   } } }, answerOwner, async () => ({ buildOutboundSessionContext: (input: any) => input, sendDurableMessageBatch: async () => {
+    sends++;
     if (status === "throw") throw new Error("PRIVATE TRANSPORT ERROR");
     return { status };
   } }));
   const result = await tool.execute("answer", args);
   assert.match(result.content[0].text, /delivery is unknown/);
   assert.doesNotMatch(result.content[0].text, /PRIVATE/);
-  assert.deepEqual(f.read(), f.ledger);
+  assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
+  const retry = await tool.execute("retry", args);
+  assert.match(retry.content[0].text, /already attempted/);
+  assert.equal(sends, 1);
+  const reloaded = await import(new URL(`../skills/meetly/scripts/answer-owner.ts?restart=${status}`, import.meta.url).href);
+  assert.ok("error" in await reloaded.answerOwner(ctx, args, async () => assert.fail("must not resend after reload")));
+  assert.ok(f.read().requests[0]!.pendingOwner);
+  const clear = cli("ledger.ts", ["delivery", "--id", "mia", "--kind", "answer", "--action", "clear"], { MEETLY_HOME: process.env.MEETLY_HOME! });
+  assert.equal(clear.status, 0, clear.stderr);
+  assert.deepEqual(clear.json.request.pendingOwner, f.ledger.requests[0]!.pendingOwner);
+  await tool.execute("authorized-retry", args);
+  assert.equal(sends, 2);
 });
 
 test("an owner answer already visible in the group clears the question without sending it again", async t => {

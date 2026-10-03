@@ -175,7 +175,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
       request = (await write(request, { action: "format", ...change })).request;
       return view(request, config);
     }
-    if (action === "ask_owner" && (request.status === "offered" || (request.status === "booked" && args.question !== undefined))) {
+    if (action === "ask_owner" && (request.status === "offered" || (request.status === "booked" && typeof args.question === "string" && args.question.trim()))) {
       return await askOwner(request, config, args, sendOwner);
     }
     if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
