@@ -206,6 +206,10 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs) {
 }
 
 async function askOwner(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
+  args = { ...args,
+    start: typeof args.start === "string" ? args.start.trim() || undefined : args.start,
+    question: typeof args.question === "string" ? args.question.trim() || undefined : args.question,
+  };
   if (request.pendingOwner) return { error: "A question is already open with the owner. Wait for their answer." };
   if ((args.question === undefined) === (args.start === undefined)) return { error: "Provide either a question or a start time, not both." };
   if (!sendOwner) return { error: "Owner messaging is unavailable. Nothing was sent." };

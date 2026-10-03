@@ -260,6 +260,17 @@ test("ask-owner sends a capped human question to the fixed owner DM and mirrors 
   assert.deepEqual((view as { pendingOwner: object }).pendingOwner, { question: saved.question });
 });
 
+for (const kind of ["question", "time"] as const) test(`ask-owner accepts an empty unused field for a ${kind}`, async t => {
+  const f = fixture(t);
+  const args = kind === "question" ? { start: "", question: "Should I bring the budget numbers?" }
+    : { start: "2026-10-05T20:00", question: "  " };
+  const result = await f.tools.get("meetly_ask_owner")!.execute("ask", args);
+  assert.doesNotMatch(result.content[0]!.text, /error/);
+  assert.equal(f.deliveries.length, 1);
+  assert.ok(f.request().pendingOwner);
+  assert.equal("question" in f.request().pendingOwner!, kind === "question");
+});
+
 test("a second time approval cannot replace an open ask", async t => {
   const f = fixture(t);
   await f.act(context, "ask_owner", { start: "2026-10-05T20:00" });
