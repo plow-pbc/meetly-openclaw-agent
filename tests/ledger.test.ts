@@ -435,3 +435,18 @@ test("topics strip only a trailing reference to the recorded guest", () => {
     assert.equal(updated.requests[0]!.topic, "budget review");
   }
 });
+
+test("poll saves unstated meal durations from config and preserves explicit lengths", t => {
+  const home = tmpHome();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeJson(join(home, "config.json"), { setupDoneAt: new Date(T0).toISOString(), durationMin: 45, calendars: [], defaultAccount: "owner@example.com" });
+  for (const [meal, stated, expected] of [["lunch", undefined, 60], ["dinner", undefined, 60], ["coffee", undefined, 30], [undefined, undefined, 45], ["lunch", 90, 90]] as const) {
+    const result = cli("ledger.ts", ["save", "--json", JSON.stringify({ origin: "inbound", status: "asked", handle: `guest${expected}${meal}@example.com`, topic: "meet", meal, durationMin: stated })], { MEETLY_HOME: home });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.json.request.durationMin, expected);
+  }
+  rmSync(join(home, "config.json"));
+  const retry = cli("ledger.ts", ["save", "--json", JSON.stringify({ origin: "inbound", status: "asked", handle: "guest60lunch@example.com", topic: "meet", meal: "lunch" })], { MEETLY_HOME: home });
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(retry.json.request.durationMin, 60);
+});

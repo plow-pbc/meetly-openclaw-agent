@@ -37,3 +37,27 @@ test("addDays crosses month and year ends", () => {
   assert.deepEqual(addDays(2026, 12, 31, 1), { y: 2027, m: 1, d: 1 });
   assert.deepEqual(addDays(2026, 3, 1, -1), { y: 2026, m: 2, d: 28 });
 });
+
+test("next_week CLI resolves the anchor's local calendar week across timezone and DST boundaries", async () => {
+  const { cli } = await import("./helpers.ts");
+  for (const [anchor, timezone, from, to] of [
+    ["2026-10-05T00:30:00Z", "America/Los_Angeles", "2026-10-05", "2026-10-11"],
+    ["2026-10-05T00:30:00Z", "UTC", "2026-10-12", "2026-10-18"],
+    ["2026-10-23T12:00:00-07:00", "America/Los_Angeles", "2026-10-26", "2026-11-01"],
+    ["2026-10-27T12:00:00-07:00", "America/Los_Angeles", "2026-11-02", "2026-11-08"],
+    ["2026-12-31T12:00:00Z", "UTC", "2027-01-04", "2027-01-10"],
+  ]) {
+    const result = cli("time.ts", ["next_week", "--anchor", anchor!, "--timezone", timezone!], {});
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.json, { from, to });
+  }
+});
+
+test("next_week requires an unambiguous source timestamp", async () => {
+  const { cli } = await import("./helpers.ts");
+  for (const anchor of ["2026-10-05", "2026-10-05T12:00:00", "not a timestamp"]) {
+    const result = cli("time.ts", ["next_week", "--anchor", anchor, "--timezone", "UTC"], {});
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /anchor timestamp with a timezone offset/);
+  }
+});

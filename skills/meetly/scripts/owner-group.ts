@@ -1,7 +1,6 @@
 import { offerRequest, type CalendarOptions } from "./calendar.ts";
 import { fetchBusy } from "./busy.ts";
-import { durationFor } from "./slots.ts";
-import { loadConfig } from "./config.ts";
+import { durationFor, loadConfig } from "./config.ts";
 import { view } from "./request-view.ts";
 import type { Constraints, NewRequest } from "./ledger.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
@@ -16,9 +15,6 @@ function conditions(value?: Constraints): Constraints | undefined {
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, options: CalendarOptions = {}): Promise<object> {
   const chat = resolveOwnerChat(ctx);
-  if (chat && ctx.sessionKey === "agent:main:main") {
-    return { error: 'This tool is group-only. Nothing was saved or sent. Continue in this DM: read meetly-group, "Owner request", find times and save the offer with calendar.ts offer (origin: owner), then follow "Offer times" delivery steps to call plow_start_thread with the guest and opener. Do not retry meetly_offer_owner_group here.' };
-  }
   if (!chat || !ctx.sessionKey?.includes(":plow:group:")) {
     return { error: "Only the owner's own Plow group turn can start this request." };
   }

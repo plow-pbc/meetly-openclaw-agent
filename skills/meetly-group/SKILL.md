@@ -39,11 +39,10 @@ write failures still need attention; never override a real conflict.
 
 ## Offer times
 
-Resolve relative date ranges such as "next week" to explicit `from`/`to` dates
-in the owner's timezone before searching. "Next week" means the following
-Monday through Sunday; intersect any named weekdays with that range. For owner
-DM requests, save those bounds in `constraints`, along with weekday requirements;
-pass the same bounds as `--from`/`--to` on the first search and every re-offer.
+For "next week", run `time.ts next_week --anchor <owner message timestamp>
+--timezone <config.timezone>` and use its returned `from`/`to`; pass named
+weekdays separately as `days`. For owner DM requests, save those bounds in
+`constraints` and pass them as `--from`/`--to` on searches and re-offers.
 For a request started here,
 suggested dates/times are `proposed` and only explicit non-relaxable conditions
 are `constraints`. Carry constraints into every re-offer unless the owner changes them.

@@ -34,6 +34,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `--id X --sent` | `{request}`: the reminder went out; refused if already handled |
 | `busy.ts` | `--fetch [--allow-overlap-title <owner-supplied name>]` (reads the Mac, writes `tmp/busy.json`) | `{file, busy:<count>, degraded, unknownAfter?}` |
 | | `--in F [--in F2…] [--max 100]` | `{busy:[{start,end,id,account}], unknownAfter?, degraded}` |
+| `time.ts` | `next_week --anchor ISO --timezone IANA` | `{from,to}` in the owner's timezone, anchored to the source message timestamp; pass weekdays separately |
 | `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--meal lunch\|dinner\|coffee] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-overlap ID]… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], durationMin, unknownAfter?, degraded}` |
 | | `--in busy.json --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--duration N] [--allow-overlap ID]… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
 | `owner-chat.ts` | | `{chatUid}`: the owner's DM |

@@ -7,12 +7,12 @@ import { findByChat, meetingTopic, intersectConstraints, sameHandle, OWNER_QUEST
 import { file } from "./paths.ts";
 import { checkTime, findSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
-import { DAYS, localIso } from "./time.ts";
+import { DAYS, localIso, nextWeek } from "./time.ts";
 import { view } from "./request-view.ts";
 
 export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
-export type GuestArgs = Constraints & { start?: string; question?: string; format?: Format; location?: string };
+export type GuestArgs = Constraints & { next_week?: string; start?: string; question?: string; format?: Format; location?: string };
 type SendOwner = (text: string) => Promise<void>;
 const EMPTY: Ledger = { requests: [] };
 
@@ -52,7 +52,7 @@ async function busyFor(request: Request, config: Config, from: string, to: strin
   return { ...result, busy: result.busy.filter(b => !holds(request).some(h => h.holdId === b.id && h.account === b.account)) };
 }
 
-function preferences(args: GuestArgs): Constraints {
+function preferences(args: GuestArgs, timezone: string): Constraints {
   const out: Constraints = {};
   if (args.days !== undefined) {
     if (!Array.isArray(args.days) || !args.days.every(d => (DAYS as readonly string[]).includes(d))) throw new Error("invalid days");
@@ -63,7 +63,7 @@ function preferences(args: GuestArgs): Constraints {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(args[key])) throw new Error("invalid date");
     out[key] = args[key];
   }
-  return out;
+  return args.next_week === undefined ? out : intersectConstraints(out, nextWeek(args.next_week, timezone));
 }
 
 async function check(request: Request, config: Config, start: string) {
@@ -88,7 +88,7 @@ async function pick(request: Request, config: Config, start: string) {
 }
 
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
-  const preferred = preferences(args);
+  const preferred = preferences(args, config.timezone);
   const start = args.start;
   let exact: Slot | undefined;
   if (start) {

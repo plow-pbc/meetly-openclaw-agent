@@ -7,7 +7,7 @@
 // that locale's date and time conventions; without one it is "tue 29/9 12:00".
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
-import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
+import { durationFor, loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
 import type { Busy } from "./busy.ts";
 import { intersectConstraints, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
@@ -42,9 +42,6 @@ function windowFor(config: Config, meal?: Meal): [number, number] {
   return [minutes(start!), minutes(end!)];
 }
 
-export function durationFor(q: { config: Config; meal?: Meal; durationMin?: number }): number {
-  return q.durationMin ?? (q.meal === "lunch" || q.meal === "dinner" ? 60 : q.meal === "coffee" ? 30 : q.config.durationMin);
-}
 
 const pad = (n: number) => String(n).padStart(2, "0");
 

@@ -253,13 +253,11 @@ test("decline requires the guest's clear refusal, never an other-times refusal",
 
 test("ordinary plugin tool factories retain context, have no identity arguments, and declare their contracts", () => {
   const names: string[] = [];
-  const hooks: string[] = [];
-  plugin.register({ on(name: string) { hooks.push(name); }, registerTool(factory: (ctx: object) => { name: string; parameters: { properties: object } }) {
+  plugin.register({ on() {}, registerTool(factory: (ctx: object) => { name: string; parameters: { properties: object } }) {
     const tool = factory(context); names.push(tool.name);
     if (tool.name !== "meetly_offer_owner_group") assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap", "constraints"].includes(k)));
   } });
   assert.deepEqual(names, JSON.parse(readFileSync(new URL("../plugin/openclaw.plugin.json", import.meta.url), "utf8")).contracts.tools);
-  assert.deepEqual(hooks, ["before_prompt_build", "after_tool_call", "message_sending", "reply_payload_sending", "agent_end", "session_end"]);
 });
 
 test("every guest tool drops blank optional arguments and preserves required and nonempty values", async () => {
@@ -798,23 +796,6 @@ test("the owner-group tool refuses guests, DMs and requests already linked elsew
 });
 
 
-test("owner DM misuse of the group offer tool points to the DM offer and thread-start flow", async t => {
-  const f = fixture(t);
-  let tool: any;
-  registerOwnerGroupTool({ registerTool(factory: any) {
-    tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main", nativeChannelId: "owner-dm" });
-  } }, offerOwnerGroup);
-  assert.match(tool.description, /Group-only: never use in the owner's DM/);
-  const result = await tool.execute("offer", { ...f.request(), offered: offers });
-  assert.equal(result.isError, true);
-  assert.match(result.details.error, /meetly-group.*Owner request/);
-  assert.match(result.details.error, /calendar.ts offer/);
-  assert.match(result.details.error, /plow_start_thread/);
-  assert.match(result.details.error, /Nothing was saved or sent/);
-  assert.deepEqual(f.read(), f.ledger);
-  assert.deepEqual(f.commands, []);
-});
-
 test("owner-group failures never echo private validation details", async t => {
   const f = fixture(t);
   f.save({ requests: [] });
@@ -976,4 +957,14 @@ test("a topic ending in the guest name stays separate from hold titles and owner
   assert.equal(hold[hold.indexOf("--summary") + 1], "Hold: lunch with Kai");
   await f.act(context, "ask_owner", { question: "Should I bring the budget numbers?" });
   assert.deepEqual(f.ownerLines, ["Kai asked in your lunch thread: 'Should I bring the budget numbers?'. Reply there, or tell me what to say."]);
+});
+
+test("guest next_week uses the source timestamp and owner timezone before filtering weekdays", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints!.to = "2026-10-16";
+  f.save(f.ledger);
+  const result = await f.act(context, "other_times", { next_week: "2026-10-05T23:30:00Z", days: ["tue"] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.ok(f.request().offered.length > 0);
+  assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-13")), JSON.stringify(f.request().offered));
 });

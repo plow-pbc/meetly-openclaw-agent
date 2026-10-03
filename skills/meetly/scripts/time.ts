@@ -1,4 +1,6 @@
 // Time-zone helpers. All instants are epoch ms; all zones are IANA names.
+import { parseArgs } from "node:util";
+import { isMain, run } from "./cli.ts";
 
 export type Day = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 export const DAYS: readonly Day[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -69,3 +71,21 @@ export function addDays(y: number, m: number, d: number, n: number): { y: number
   const t = new Date(Date.UTC(y, m - 1, d + n));
   return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
 }
+
+export function nextWeek(anchor: string, tz: string): { from: string; to: string } {
+  const ms = Date.parse(anchor);
+  if (!Number.isFinite(ms) || !/T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(anchor)) throw new Error("next_week needs an anchor timestamp with a timezone offset");
+  const p = wallParts(ms, tz);
+  const monday = 7 - DAYS.indexOf(p.weekday);
+  const date = (offset: number) => {
+    const { y, m, d } = addDays(p.y, p.m, p.d, offset);
+    return `${y}-${pad(m)}-${pad(d)}`;
+  };
+  return { from: date(monday), to: date(monday + 6) };
+}
+
+if (isMain(import.meta.url)) run(() => {
+  const { values, positionals } = parseArgs({ allowPositionals: true, options: { anchor: { type: "string" }, timezone: { type: "string" } } });
+  if (positionals.length !== 1 || positionals[0] !== "next_week" || !values.anchor || !values.timezone) throw new Error("usage: time.ts next_week --anchor ISO --timezone IANA");
+  return nextWeek(values.anchor, values.timezone);
+});

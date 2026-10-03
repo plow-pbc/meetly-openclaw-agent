@@ -251,14 +251,13 @@ test("the owner's conditions hold for every offer of a request; the person's pro
   assert.ok(pollSkill().includes("`proposed` for any times they proposed"));
 });
 
-test("relative dates resolve to explicit bounds on guest, owner DM and inbound paths", () => {
-  const group = groupSkill();
-  const poll = pollSkill();
-  assert.ok(group.includes('Resolve relative date ranges such as "next week" to explicit `from`/`to` dates in the owner\'s timezone'));
-  assert.ok(group.includes("For owner DM requests, save those bounds in `constraints`"));
-  assert.ok(poll.includes("Resolve relative dates against the source message's timestamp in the owner's timezone"));
-  assert.ok(poll.includes('Save date ranges such as "next week" as explicit `from`/`to` in `constraints`'));
-  assert.ok(flat(prompt).includes('Resolve relative ranges such as "next week" to explicit `from`/`to` dates in the owner\'s timezone before calling `meetly_other_times`'));
+test("owner and poll next-week requests use the time CLI; guests follow their tool contract", () => {
+  for (const skill of [groupSkill(), pollSkill()]) {
+    assert.match(skill, /time\.ts next_week --anchor/);
+    assert.match(skill, /--timezone <config\.timezone>/);
+    assert.match(skill, /`constraints`/);
+    assert.doesNotMatch(skill, /following Monday through Sunday/);
+  }
   assert.ok(flat(prompt).includes('confirms `ownerAskSent: true`'));
   assert.ok(flat(prompt).includes("never invent a question to resolve your own uncertainty"));
 });

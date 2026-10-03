@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
-import { holdHours, reminderLeadMin } from "./config.ts";
+import { durationFor, holdHours, loadConfig, reminderLeadMin } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { file } from "./paths.ts";
 import type { Constraints } from "./slots.ts";
@@ -428,7 +428,12 @@ if (isMain(import.meta.url)) {
       case "save": {
         const input = jsonArg(values);
         const id = requestId();
-        const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
+        const ledger = updateJson<Ledger>(path, EMPTY, (l) => {
+          if (input.status === "asked" && input.durationMin === undefined && !findOpenByHandle(l, input.handle) && !findOpenBySource(l, input)) {
+            input.durationMin = durationFor({ config: loadConfig(), meal: input.meal });
+          }
+          return saveRequest(l, input, now, id);
+        });
         return { request: findOpenByHandle(ledger, input.handle) ?? findOpenBySource(ledger, input) };
       }
       case "update": {
