@@ -36,6 +36,9 @@ exits non-zero: report that line; never guess a result. State lives in
 Notes:
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
   `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-group`.
+- `startedInGroup: true` marks a request initiated by the owner in its
+  existing group; missing format or place is left to the owner. It stays on
+  the request through later offers and booking. Other requests omit it.
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.
   `meetUrl` only ever holds `https://meet.google.com/xxx-xxxx-xxx`, only on
   a `meet`; the ledger refuses anything else.

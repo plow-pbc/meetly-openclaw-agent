@@ -29,6 +29,8 @@ export type Reminder = { at: string; outcome: "sent" | "cancelled" | "no-link" }
 export type Request = {
   id: string;
   origin: "inbound" | "owner";
+  // The owner initiated this request in its group, so they supply missing details.
+  startedInGroup?: boolean;
   handle: string;
   name?: string;
   sourceRowid?: number;
@@ -174,6 +176,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
     if (key in input) throw new Error(`${key} is managed by ledger.ts delivery`);
   }
   if (input.origin !== "inbound" && input.origin !== "owner") throw new Error(`origin must be inbound or owner, got ${input.origin}`);
+  if (input.startedInGroup !== undefined && typeof input.startedInGroup !== "boolean") throw new Error("startedInGroup must be a boolean");
   if (typeof input.handle !== "string" || !input.handle.trim()) throw new Error("handle is required");
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
   if (!Number.isInteger(input.durationMin) || input.durationMin <= 0) throw new Error("durationMin must be a positive whole number");
@@ -223,6 +226,7 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
     ...validated,
     id: existing.id,
     chatUid: input.chatUid ?? existing.chatUid,
+    startedInGroup: existing.startedInGroup ?? input.startedInGroup,
     // A new offer that does not name a format keeps the one already answered.
     format: validated.format === "unknown" ? existing.format ?? "unknown" : validated.format,
     locale: input.locale ?? existing.locale,

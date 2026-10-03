@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { addRequest, pendingOwnerList, updateRequest, type Ledger, type NewRequest } from "../skills/meetly/scripts/ledger.ts";
+import { addRequest, pendingOwnerList, findByChat, findOpenByHandle, saveRequest, updateRequest, type Ledger, type NewRequest } from "../skills/meetly/scripts/ledger.ts";
+import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
+import { findSlots } from "../skills/meetly/scripts/slots.ts";
 import { parseEvent, type EventInfo } from "../skills/meetly/scripts/event.ts";
 import { recordBooking } from "../skills/meetly/scripts/record-booking.ts";
 import { cli, tmpHome } from "./helpers.ts";
@@ -18,6 +20,42 @@ const input = (over: Record<string, unknown> = {}) => ({
 const meetEvent = (): EventInfo => parseEvent(fixture("event-meet"));
 const plainEvent = (): EventInfo => parseEvent(fixture("event-plain"));
 const offered = (format = "meet"): Ledger => addRequest({ requests: [] }, input({ format }), T0, "r_1");
+
+test("an owner request in an existing group offers Oct 13 lunch and records the guest's pick with unknown format", () => {
+  const now = Date.parse("2026-10-02T09:00:00-07:00");
+  const config = {
+    ...DEFAULTS, ownerName: "Sam", timezone: "America/Los_Angeles",
+    defaultAccount: ACCOUNT, calendars: [{ account: ACCOUNT, id: "primary" }],
+  };
+  const constraints = { from: "2026-10-13", to: "2026-10-13", after: "12:00", before: "14:00" };
+  const { slots } = findSlots({ now, config, busy: [], ...constraints, locale: "en-US" });
+  assert.ok(slots.length > 0);
+  for (const slot of slots) {
+    assert.match(slot.start, /^2026-10-13T1[23]:/);
+    assert.equal(Date.parse(slot.end) - Date.parse(slot.start), config.durationMin * 60_000);
+  }
+  const ledger = saveRequest({ requests: [] }, {
+    origin: "owner", startedInGroup: true, handle: "+15551234567", name: "Matt", chatUid: "owner-created-group",
+    topic: "lunch", durationMin: config.durationMin, constraints, format: "unknown", locale: "en-US",
+    offered: slots.map((slot, i) => ({ ...slot, holdId: `lunch-hold-${i}`, account: ACCOUNT })),
+  }, now, "r_lunch");
+  const request = findByChat(ledger, "owner-created-group")!;
+  assert.equal(request.id, findOpenByHandle(ledger, "+15551234567", ["offered"])!.id);
+  assert.equal(request.origin, "owner");
+  assert.deepEqual(request.constraints, constraints);
+  const pick = request.offered[0]!;
+  const result = recordBooking(ledger, request.id, {
+    id: pick.holdId!, status: "confirmed", start: pick.start, end: pick.end, meetUrl: null,
+  }, ACCOUNT, now);
+  const booked = findByChat(result.ledger, "owner-created-group")!;
+  assert.equal(booked.status, "booked");
+  assert.equal(booked.eventId, pick.holdId);
+  assert.equal(booked.format, "unknown");
+  assert.equal(booked.startedInGroup, true);
+  assert.equal(booked.location, undefined);
+  assert.deepEqual(booked.booked, { start: pick.start, end: pick.end, account: ACCOUNT });
+  assert.equal(result.warning, undefined);
+});
 
 test("booking a Meet records the event, its time, its account and its link", () => {
   const { ledger, meetUrl, warning } = recordBooking(offered("meet"), "r_1", meetEvent(), ACCOUNT, T0);

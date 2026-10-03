@@ -181,9 +181,36 @@ test("offers re-key to the resolved phone and group starts require a ledger atte
 
 test("unmatched guest requests and acknowledgements do not alert the owner", () => {
   const p = flat(prompt);
-  assert.ok(p.includes("If no request matches, say so without alerting the owner"));
+  assert.ok(p.includes("If no request matches, a brief friendly introduction is fine"));
   assert.ok(p.includes("For unrelated acknowledgements, do not reply"));
   assert.ok(!groupSkill().includes("**No matching request:**"));
+});
+
+test("an owner's scheduling ask without a matching request starts in the existing group", () => {
+  const group = flat(readFileSync(join(ROOT, "skills", "meetly-group", "SKILL.md"), "utf8"));
+  assert.ok(flat(prompt).includes("the owner's scheduling ask starts a request for the other member in this chat"));
+  assert.ok(group.includes("**The owner asks to schedule:**"));
+  assert.ok(group.includes("`origin: owner`, this group's `chatUid`, and the owner's conditions as `constraints`"));
+  assert.ok(group.includes("Use `config.durationMin` unless the owner specifies a duration"));
+  assert.ok(group.includes("Follow \"Offer times\" from step 2"));
+  assert.ok(group.includes("Reply with the offer in this group; do not open a new thread or DM the owner"));
+  assert.ok(group.includes("link it to this chat with `ledger.ts update --id <id> --json '{\"chatUid\":\"<this chat uid>\"}'`"));
+});
+
+test("an unavailable owner ask in an existing group gets nearby alternatives without private details", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("For an owner's new request in this group, instead say \"<ownerName> isn't free then\""));
+  assert.ok(group.includes("search outward from the requested date/time for the nearest available times"));
+  assert.ok(group.includes("Relax only the requested date/time for this alternative search; keep the saved `constraints`"));
+  assert.ok(group.includes("Stay within the configured days, hours and calendar coverage"));
+});
+
+test("a group without an owner ask gets no confusion or request-identification question", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("**No owner scheduling ask:** a brief friendly introduction is fine"));
+  assert.ok(group.includes("make no calendar changes"));
+  assert.doesNotMatch(group, /Reply that Meetly cannot identify|ask the owner[^.]*identify the request/);
+  assert.ok(flat(prompt).includes("Never announce internal request confusion in a group"));
 });
 
 test("owner DM answers resolve ledger questions and return to the recorded group", () => {
@@ -222,17 +249,24 @@ test("every calendar delete a skill names passes --force, which gog requires whe
 const groupSkill = () => flat(readFileSync(join(SKILLS, "meetly-group", "SKILL.md"), "utf8"));
 const pollSkill = () => flat(readFileSync(join(SKILLS, "meetly-poll", "SKILL.md"), "utf8"));
 
-test("the format is read only from explicit words, and ambiguous ones are asked", () => {
+test("only requests started by the owner in a group skip format questions", () => {
   const group = groupSkill();
   assert.ok(group.includes("## Meeting format"));
   assert.ok(group.includes("It counts only when the words say it"));
   assert.ok(group.includes("Anything else is `unknown`, including \"call\", \"ligação\""));
   assert.ok(group.includes("\"coffee\" or \"lunch\" with no place"));
   assert.ok(group.includes("Never guess from the topic"));
-  assert.ok(group.includes("When `format` is `unknown`, the same opener also asks how they would like to meet"));
+  assert.ok(group.includes("Use the thread's context for format and place; otherwise leave them unknown"));
+  assert.ok(group.includes("Only when `startedInGroup` is true, never ask the guest for missing details"));
+  assert.ok(group.includes("Save `startedInGroup: true` for this path only"));
+  assert.ok(flat(prompt).includes("For requests started by the owner in this group (`startedInGroup: true`), do not ask the guest for missing details"));
+  assert.ok(group.includes("For other requests, when `format` is `unknown`, the same opener also asks how they would like to meet"));
   assert.ok(group.includes("Always in that one message, never a second one"));
   assert.ok(flat(prompt).includes("Routine format and place questions stay in the group"));
   assert.ok(group.includes("Never ask about the format twice in a row"));
+  assert.ok(group.includes("If the format is still `unknown` and `startedInGroup` is not true, ask it in the group, once"));
+  assert.ok(group.includes("how or where to meet once unless `startedInGroup` is true"));
+  assert.ok(group.includes("Which works best, and would you prefer Google Meet or in person?"));
   assert.ok(pollSkill().includes("the format if their words say it"));
 });
 

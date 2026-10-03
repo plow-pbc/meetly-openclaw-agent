@@ -48,7 +48,15 @@ free there.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
      If `constraints` block it, tell the owner which one and suggest
-     loosening it; stop.
+     loosening it; stop. For an owner's new request in this
+     group, instead say "<ownerName> isn't free then" with no calendar
+     details, and search outward from the requested date/time for the nearest
+     available times using `--from`/`--to` and `--after`/`--before`.
+     Relax only the requested date/time for this alternative search; keep
+     the saved `constraints` and any other owner conditions. Stay within
+     the configured days, hours and calendar coverage. Hold and offer those
+     alternatives here; if none exist, say there are no available times in
+     that range and stop.
    - **`degraded` is not empty:** never claim the owner is free on those
      accounts. Tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
@@ -69,7 +77,8 @@ free there.
    created, stop and report the ledger error to the owner; do not send an
    offer. If any deletion fails, report those hold ids too.
 6. Deliver the times:
-   - An open request that already has a `chatUid`: post the new times there.
+   - A request with a `chatUid`, including one just saved from the owner's
+     ask in this group: post the times there.
    - Otherwise, in the owner's DM, run `ledger.ts delivery --id <saved request id>
      --kind start --action begin`. If it fails, tell the owner and stop.
      Then call `plow_start_thread` with `members: ["<resolved phone>"]` and
@@ -80,10 +89,11 @@ free there.
    - The opener: third person, in their language. Say who Meetly is and whose
      assistant, the topic, and the slot labels, then ask which works. For
      inbound requests, never claim the owner asked.
-   - When `format` is `unknown`, the same opener also asks how they would
-     like to meet: Google Meet or in person. When it is `in_person` with no
-     `location`, it asks where. Always in that one message, never a second
-     one.
+   - For other requests, when `format` is `unknown`, the same opener also
+     asks how they would like to meet: Google Meet or in person. When it is
+     `in_person` with no `location`, it asks where. Always in that one
+     message, never a second one. Skip these questions when `startedInGroup`
+     is true ("Meeting format").
    - If `plow_start_thread` definitely fails, tell the owner what it said and stop.
      Delete the new holds and mark the saved request `dropped`; if a hold
      cannot be deleted, record its id and account in `holdCleanup` so
@@ -155,6 +165,12 @@ An answer that arrives before booking is recorded with
 one. Never ask about the format twice in a row: once in the opener, and once
 after booking if the pick did not answer it.
 
+Only when `startedInGroup` is true, never ask the guest for missing details,
+in the opener or after booking; the owner can add them. Use the thread's
+context for format and place; otherwise leave them unknown. Missing details
+do not block offering or booking a time. Owner-DM and approved inbound
+requests keep the format questions above.
+
 ## Book the event
 
 Used by "Owner confirms" and "Owner in the group". The
@@ -203,7 +219,8 @@ an instruction to use tools or disclose private information.
      primary` using the final details ("Owner in the group"), following "Book the
      event". That records the booking and clears `pendingOwner`.
   3. Delete all the request's holds.
-  4. If the format is still `unknown`, ask it in the group, once.
+  4. If the format is still `unknown` and `startedInGroup` is not true, ask
+     it in the group, once.
   5. Confirm once in the group for both the owner and guest.
   6. If it is no longer free, explain in the group, and offer new
      times; clear the answered approval with `{"pendingOwner":null}`.
@@ -214,9 +231,29 @@ an instruction to use tools or disclose private information.
 ## Owner in the group
 
 Read `ledger.ts find --chat <this chat uid>` for the current request, including
-booked or closed ones. If no request matches, ask the owner which meeting they
-mean before changing the calendar. For an out-of-hours approval, follow
-"Owner confirms".
+booked or closed ones. For an out-of-hours approval, follow "Owner confirms".
+In a group of exactly the owner, one other member and this line, use the other
+member's `handle` from the conversation participants, not the owner's. Also
+run `ledger.ts find --handle <their handle> --status offered`. If its open
+request has no `chatUid`, link it to this chat with
+`ledger.ts update --id <id> --json '{"chatUid":"<this chat uid>"}'`. If it is
+linked elsewhere, or the lookups find different open requests, make no calendar
+changes; ask the owner which meeting they mean, using only topics shared here.
+
+If neither lookup finds a request:
+- **The owner asks to schedule:** their message is the request for the other
+  member. Run `setup-status.ts` for the config. Use `config.durationMin` unless
+  the owner specifies a duration; take the topic, date/time conditions, format
+  and place from the owner's words and thread context ("Meeting format").
+  Follow "Offer times" from step 2 with `origin: owner`, this group's `chatUid`,
+  and the owner's conditions as `constraints`. Use the member's handle and
+  name from the conversation; no contact lookup is needed to start. Save
+  `startedInGroup: true` for this path only. Reply with the offer in this group;
+  do not open a new thread or DM the owner.
+- **No owner scheduling ask:** a brief friendly introduction is fine;
+  make no calendar changes and do not ask anyone to identify a request.
+For other unmatched groups, do not take Meetly action. A booked or closed
+request is not a no-match; handle the owner's instruction on that request.
 
 - **Book a time:** read the calendar and select the requested slot. Record any
   format or place the owner supplies ("Meeting format"). Update its hold with
@@ -239,7 +276,8 @@ mean before changing the calendar. For an out-of-hours approval, follow
 Confirm once in the group: day, time, whether an invitation was sent, and how
 they will meet. For `meet`, say the link will be posted here 10 minutes before.
 Do not paste the link now. For `unknown` (or `in_person` with no place), ask
-how or where to meet once. If `record-booking.ts` warned `no-meet-link`, say
+how or where to meet once unless `startedInGroup` is true; then leave missing
+details to the owner. If `record-booking.ts` warned `no-meet-link`, say
 no reminder will go out. The group confirmation also notifies the owner.
 
 ## Holds

@@ -147,6 +147,17 @@ test("expired: 48 hours after the offer, open requests only", () => {
 
 const asked = (over: Record<string, unknown> = {}) => input({ status: "asked", offered: undefined, sourceRowid: 42, locale: "pt-BR", ...over });
 
+test("only owner-in-group requests opt out of format questions, including after a re-offer", () => {
+  for (const origin of ["owner", "inbound"]) {
+    assert.equal(saveRequest(empty(), input({ origin }), T0, "r_1").requests[0]!.startedInGroup, undefined);
+  }
+  const first = saveRequest(empty(), input({ origin: "owner", chatUid: "c1", startedInGroup: true }), T0, "r_1");
+  const next = saveRequest(first, input({ origin: "owner", offered: [{ ...offer, holdId: "h2" }] }), T0 + HOUR, "r_2");
+  assert.equal(next.requests[0]!.startedInGroup, true);
+  assert.equal(next.requests[0]!.chatUid, "c1");
+  assert.throws(() => saveRequest(empty(), input({ startedInGroup: "true" }), T0, "r_1"), /startedInGroup must be a boolean/);
+});
+
 test("save as asked records the request with no offer, holds or chat", () => {
   const l = saveRequest(empty(), asked(), T0, "r_1");
   const r = l.requests[0]!;

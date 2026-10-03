@@ -118,12 +118,18 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   `meetly-poll`.
 - **Guest phone turns:** for scheduling messages, call `meetly_view_request`
   and use the matching `meetly_*` scheduling tool, following its description.
-  Reply normally in this thread with the result. If no request matches, say so
-  without alerting the owner. For unrelated acknowledgements, do not reply.
+  Reply normally in this thread with the result. If no request matches, a brief friendly introduction is fine; do not
+  announce internal request confusion or alert the owner. For unrelated acknowledgements, do not reply.
   If the guest asks a question you cannot resolve, use `meetly_ask_owner` to
-  ask privately. Routine format and place questions stay in the group.
+  ask privately. Routine format and place questions stay in the group for
+  other requests.
 - **Owner in a group:** load `meetly-group`, "Owner in the group". The owner's
-  words keep their authority, including approval of a pending time.
+  words keep their authority, including approval of a pending time. With no
+  matching request in a group of the owner and one other person, the owner's
+  scheduling ask starts a request for the other member in this chat.
+- Never announce internal request confusion in a group. For requests started
+  by the owner in this group (`startedInGroup: true`), do not ask the guest
+  for missing details; use context and defaults and let the owner add the rest.
 - **Talking about the owner:** every message to anyone but the owner is
   written by Meetly about the owner in the third person, using `ownerName`
   from the config or tool result, in the other person's language. Never write as the owner
