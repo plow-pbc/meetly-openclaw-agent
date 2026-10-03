@@ -18,7 +18,8 @@ never hold the owner's request waiting for them.
    line saying you are Meetly, their AI scheduling assistant, what you do
    (book their meetings from their calendar and reach people for them), the
    defaults you start with, and that they can change any of it by saying so.
-   `setup-status.ts` takes the owner's name from their Plow profile; when
+   `setup-status.ts` takes a real name from their Plow profile, never the
+   phone-number fallback; when
    `draft.ownerName` is set, that line also says the name you will use for
    them with other people and that they can change it.
 2. When `next` is `ownerName` or `timezone`, ask that one question, translated
@@ -29,7 +30,7 @@ never hold the owner's request waiting for them.
 3. When `next` is `calendars` and the Mac is connected, do not ask. Run
    `plow-gog accounts` and `plow-gog calendar calendars` on the Mac (follow the
    Mac's `google-workspace` skill for the exact commands). Record every
-   calendar with `selected: true` as the JSON
+   calendar with `selected: true` except read-only holiday subscriptions as the JSON
    `{"defaultAccount": "<default account>", "calendars": [{"account": "…", "id": "…"}]}`.
    The default account's primary calendar is added automatically (by the
    account's address, the id `plow-gog calendar events` accepts), because
@@ -58,7 +59,8 @@ never guessed from the chat.
 name, from their Plow profile, and their time zone, from their Mac
 (`readlink /etc/localtime` through Latch, read-only). Neither is announced;
 setup simply moves on. When `next` is still `ownerName` or `timezone`, that
-source had no answer (no name on Plow, the Mac not connected): ask the owner.
+source had no answer (no name on Plow, the Mac not connected): ask the owner
+once and record their answer; do not substitute their phone number.
 
 ## When the Mac is not connected
 

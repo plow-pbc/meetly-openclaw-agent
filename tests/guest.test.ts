@@ -767,3 +767,28 @@ for (const [origin, format, location, expected] of [
   assert.ok(!("error" in await guestAction(context, "pick", { start: f.request().offered[0]!.start })));
   assert.equal((await guestAction(context, "view") as { askDetails: boolean }).askDetails, false);
 });
+
+for (const question of ['"Should I bring the budget numbers?"', '“Should I bring the budget numbers?”', '\'“Should I bring the budget numbers?”\'']) test(`ask-owner quotes once: ${question}`, async t => {
+  const f = fixture(t);
+  await f.act(context, "ask_owner", { question });
+  assert.deepEqual(f.request().pendingOwner, { question: "Should I bring the budget numbers?", askedAt: new Date(now).toISOString() });
+  assert.deepEqual(f.ownerLines, ['Guest in your Lunch group asks: "Should I bring the budget numbers?" — what should I tell them?']);
+});
+
+
+test("guests can re-offer and book dinner but cannot widen its meal window", async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.meal = "dinner";
+  request.durationMin = 60;
+  request.constraints = { days: ["mon", "tue"], from: "2026-10-05", to: "2026-10-06" };
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { after: "17:00", before: "23:00" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  const offered = f.request().offered;
+  assert.equal(offered.length, 3);
+  assert.ok(offered.every(o => o.start.slice(11, 16) >= "18:00" && o.end.slice(11, 16) <= "21:00"));
+  const booked = await guestAction(context, "pick", { start: offered[0]!.start });
+  assert.ok(!("error" in booked), JSON.stringify(booked));
+  assert.equal(f.request().status, "booked");
+});

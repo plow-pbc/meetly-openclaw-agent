@@ -1,11 +1,12 @@
 import { offerRequest, type CalendarOptions } from "./calendar.ts";
 import { fetchBusy } from "./busy.ts";
+import { durationFor } from "./slots.ts";
 import { loadConfig } from "./config.ts";
 import { view } from "./request-view.ts";
 import type { NewRequest } from "./ledger.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<NewRequest, "handle" | "name" | "topic" | "constraints" | "proposed" | "format" | "location" | "locale"> & { allowOverlapTitles?: string[]; durationMin?: number; offered: { start: string; end: string }[] };
+type GroupRequest = Pick<NewRequest, "handle" | "name" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale"> & { allowOverlapTitles?: string[]; durationMin?: number; offered: { start: string; end: string }[] };
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, options: CalendarOptions = {}): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -15,7 +16,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
   try {
     const config = loadConfig();
     if (config.paused) return { error: "Scheduling is paused." };
-    const { handle, name, topic, durationMin, constraints, proposed, format, location, locale, offered } = args;
+    const { handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, offered } = args;
     let allowOverlap: string[] | undefined;
     if (args.allowOverlapTitles?.length) {
       const starts = offered.map(slot => Date.parse(slot.start)), ends = offered.map(slot => Date.parse(slot.end));
@@ -23,7 +24,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
       if (busy.degraded.length || busy.unknownAfter) throw new Error("calendar coverage incomplete");
       allowOverlap = busy.allowOverlap;
     }
-    const { request } = await offerRequest({ handle, name, topic, durationMin: durationMin ?? config.durationMin, constraints, proposed, format, location, locale, ...(allowOverlap ? { allowOverlap } : {}),
+    const { request } = await offerRequest({ handle, name, topic, meal, durationMin: durationFor({ config, meal, durationMin }), constraints, proposed, format, location, locale, ...(allowOverlap ? { allowOverlap } : {}),
       offered: offered.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),
       origin: "owner-group", chatUid: chat }, {
       ...options,

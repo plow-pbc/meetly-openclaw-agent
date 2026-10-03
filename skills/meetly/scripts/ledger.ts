@@ -37,6 +37,7 @@ export function intersectConstraints(owner: Constraints = {}, guest: Constraints
   };
 }
 
+export type Meal = "lunch" | "dinner" | "coffee";
 // How the meeting happens. `unknown` until the request or an answer says it.
 export type Format = "meet" | "in_person" | "phone" | "unknown";
 // The booked event's time, and the Google account it lives on.
@@ -55,6 +56,7 @@ export type Request = {
   topic: string;
   location?: string;
   durationMin: number;
+  meal?: Meal;
   // The owner's conditions, kept for every offer of this request.
   constraints?: Constraints;
   // Times the person proposed; only the first offer uses them.
@@ -194,6 +196,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   if (input.origin === "owner-group" && !input.chatUid) throw new Error("an owner-group request requires its chat uid");
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
   if (!Number.isInteger(input.durationMin) || input.durationMin <= 0) throw new Error("durationMin must be a positive whole number");
+  if (input.meal !== undefined && !["lunch", "dinner", "coffee"].includes(input.meal)) throw new Error("meal must be lunch, dinner or coffee");
   const status = input.status ?? "offered";
   if (status === "offered") checkOffers(input.offered);
   else if (status !== "asked") throw new Error(`a new request is asked or offered, got ${status}`);

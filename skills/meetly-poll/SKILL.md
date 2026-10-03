@@ -72,8 +72,8 @@ thread. For a message to the owner with no meeting thread, use
       release`.
    6. Run `contact.ts --handle <sender>` for their name, then `ledger.ts save
       --json` with `status: "asked"`, `origin: "inbound"`, `handle`, `name`,
-      `sourceRowid` = the request's rowid, `topic`, `durationMin` from the
-      config, `proposed` for any times they proposed, their `locale`, and
+      `sourceRowid` = the request's rowid, `topic`, `meal` if applicable, `durationMin` from the
+      explicit request or the meeting defaults in `meetly-group`, `proposed` for any times they proposed, their `locale`, and
       `format`: the format if their words say it (`meetly-group` "Meeting
       format"; otherwise `unknown`). No holds, no group, no message to them.
    7. If the save fails, stop processing senders. Run `cursor.ts set <the

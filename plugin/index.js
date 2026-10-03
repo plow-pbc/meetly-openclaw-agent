@@ -72,7 +72,7 @@ export function gateContext(stdout) {
       ]
       : [
         ...(status.next === "calendars"
-          ? ["- Do not ask which calendars to use: read them from the Mac and record every calendar with selected: true, as meetly-setup says."]
+          ? ["- Do not ask which calendars to use: read them from the Mac and record every calendar with selected: true except read-only holiday subscriptions, as meetly-setup says."]
           : []),
         "- Then run record-setup.ts --done, and carry out what the owner asked in this same turn.",
         "- If the owner asked for nothing yet, add one short line: tell me who to meet.",

@@ -261,7 +261,7 @@ test("guests route to their tool descriptions without loading skills or running 
 
 test("unmatched guest requests and acknowledgements do not alert the owner", () => {
   const p = flat(prompt);
-  assert.ok(p.includes("If no request matches, say so without alerting the owner"));
+  assert.ok(p.includes("If no request matches, a brief friendly introduction is fine"));
   assert.ok(p.includes("For unrelated acknowledgements, do not reply"));
   assert.ok(!groupSkill().includes("**No matching request:**"));
 });

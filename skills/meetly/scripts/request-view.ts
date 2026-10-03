@@ -26,7 +26,7 @@ export function view(request: Request, config: Config) {
   const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });
   return {
     askDetails, status: request.status, origin: request.origin, ownerName: config.ownerName, timezone: config.timezone,
-    topic: request.topic, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
+    topic: request.topic, meal: request.meal, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
     offered: request.status === "offered" ? request.offered.map(time) : [],
     ...(request.booked ? { booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
     ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
