@@ -137,18 +137,17 @@ test("setup fills the owner's name and time zone by itself and asks only when th
 test("recipient selection precedes calendar access and asks the owner to resolve ambiguity", () => {
   const group = groupSkill();
   const offer = group.slice(group.indexOf("## Offer times"), group.indexOf("## Owner request"));
-  assert.ok(offer.includes("Resolve exactly one recipient before any calendar read or hold"));
-  assert.ok(offer.includes("use the `asked` request's `handle` and `name`"));
+  assert.ok(offer.includes("Resolve one E.164 phone before any calendar read or hold"));
+  assert.ok(offer.includes("If none is known, ask the owner for a phone; if several match, ask which one. In either case, ask in the owner's main DM and end the turn."));
   const owner = group.slice(group.indexOf("## Owner request"), group.indexOf("## Asked requests"));
-  assert.ok(owner.includes("If the contact has several phones, ask the owner which one in this DM and end the turn"));
-  assert.ok(owner.includes("Use their email when there is no phone"));
-  assert.ok(owner.indexOf("ask the owner which one") < owner.indexOf("calendar read"));
+  assert.ok(owner.includes('resolve the recipient ("Offer times" step 1)'));
+  assert.doesNotMatch(group, /An iMessage email is a valid recipient|Use their email when there is no phone/);
 });
 
 test("every Meetly group is opened with plow_start_thread from the owner's DM", () => {
   const group = groupSkill();
   assert.ok(flat(prompt).includes("Meetly opens a group only with plow_start_thread, from the owner's main DM"));
-  assert.ok(group.includes("Otherwise, in the owner's DM, call `plow_start_thread` with `members: [\"<handle>\"]` and the opener as `body`."));
+  assert.ok(group.includes("Otherwise, in the owner's DM, call `plow_start_thread` with `members: [\"<resolved phone>\"]` and the opener as `body`."));
   assert.ok(group.includes("If delivery is unknown, continue without `chatUid` and tell the owner. Never resend."));
   assert.ok(flat(prompt).includes("Never send through the owner's Messages app or any iMessage tool on their Mac."));
   const all = [prompt, ...skillFiles.map((s) => readFileSync(s.path, "utf8"))].map(flat).join(" ");

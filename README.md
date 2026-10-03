@@ -224,8 +224,8 @@ Meetly reads your messages, so use it on an install only you talk to.
 
 - Only direct iMessage chats; group chats and email requests are not read.
 - One person per request.
-- An iMessage email can be a group recipient. If the base tool refuses it,
-  Meetly tells you and releases the new holds.
+- Groups require a phone number; Meetly asks you for one before reading the
+  calendar or creating holds if only an email is known.
 - Rescheduling or cancelling a meeting that is already booked is left to you.
 - If the model provider is unreachable, that five-minute check is skipped and
   the next one catches up from the same cursor.

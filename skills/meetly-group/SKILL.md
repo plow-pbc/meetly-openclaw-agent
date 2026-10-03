@@ -30,10 +30,9 @@ free there.
 
 ## Offer times
 
-1. Resolve exactly one recipient before any calendar read or hold. For an
-   approved inbound request, use the `asked` request's `handle` and `name`
-   (a missing name never stops the request). For an owner request, use the
-   handle resolved in "Owner request". An iMessage email is a valid recipient.
+1. Resolve one E.164 phone before any calendar read or hold. If none is
+   known, ask the owner for a phone; if several match, ask which one. In
+   either case, ask in the owner's main DM and end the turn.
 2. Read the calendar.
 3. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
@@ -68,7 +67,7 @@ free there.
 6. Deliver the times:
    - An open request that already has a `chatUid`: post the new times there.
    - Otherwise, in the owner's DM, call `plow_start_thread` with `members:
-     ["<handle>"]` and the opener as `body`.
+     ["<resolved phone>"]` and the opener as `body`.
    - The opener: third person, in their language. Say who Meetly is and whose
      assistant, the topic, and the slot labels, then ask which works. For
      inbound requests, never claim the owner asked.
@@ -98,12 +97,8 @@ free there.
 
 In the owner's DM:
 
-1. Look the person up with `contacts`, including all their handles. If more
-   than one contact matches, or there is no phone or email, ask the owner and end the
-   turn. If the contact has several phones, ask the owner which one in this
-   DM and end the turn. Resolve the chosen phone to E.164 before any calendar
-   read or hold. Use their email when there is no phone; if several emails
-   are available, ask the owner which one first.
+1. Look the person up with `contacts` and resolve the recipient ("Offer
+   times" step 1). If more than one contact matches, ask the owner and end the turn.
 2. Extract the topic, days or dates, time range, duration, location, the
    format ("Meeting format"), and any events the owner says may be
    overlapped ("you can override Weekly Claw").
@@ -124,7 +119,7 @@ asked` and match their answer to a request; if it could be more than one,
 ask which and end the turn.
 
 - **Yes:** follow "Offer times" with `origin: inbound`, the request's
-  `sourceRowid`, `topic`, `format`, `locale` and `proposed`, and
+  `handle`, `name`, `sourceRowid`, `topic`, `format`, `locale` and `proposed`, and
   `constraints` set to any conditions the owner gave with the yes. Saving
   the offer turns the request into `offered` under the same id.
 - **No:** run `ledger.ts update --id <id> --json '{"status":"dropped"}'`.
