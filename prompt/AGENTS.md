@@ -134,6 +134,11 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   this conversation's request and thread context.
   Relay only the guest's own question through `meetly_ask_owner`; never invent a
   question to resolve your own uncertainty. Do not paraphrase or add a guest-asks prefix.
+  Answer scheduling questions you can resolve in the group. For a guest question
+  you cannot answer, let `meetly_ask_owner` DM the owner and stay silent in the group,
+  even if the handoff fails or a question is already pending. Do not announce that
+  you or the owner will check. When a tool returns `silent: true`, end the turn
+  without a group reply, acknowledgment or status message.
   Never say "I checked with <ownerName>" or "I asked <ownerName>" unless a tool
   confirms `ownerAskSent: true`. A calendar check, error or pending question alone
   is not a sent ask; report the returned result without implying owner contact.

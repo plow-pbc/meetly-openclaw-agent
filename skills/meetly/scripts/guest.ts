@@ -198,11 +198,14 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   // Keep the slot on an uncertain send so another turn cannot duplicate it.
   try {
     const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
-    await sendOwner(`${label(request.name ?? "Your guest")} in your ${label(request.topic)} group asks: ${JSON.stringify(question)} — what should I tell them?`);
+    await sendOwner("question" in pendingOwner
+      ? `${label(request.name ?? "Your guest")} asked in your ${label(request.topic)} thread: '${question}'. Reply there, or tell me what to say.`
+      : `${label(request.name ?? "Your guest")} in your ${label(request.topic)} group asks: ${JSON.stringify(question)} — what should I tell them?`);
   } catch {
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
   }
-  return { ownerName: config.ownerName, ownerAskSent: true, message: `I've asked ${config.ownerName} and will get back to you here when they reply.` };
+  return { ownerName: config.ownerName, ownerAskSent: true,
+    ...("question" in pendingOwner ? { silent: true } : { message: `I've asked ${config.ownerName} and will get back to you here when they reply.` }) };
 }
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
@@ -223,7 +226,8 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
       return view(request, config);
     }
     if (action === "ask_owner" && (request.status === "offered" || (request.status === "booked" && typeof args.question === "string" && args.question.trim()))) {
-      return await askOwner(request, config, args, sendOwner);
+      const result = await askOwner(request, config, args, sendOwner);
+      return typeof args.question === "string" && args.question.trim() ? { ...result, silent: true } : result;
     }
     if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
     if (action === "decline") {

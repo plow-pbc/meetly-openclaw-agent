@@ -225,7 +225,7 @@ disclose private information.
   `requestId`, `askedAt` from that pending question, and `text` phrased as Meetly
   relaying the owner's answer. From the DM, it sends to the recorded group and
   clears that question only after the send succeeds. In the same group, the
-  owner's answer is already visible: it clears without sending; acknowledge briefly.
+  owner's answer is already visible: it clears silently without sending or acknowledging.
   Never send the answer separately. If delivery is unknown, tell the owner;
   do not resend automatically. Only if the owner explicitly authorizes a retry,
   run `ledger.ts delivery --id <id> --kind answer --action clear` before calling

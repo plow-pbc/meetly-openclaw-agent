@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { POLL_MESSAGE } from "../skills/meetly/scripts/register-crons.ts";
-import { registerOwnerGroupTool } from "../plugin/owner-tools.js";
+import { registerOwnerGroupTool, registerOwnerTools } from "../plugin/owner-tools.js";
+import { registerGuestTools } from "../plugin/guest-tools.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SKILLS = join(ROOT, "skills");
@@ -286,6 +287,20 @@ test("meeting confirmations stay in the group while pending questions route priv
   assert.ok(group.includes("clears that question only after the send succeeds"));
   assert.ok(group.includes("Never send the answer separately"));
   assert.ok(flat(prompt).includes("asks go privately through `meetly_ask_owner`"));
+});
+
+test("unanswerable guest questions and owner answers in the thread stay silent", () => {
+  const descriptions = new Map<string, string>();
+  const api = { registerTool(factory: (ctx: object) => { name: string; description: string }) {
+    const tool = factory({}); descriptions.set(tool.name, tool.description);
+  } };
+  registerGuestTools(api);
+  registerOwnerTools(api);
+  assert.match(descriptions.get("meetly_ask_owner")!, /Scheduling questions you can answer stay in the group/);
+  assert.match(descriptions.get("meetly_ask_owner")!, /For question handoffs, stay silent in the group/);
+  assert.match(descriptions.get("meetly_answer_owner")!, /clears silently without sending or acknowledging/);
+  assert.ok(flat(prompt).includes("When a tool returns `silent: true`, end the turn without a group reply"));
+  assert.ok(groupSkill().includes("clears silently without sending or acknowledging"));
 });
 
 test("owner-started groups introduce Meetly and name the owner in the first reply or offer", () => {

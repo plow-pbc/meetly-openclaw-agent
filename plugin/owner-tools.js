@@ -8,7 +8,7 @@ const run = async (context, args, send) => {
 export function registerOwnerTools(api, execute = run, outbound) {
   api.registerTool(context => ({
     name: "meetly_answer_owner", label: "Answer a meeting question",
-    description: "Resolve a pending meeting question from the owner's own answer. First match ledger.ts pending by person and topic. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. In that same group, the owner's answer is already visible: clears without sending, then acknowledge briefly. Owner only. Time approvals use the booking flow instead.",
+    description: "Resolve a pending meeting question from the owner's own answer. First match ledger.ts pending by person and topic. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. In that same group, the owner's answer is already visible: clears silently without sending or acknowledging. When silent is true, end the turn without a group reply. Owner only. Time approvals use the booking flow instead.",
     parameters: {
       type: "object", additionalProperties: false, required: ["requestId", "askedAt", "text"],
       properties: {
