@@ -44,11 +44,10 @@ bounds and weekday requirements as `constraints`; for a request started here,
 suggested dates/times are `proposed` and only explicit non-relaxable conditions
 are `constraints`. Carry constraints into every re-offer unless the owner changes them.
 
-Default lunch to 11:30–13:30 and dinner to 18:00–21:00, both 60 minutes;
-coffee to morning or afternoon in the owner's window, 30 minutes (45 if requested);
-otherwise use the owner's window and `config.durationMin`. Explicit duration wins.
 Pass `--meal lunch|dinner|coffee` to `slots.ts`, including `--at`, and save `meal`.
-Lunch/dinner windows replace working hours; the owner's allowed days still apply.
+The script resolves the meal window and duration; an explicit `--duration` wins.
+Persist the search result's `durationMin` with its offered slots, rather than
+computing a duration yourself.
 
 1. Resolve one E.164 phone before any calendar read or hold. If none is
    known, ask the owner for a phone; if several match, ask which one. In
@@ -78,8 +77,8 @@ Lunch/dinner windows replace working hours; the owner's allowed days still apply
    pass `allowOverlapTitles` with only the event names the owner explicitly
    authorized. The tool resolves matching event ids internally and merges them
    with saved authorizations before creating replacement holds.
-   Omit `durationMin` unless explicitly specified. It resolves the meal or configured
-   duration and calendar account internally, records the exact runtime chat uid
+   Pass the search result's `durationMin`. The tool resolves the meal or configured
+   duration when absent and the calendar account internally, records the exact runtime chat uid
    and returns only group-safe offer fields. Otherwise run `calendar.ts offer --json '<request>'` with `origin`, `handle` (the
    resolved phone), `name`, `sourceRowid`, `chatUid` if already known, `topic`,
    `location`, `meal` if applicable, `durationMin`, `constraints` (the owner's conditions), `proposed`,
@@ -253,7 +252,7 @@ If no request matches and the group is exactly the owner, one other member
 and Meetly, the owner's scheduling ask is a request for that member. Use
 the member's handle and known name from the conversation,
 the owner's words for topic and conditions, and thread context for format and
-place. Omit duration unless the owner specifies it; the tool uses the meal or configured default. Preferred dates/times go
+place. Use the search result's `durationMin`; the tool resolves the meal or configured default when absent. Preferred dates/times go
 in `proposed`; explicit non-relaxable conditions go in `constraints`. Follow
 "Offer times" from step 2, using `meetly_offer_owner_group` to record and hold
 this request. Reply here, never open a new thread or DM the owner. An existing
