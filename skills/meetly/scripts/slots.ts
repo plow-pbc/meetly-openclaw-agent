@@ -46,7 +46,7 @@ function windowFor(config: Config, meal?: Meal): [number, number] {
 }
 
 export function durationFor(q: { config: Config; meal?: Meal; durationMin?: number }): number {
-  return q.durationMin ?? (q.meal === "lunch" || q.meal === "dinner" ? 60 : q.config.durationMin);
+  return q.durationMin ?? (q.meal === "lunch" || q.meal === "dinner" ? 60 : q.meal === "coffee" ? 30 : q.config.durationMin);
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -68,7 +68,7 @@ function label(ms: number, tz: string, format?: Intl.DateTimeFormat): string {
   return `${p.weekday} ${p.d}/${p.m} ${pad(p.hh)}:${pad(p.mm)}`;
 }
 
-export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string } {
+export function findSlots(q: SlotQuery): { slots: Slot[]; durationMin: number; unknownAfter?: string } {
   const { config, now } = q;
   const tz = config.timezone;
   const duration = durationFor(q);
@@ -133,7 +133,7 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string 
     dayOfWeek: c.day,
     label: label(c.start, tz, format),
   }));
-  return q.unknownAfter !== undefined ? { slots, unknownAfter: q.unknownAfter } : { slots };
+  return { slots, durationMin: duration, ...(q.unknownAfter !== undefined ? { unknownAfter: q.unknownAfter } : {}) };
 }
 
 export type TimeCheck = {

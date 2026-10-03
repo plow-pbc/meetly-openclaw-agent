@@ -235,7 +235,7 @@ test("lunch and dinner override working hours; coffee keeps the owner's window a
   assert.equal(checkTime({ ...query, meal: "dinner", start: slots[0]!.start }).outsideHours, false);
   assert.equal(checkTime({ ...query, meal: "dinner", start: "2026-09-28T21:00:00-03:00" }).outsideHours, true);
   assert.deepEqual(findSlots({ ...query, meal: "dinner", days: ["sat"] }).slots, []);
-  const coffee = q({ config: { ...CONFIG, windowStart: "17:00", windowEnd: "19:00" }, meal: "coffee" });
+  const coffee = q({ config: { ...CONFIG, durationMin: 45, windowStart: "17:00", windowEnd: "19:00" }, meal: "coffee" });
   const first = findSlots(coffee).slots[0]!;
   assert.equal(first.start, "2026-09-28T17:00:00-03:00");
   assert.equal(Date.parse(first.end) - Date.parse(first.start), 30 * 60_000);
@@ -243,25 +243,27 @@ test("lunch and dinner override working hours; coffee keeps the owner's window a
   assert.equal(checkTime({ ...coffee, start: "2026-09-28T09:00:00-03:00" }).outsideHours, true);
 });
 
-for (const meal of ["lunch", "dinner"] as const) {
-  test(`the CLI defaults ${meal} to 60 minutes for searches and exact times, with explicit duration taking precedence`, () => {
+for (const meal of ["lunch", "dinner", "coffee"] as const) {
+  const defaultDuration = meal === "coffee" ? 30 : 60;
+  test(`the CLI defaults ${meal} to ${defaultDuration} minutes for searches and exact times, with explicit duration taking precedence`, () => {
     const home = tmpHome();
-    writeJson(join(home, "config.json"), CONFIG);
+    writeJson(join(home, "config.json"), { ...CONFIG, durationMin: 45 });
     const busyFile = join(home, "busy.json");
     writeJson(busyFile, { busy: [], degraded: [] });
     const args = ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--meal", meal];
-    const start = meal === "lunch" ? "2026-09-28T11:30:00-03:00" : "2026-09-28T18:00:00-03:00";
+    const start = meal === "lunch" ? "2026-09-28T11:30:00-03:00" : meal === "dinner" ? "2026-09-28T18:00:00-03:00" : "2026-09-28T10:00:00-03:00";
     for (const mode of [[], ["--at", start]]) {
       for (const duration of [undefined, 45]) {
         const result = cli("slots.ts", [...args, ...mode, ...(duration === undefined ? [] : ["--duration", String(duration)])], { MEETLY_HOME: home });
         assert.equal(result.status, 0, result.stderr);
         const slot = mode.length ? result.json.slot : result.json.slots[0];
         assert.equal(slot.start, start);
-        assert.equal((Date.parse(slot.end) - Date.parse(slot.start)) / 60_000, duration ?? 60);
+        assert.equal((Date.parse(slot.end) - Date.parse(slot.start)) / 60_000, duration ?? defaultDuration);
+        if (!mode.length) assert.equal(result.json.durationMin, duration ?? defaultDuration);
       }
     }
     writeJson(busyFile, { busy: [{
-      start: new Date(Date.parse(start) + 30 * 60_000).toISOString(),
+      start: new Date(Date.parse(start) + (defaultDuration - 15) * 60_000).toISOString(),
       end: new Date(Date.parse(start) + 60 * 60_000).toISOString(),
     }], degraded: [] });
     const blocked = cli("slots.ts", [...args, "--at", start], { MEETLY_HOME: home });

@@ -297,7 +297,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
 }
 
 function detailsQuestion(request: Request): string | null {
-  if (request.status !== "offered" || request.origin === "owner-group" || request.detailsAskedAt || request.startedAt || request.chatUid) return null;
+  if (request.origin === "owner-group" || request.detailsAskedAt) return null;
   if (!request.format || request.format === "unknown") return "How would you like to meet?";
   return request.format === "in_person" && !request.location?.trim() ? "Where would you like to meet?" : null;
 }
