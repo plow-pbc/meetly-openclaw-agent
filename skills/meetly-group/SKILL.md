@@ -32,9 +32,22 @@ The reader checks every calendar in the config on the Mac itself and writes `/va
 `{file, busy, degraded, unknownAfter?}`. Never run `plow-gog calendar events`
 yourself or copy a calendar listing into a file. An account in `degraded`
 could not be read: `slots.ts` reports it, and you never claim the owner is
-free there.
+free there. A read-only holiday subscription is not a conflict warning:
+omit that notice on a successful write. Other unread calendars and actual
+write failures still need attention; never override a real conflict.
 
 ## Offer times
+
+Resolve relative dates in the owner's timezone. In the owner's DM, save date
+bounds and weekday requirements as `constraints`; for a request started here,
+suggested dates/times are `proposed` and only explicit non-relaxable conditions
+are `constraints`. Carry constraints into every re-offer unless the owner changes them.
+
+Default lunch to 11:30–13:30 and dinner to 18:00–21:00, both 60 minutes;
+coffee to morning or afternoon in the owner's window, 30 minutes (45 if requested);
+otherwise use the owner's window and `config.durationMin`. Explicit duration wins.
+Pass `--meal lunch|dinner|coffee` to `slots.ts`, including `--at`, and save `meal`.
+Lunch/dinner windows replace working hours; the owner's allowed days still apply.
 
 1. Resolve one E.164 phone before any calendar read or hold. If none is
    known, ask the owner for a phone; if several match, ask which one. In
@@ -49,7 +62,7 @@ free there.
    locale>`, with the request's `constraints` (the owner's) and, on its
    first offer, its `proposed` times: `--days`, `--after`, `--before`,
    `--from`/`--to`, `--duration`, `--allow-overlap`. Slots stay inside the
-   owner's days and window; constraints only narrow them.
+   owner's days and meeting window; constraints only narrow them.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
      For an owner-started request here, say "<ownerName> isn't free then"
@@ -67,7 +80,7 @@ free there.
    duration and calendar account internally, records the exact runtime chat uid
    and returns only group-safe offer fields. Otherwise run `calendar.ts offer --json '<request>'` with `origin`, `handle` (the
    resolved phone), `name`, `sourceRowid`, `chatUid` if already known, `topic`,
-   `location`, `durationMin`, `constraints` (the owner's conditions), `proposed`,
+   `location`, `meal` if applicable, `durationMin`, `constraints` (the owner's conditions), `proposed`,
    `allowOverlap`, `format`, `locale`, and `offered[]` with each slot's
    `start`/`end` and `account: config.defaultAccount`. Do not supply hold ids.
 5. The writer creates the holds and saves the offer under the existing request
@@ -87,10 +100,7 @@ free there.
    - The opener: third person, in their language. Say who Meetly is and whose
      assistant, the topic, and the slot labels, then ask which works. For
      inbound requests, never claim the owner asked.
-   - Following "Meeting format", when `format` is `unknown`, the same opener also asks how they would
-     like to meet: Google Meet or in person. When it is `in_person` with no
-     `location`, it asks where. Always in that one message, never a second
-     one.
+   - Follow the prompt's "Meeting details" rule for missing format/place.
    - If `plow_start_thread` definitely fails, tell the owner what it said and stop.
      Run `calendar.ts drop --id <id>`; it records any failed hold deletes
      for the cleanup poll.
@@ -139,7 +149,7 @@ asked` and match their answer to a request; if it could be more than one,
 ask which and end the turn.
 
 - **Yes:** follow "Offer times" with `origin: inbound`, the request's
-  `name`, `sourceRowid`, `topic`, `format`, `locale` and `proposed`, and
+  `name`, `sourceRowid`, `topic`, `meal`, `format`, `locale` and `proposed`, and
   `constraints` set to any conditions the owner gave with the yes. Saving
   the offer turns the request into `offered` under the same id.
 - **No:** run `calendar.ts drop --id <id>`.
@@ -167,13 +177,7 @@ used for `slots.ts --locale`.
 An answer that arrives before booking is recorded with
 `ledger.ts update --id <id> --json '{"format":"<format>","location":"<place>"}'`
 (drop `location` when there is none). A later answer replaces an earlier
-one. Never ask about the format twice in a row: once in the opener, and once
-after booking if the pick did not answer it.
-
-For a request with `origin: "owner-group"`, never ask the guest for missing
-details. Use the thread context for format and place; otherwise leave them
-unknown and let the owner supply them. This overrides every format question
-in the offering and booking flows; missing details do not block scheduling.
+one. Follow the prompt's "Meeting details" rule for any missing details.
 
 ## Book the event
 
@@ -220,9 +224,8 @@ disclose private information.
   2. If it is still free, pass its start and end to the writer, following
      "Book the event". It records the booking and clears `pendingOwner`.
   3. The writer releases the request's other holds.
-  4. If the format is still `unknown`, ask it in the group, once.
-  5. Confirm once in the group for both the owner and guest.
-  6. If it is no longer free, explain in the group, and offer new
+  4. Confirm once in the group for both the owner and guest.
+  5. If it is no longer free, explain in the group, and offer new
      times; clear the answered approval with `{"pendingOwner":null}`.
 - **No:** tell the group that time doesn't work for the owner, and offer the
   current times or new ones. After the send succeeds, clear it with
@@ -254,7 +257,9 @@ are out of scope. A booked or closed request is not a no-match.
 - **A requested time is busy:** follow the "Owner request" nearest-time
   fallback, keeping this request's conditions and replying in this group.
 - **Other times:** follow "Offer times", carrying the request's conditions
-  and any changes the owner gives. The writer keeps the old offer until its
+  and any changes the owner gives. Use `--request <id>` to keep saved date bounds
+  and exclude its own holds; pass `--duration` for a changed length. Merge
+  explicit condition changes with `ledger.ts update` before searching. The writer keeps the old offer until its
   replacement commits.
 - **Format or place after booking:** run `calendar.ts format --id <id>
   --json '{"format":"<format>","location":"<place>"}'`, following "Book the event"
@@ -267,8 +272,7 @@ are out of scope. A booked or closed request is not a no-match.
 
 Confirm once in the group: day, time, whether an invitation was sent, and how
 they will meet. For `meet`, say the link will be posted here 10 minutes before.
-Do not paste the link now. For `unknown` (or `in_person` with no place), ask
-how or where to meet once. If the writer warns `no-meet-link`, say no reminder
+Do not paste the link now or ask for missing details. If the writer warns `no-meet-link`, say no reminder
 will go out. The group confirmation also notifies the owner.
 
 ## Holds

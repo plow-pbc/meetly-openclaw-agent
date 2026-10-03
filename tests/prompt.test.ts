@@ -180,9 +180,9 @@ test("the format is read only from explicit words, and ambiguous ones are asked"
   assert.ok(group.includes("Anything else is `unknown`, including \"call\", \"ligação\""));
   assert.ok(group.includes("\"coffee\" or \"lunch\" with no place"));
   assert.ok(group.includes("Never guess from the topic"));
-  assert.ok(group.includes("when `format` is `unknown`, the same opener also asks how they would like to meet"));
-  assert.ok(group.includes("Always in that one message, never a second one"));
-  assert.ok(group.includes("Never ask about the format twice in a row"));
+  assert.ok(flat(prompt).includes("at most once, in the opener alongside the times; never once settled or after booking"));
+  assert.ok(flat(prompt).includes("`origin: \"owner-group\"`"));
+  assert.doesNotMatch(group, /ask it in the group, once|ask how or where to meet once/);
   assert.ok(pollSkill().includes("the format if their words say it"));
 });
 
@@ -261,7 +261,7 @@ test("guests route to their tool descriptions without loading skills or running 
 
 test("unmatched guest requests and acknowledgements do not alert the owner", () => {
   const p = flat(prompt);
-  assert.ok(p.includes("If no request matches, say so without alerting the owner"));
+  assert.ok(p.includes("If no request matches, a brief friendly introduction is fine"));
   assert.ok(p.includes("For unrelated acknowledgements, do not reply"));
   assert.ok(!groupSkill().includes("**No matching request:**"));
 });

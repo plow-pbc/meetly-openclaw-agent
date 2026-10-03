@@ -59,7 +59,7 @@ export function view(request: Request, config: Config) {
   const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });
   return {
     status: request.status, origin: request.origin, ownerName: config.ownerName, timezone: config.timezone,
-    topic: request.topic, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
+    topic: request.topic, meal: request.meal, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
     offered: request.status === "offered" ? request.offered.map(time) : [],
     ...(request.booked ? { booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
     ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
@@ -111,7 +111,7 @@ function withinConditions(request: Request, start: string, config: Config): bool
 }
 
 async function check(request: Request, config: Config, start: string) {
-  const query = { now: Date.now(), config, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
+  const query = { now: Date.now(), config, meal: request.meal, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
   const { slot } = checkTime({ ...query, busy: [] });
   const busy = await busyFor(request, config, slot.start, slot.end);
   const checked = checkTime({ ...query, ...busy });
@@ -148,14 +148,14 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   const busy = await busyFor(request, config, localIso(now, config.timezone), localIso(now + (config.horizonDays + 1) * 86_400_000, config.timezone));
   const narrowed = intersectConstraints(request.constraints, preferred);
   const query: SlotQuery = { ...busy, ...narrowed, days: narrowed.days as Day[] | undefined, now, config,
-    durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
+    meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
   let { slots } = findSlots(query);
   const preferencesUnavailable = slots.length === 0;
   if (preferencesUnavailable) slots = findSlots({ ...query, ...intersectConstraints(request.constraints), days: request.constraints?.days as Day[] | undefined }).slots;
   if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
-  const { origin, handle, name, sourceRowid, chatUid, topic, location, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
+  const { origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {
-    origin, handle, name, sourceRowid, chatUid, topic, location, durationMin, constraints, proposed, allowOverlap, format, locale,
+    origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
     offered: slots.map(slot => ({ start: slot.start, end: slot.end, account: config.defaultAccount })),
   } })).request;
   return { ...view(request, config), preferencesUnavailable };
@@ -174,7 +174,11 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   const askedAt = new Date(Date.now()).toISOString();
   if (args.question !== undefined) {
     if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
-    question = args.question.replace(/\s+/g, " ").trim().slice(0, OWNER_QUESTION_LIMIT);
+    question = args.question.replace(/\s+/g, " ").trim();
+    const closingQuote: Record<string, string> = { '"': '"', "'": "'", "“": "”", "‘": "’" };
+    while (question.length >= 2 && closingQuote[question[0]!] === question.at(-1)) question = question.slice(1, -1).trim();
+    if (!question) return { error: "Provide a question about this meeting." };
+    question = question.slice(0, OWNER_QUESTION_LIMIT);
     pendingOwner = { question, askedAt };
   } else {
     const checked = await check(request, config, args.start!);

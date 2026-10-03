@@ -1,16 +1,15 @@
-// Free times to offer: the owner's days and window, in the owner's zone,
+// Free times to offer: the owner's days and the meeting's window, in the owner's zone,
 // clear of busy time, at least MIN_NOTICE_MIN ahead, spread across days.
 // The label and weekday come from here so the agent never computes a weekday.
-// A request only narrows the owner's days and window. A time outside them is
-// never offered: when the other person can only do such a time, --at checks
-// it and the owner must confirm it before anything is held or booked.
+// Lunch and dinner use their own windows; request preferences only narrow them. Outside
+// that window or the owner's days, --at requires owner confirmation.
 // With a locale (the other person's, e.g. pt-BR or en-US) the label follows
 // that locale's date and time conventions; without one it is "tue 29/9 12:00".
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
 import type { Busy } from "./busy.ts";
-import { intersectConstraints, type Ledger } from "./ledger.ts";
+import { intersectConstraints, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { addDays, DAYS, localIso, wallParts, zonedToUtc, type Day } from "./time.ts";
@@ -23,6 +22,7 @@ export type SlotQuery = {
   busy: Busy[];
   unknownAfter?: string;
   durationMin?: number;
+  meal?: Meal;
   days?: Day[];
   after?: string;
   before?: string;
@@ -34,6 +34,20 @@ export type SlotQuery = {
   near?: string;
   locale?: string;
 };
+
+const MEAL_WINDOWS: Partial<Record<Meal, [string, string]>> = {
+  lunch: ["11:30", "13:30"], dinner: ["18:00", "21:00"],
+};
+
+function windowFor(config: Config, meal?: Meal): [number, number] {
+  const window = meal ? MEAL_WINDOWS[meal] : undefined;
+  const [start, end] = window ?? [config.windowStart, config.windowEnd];
+  return [minutes(start!), minutes(end!)];
+}
+
+export function durationFor(q: { config: Config; meal?: Meal; durationMin?: number }): number {
+  return q.durationMin ?? (q.meal === "lunch" || q.meal === "dinner" ? 60 : q.config.durationMin);
+}
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -57,13 +71,12 @@ function label(ms: number, tz: string, format?: Intl.DateTimeFormat): string {
 export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string } {
   const { config, now } = q;
   const tz = config.timezone;
-  const duration = q.durationMin ?? config.durationMin;
+  const duration = durationFor(q);
   const count = q.count ?? SLOT_COUNT;
   const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], start: q.near }).slot.start);
 
   const days = q.days ? config.days.filter((d) => q.days!.includes(d)) : config.days;
-  let startMin = minutes(config.windowStart);
-  let endMin = minutes(config.windowEnd);
+  let [startMin, endMin] = windowFor(config, q.meal);
   if (q.after) startMin = Math.max(startMin, minutes(q.after));
   if (q.before) endMin = Math.min(endMin, minutes(q.before));
   startMin = Math.ceil(startMin / STEP_MIN) * STEP_MIN;
@@ -141,6 +154,7 @@ export function checkTime(q: {
   start: string;
   unknownAfter?: string;
   durationMin?: number;
+  meal?: Meal;
   allowOverlap?: string[];
   locale?: string;
 }): TimeCheck {
@@ -151,12 +165,13 @@ export function checkTime(q: {
     ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz)
     : Date.parse(q.start);
   if (Number.isNaN(start)) throw new Error(`not a time: ${q.start}`);
-  const end = start + (q.durationMin ?? q.config.durationMin) * 60_000;
+  const end = start + durationFor(q) * 60_000;
   const s = wallParts(start, tz);
   const e = wallParts(end, tz);
   const sameDay = s.y === e.y && s.m === e.m && s.d === e.d;
+  const [windowStart, windowEnd] = windowFor(q.config, q.meal);
   const outsideHours = !q.config.days.includes(s.weekday) || !sameDay ||
-    s.hh * 60 + s.mm < minutes(q.config.windowStart) || e.hh * 60 + e.mm > minutes(q.config.windowEnd);
+    s.hh * 60 + s.mm < windowStart || e.hh * 60 + e.mm > windowEnd;
   const allowed = new Set(q.allowOverlap ?? []);
   let reason: TimeCheck["reason"];
   if (q.unknownAfter !== undefined && end > Date.parse(q.unknownAfter)) reason = "unknown";
@@ -186,6 +201,7 @@ if (isMain(import.meta.url)) {
         in: { type: "string" },
         request: { type: "string" },
         duration: { type: "string" },
+        meal: { type: "string" },
         days: { type: "string" },
         after: { type: "string" },
         before: { type: "string" },
@@ -201,6 +217,8 @@ if (isMain(import.meta.url)) {
       },
     });
     const config = loadConfig();
+    if (values.meal !== undefined && !["lunch", "dinner", "coffee"].includes(values.meal)) throw new Error("--meal must be lunch, dinner or coffee");
+    const meal = values.meal as Meal | undefined;
     const input = JSON.parse(readInput(values.in !== undefined ? [values.in] : [])[0]!) as {
       busy?: Busy[];
       allowOverlap?: string[];
@@ -215,14 +233,14 @@ if (isMain(import.meta.url)) {
       for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "request"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
-      const check: Parameters<typeof checkTime>[0] = { now, config, busy: input.busy, start: values.at, allowOverlap: input.allowOverlap };
+      const check: Parameters<typeof checkTime>[0] = { now, config, meal, busy: input.busy, start: values.at, allowOverlap: input.allowOverlap };
       if (input.unknownAfter !== undefined) check.unknownAfter = input.unknownAfter;
       if (values.duration !== undefined) check.durationMin = positiveInt(values.duration, "--duration");
       if (values["allow-overlap"]) check.allowOverlap = values["allow-overlap"];
       if (values.locale !== undefined) check.locale = values.locale;
       return { ...checkTime(check), degraded };
     }
-    const q: SlotQuery = { now, config, busy: input.busy, allowOverlap: input.allowOverlap };
+    const q: SlotQuery = { now, config, meal, busy: input.busy, allowOverlap: input.allowOverlap };
     if (input.unknownAfter !== undefined) q.unknownAfter = input.unknownAfter;
     if (values.duration !== undefined) q.durationMin = positiveInt(values.duration, "--duration");
     if (values.count !== undefined) q.count = positiveInt(values.count, "--count");
@@ -249,6 +267,7 @@ if (isMain(import.meta.url)) {
       if (!request || request.status !== "offered") throw new Error("--request needs an offered request");
       const narrowed = intersectConstraints(request.constraints, q);
       Object.assign(q, narrowed);
+      q.meal = request.meal;
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
       q.allowOverlap = request.allowOverlap;
