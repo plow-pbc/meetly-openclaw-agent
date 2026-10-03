@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
-import { calendarAction, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
+import { calendarAction, pendingCalendarWrites, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
 import { addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import type { MacCommand, MacOutcome } from "../skills/meetly/scripts/mac.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
@@ -122,6 +122,63 @@ test("an unknown create that is not visible remains unresolved, blocking another
   assert.equal(creates, 1);
   assert.deepEqual(f.read().offered, f.input.offered);
 });
+
+test("an unresolved create times out, releases the request and deletes a late event by its marker", async t => {
+  const f = fixture(t);
+  let clock = now, saved!: MacCommand, creates = 0;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] !== "create") return f.command(cmd);
+    if (++creates === 1) return f.command(cmd);
+    saved = cmd;
+    return { handle: "late-create" };
+  };
+  const options = { ...f.options, command, now: () => clock, poll: async () => ({ handle: "late-create" }) };
+  await assert.rejects(calendarAction("r_one", { action: "offer", request: f.offer }, options), /unresolved/);
+  clock += 9 * 60_000;
+  await assert.rejects(calendarAction("r_one", { action: "resume" }, options), /unresolved/);
+  clock += 60_000;
+  await assert.rejects(calendarAction("r_one", { action: "resume" }, options), /previous offer retained/);
+  assert.deepEqual(pendingCalendarWrites(), []);
+  assert.deepEqual(f.read().offered, f.input.offered);
+  assert.equal(f.events.get("new-1").status, "cancelled");
+  const token = saved.argv[saved.argv.indexOf("--private-prop") + 1]!.split("=")[1];
+  assert.deepEqual(f.read().holdCleanup, [{ token, account, start: f.offer.offered[1]!.start, end: f.offer.offered[1]!.end }]);
+  await calendarAction("r_one", { action: "cleanup" }, f.options);
+  assert.equal(f.read().holdCleanup!.length, 1);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  await f.command(saved);
+  await calendarAction("r_one", { action: "cleanup" }, f.options);
+  assert.equal(f.events.get("new-2").status, "cancelled");
+  assert.equal(f.events.get("hold-one").status, "confirmed");
+  assert.deepEqual(f.read().holdCleanup, []);
+  assert.equal(creates, 2);
+});
+
+for (const conflicting of [[0], [1], [0, 1]]) {
+  test(`offer skips conflicting slots ${conflicting.join(",")} and fails only when none survive`, async t => {
+    const f = fixture(t);
+    for (const index of conflicting) {
+      const slot = f.offer.offered[index]!;
+      f.events.set(`busy-${index}`, { id: `busy-${index}`, status: "confirmed", start: { dateTime: slot.start }, end: { dateTime: slot.end } });
+    }
+    const offer = calendarAction("r_one", { action: "offer", request: f.offer }, f.options);
+    if (conflicting.length === f.offer.offered.length) {
+      await assert.rejects(offer, /previous offer retained/);
+      assert.deepEqual(f.read().offered, f.input.offered);
+      assert.equal(f.events.get("hold-one").status, "confirmed");
+      assert.equal(f.events.get("hold-two").status, "confirmed");
+    } else {
+      const result = await offer;
+      assert.deepEqual(result.request.offered, [{ ...f.offer.offered[1 - conflicting[0]!]!, holdId: "new-1" }]);
+      assert.equal(f.events.get("new-1").status, "confirmed");
+      assert.equal(f.events.get("hold-one").status, "cancelled");
+      assert.equal(f.events.get("hold-two").status, "cancelled");
+    }
+    assert.equal(f.calls.filter(c => c[2] === "create").length, 2 - conflicting.length);
+    assert.deepEqual(pendingCalendarWrites(), []);
+    for (const index of conflicting) assert.equal(f.events.get(`busy-${index}`).status, "confirmed");
+  });
+}
 
 test("ambiguous update and delete reconcile by event id", async t => {
   const f = fixture(t);

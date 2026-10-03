@@ -9,7 +9,7 @@ import { toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig } from "./config.ts";
 import { parseEvent } from "./event.ts";
-import { expiredRequests, findOpenByHandle, saveRequest, updateRequest, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
+import { expiredRequests, findOpenByHandle, sameCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
@@ -20,17 +20,17 @@ export type CalendarAction =
   | { action: "book"; start: string; end?: string; attendees?: string }
   | { action: "format"; format: Request["format"]; location?: string }
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
-type Step = { verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sent?: boolean; handle?: string; output?: string };
+type Step = { verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sent?: boolean; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
 type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" }>; steps: Step[]; failed?: boolean };
 export type CalendarOptions = { command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
 const EMPTY: Ledger = { requests: [] };
+const CREATE_WAIT_MS = 10 * 60_000;
 const ledger = () => readJson<Ledger>(file("ledger.json"), EMPTY);
 const requestById = (id: string) => {
   const request = ledger().requests.find(r => r.id === id);
   if (!request) throw new Error(`no request ${id}`);
   return request;
 };
-const sameHold = (a: HoldRef, b: HoldRef) => a.account === b.account && a.holdId === b.holdId;
 const holds = (r: Request): HoldRef[] => r.offered.flatMap(o => o.holdId ? [{ holdId: o.holdId, account: o.account }] : []);
 const object = (output: string): any => JSON.parse(output.slice(output.indexOf("{")));
 const checkedEvent = (step: Step) => {
@@ -83,19 +83,34 @@ export async function calendarAction(id: string, input: CalendarAction, options:
     return outcome && "output" in outcome ? outcome.output : undefined;
   };
   const patch = (change: Patch) => updateJson<Ledger>(file("ledger.json"), EMPTY, l => updateRequest(l, id, change, now()));
-  const queue = (refs: HoldRef[]) => {
+  const queue = (refs: HoldCleanup[]) => {
     updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
       const r = l.requests.find(r => r.id === id)!;
-      const all = [...(r.holdCleanup ?? []), ...refs].filter((h, i, all) => all.findIndex(x => sameHold(h, x)) === i)
+      const all = [...(r.holdCleanup ?? []), ...refs].filter((h, i, all) => all.findIndex(x => sameCleanup(h, x)) === i)
         .filter(h => !(r.status === "booked" && h.holdId === r.eventId && h.account === r.booked?.account));
       return updateRequest(l, id, { holdCleanup: all }, now());
     });
   };
   const cleanup = async () => {
-    for (const ref of requestById(id).holdCleanup ?? []) {
+    const refs = [...(requestById(id).holdCleanup ?? [])];
+    for (const ref of refs) {
+      if (ref.token !== undefined) {
+        const output = await call(["events", "primary", "--from", ref.start, "--to", ref.end,
+          "--private-prop-filter", `meetlyOperation=${ref.token}`, "--all-pages", "--json"], ref.account);
+        if (output === undefined) continue;
+        const raw = object(output);
+        const matches = (raw.events ?? raw.items ?? []).filter((e: any) => e.extendedProperties?.private?.meetlyOperation === ref.token && e.id);
+        // An empty search does not prove a delayed create will never arrive.
+        if (!matches.length) continue;
+        const found: HoldRef[] = matches.map((e: any) => ({ holdId: e.id, account: ref.account }));
+        queue(found);
+        patch({ holdCleanup: (requestById(id).holdCleanup ?? []).filter(h => !sameCleanup(h, ref)) });
+        refs.push(...found);
+        continue;
+      }
       const r = requestById(id);
       if (r.status === "booked" && r.eventId === ref.holdId && r.booked?.account === ref.account) {
-        patch({ holdCleanup: (r.holdCleanup ?? []).filter(h => !sameHold(h, ref)) });
+        patch({ holdCleanup: (r.holdCleanup ?? []).filter(h => !sameCleanup(h, ref)) });
         continue;
       }
       const output = await call(["delete", "primary", ref.holdId, "--send-updates", "none", "--force"], ref.account);
@@ -104,7 +119,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const check = await call(["event", "primary", ref.holdId, "--json"], ref.account);
         if (check !== undefined) { const raw = object(check); removed = (raw.event ?? raw).status === "cancelled"; }
       }
-      if (removed) patch({ holdCleanup: (requestById(id).holdCleanup ?? []).filter(h => !sameHold(h, ref)) });
+      if (removed) patch({ holdCleanup: (requestById(id).holdCleanup ?? []).filter(h => !sameCleanup(h, ref)) });
     }
   };
   return locked(id, async () => {
@@ -121,7 +136,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const refs = holds(request);
         if (input.action === "cancel" && request.eventId && request.booked) refs.push({ holdId: request.eventId, account: request.booked.account });
         patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null,
-          holdCleanup: [...(request.holdCleanup ?? []), ...refs].filter((h, i, all) => all.findIndex(x => sameHold(h, x)) === i) }); await cleanup(); return { request: requestById(id) };
+          holdCleanup: [...(request.holdCleanup ?? []), ...refs].filter((h, i, all) => all.findIndex(x => sameCleanup(h, x)) === i) }); await cleanup(); return { request: requestById(id) };
       }
       if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(input.action === "book" && request.status === "booked")) throw new Error(`request is ${request.status}`);
       const steps: Step[] = [];
@@ -161,8 +176,20 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       intent = { id: randomUUID(), input, steps };
       writeJson(journal, intent);
     }
+    const fail = async () => {
+      const created: HoldCleanup[] = intent.steps.filter(s => s.verb === "create" && s.output).map(s => ({ holdId: parseEvent(s.output!).id, account: s.account }));
+      created.push(...intent.steps.filter(s => s.abandoned).map(s => ({ token: s.token, account: s.account, start: s.start, end: s.end })));
+      queue(created);
+      rmSync(journal);
+      await cleanup();
+      throw new Error("calendar write failed; previous offer retained");
+    };
+    if (intent.failed) await fail();
     for (const step of intent.steps) {
+      if (step.skipped) continue;
       if (step.output !== undefined) { checkedEvent(step); continue; }
+      // Older journals start their bounded wait on the first resume.
+      if (step.sent && step.sentAt === undefined) { step.sentAt = now(); writeJson(journal, intent); }
       if (!step.sent && !intent.failed) {
         const config = loadConfig();
         const results: unknown[] = [];
@@ -180,11 +207,12 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const overlaps = busy.busy.filter(b => Date.parse(b.start) < Date.parse(step.end) && Date.parse(b.end) > Date.parse(step.start));
         const allowed = intent.input.action === "offer" ? intent.input.request.allowOverlap : request.allowOverlap;
         if (overlaps.some(b => !own.some(h => h.holdId === b.id && h.account === b.account) && !allowed?.includes(b.id ?? ""))) {
+          if (intent.input.action === "offer") { step.skipped = true; writeJson(journal, intent); continue; }
           intent.failed = true; writeJson(journal, intent);
         } else if (step.verb === "create" && overlaps.length && !step.args.includes("--confirm-conflict")) step.args.push("--confirm-conflict");
       }
       if (!step.sent && !intent.failed) {
-        step.sent = true; writeJson(journal, intent);
+        step.sent = true; step.sentAt = now(); writeJson(journal, intent);
         const outcome = await send([step.verb, "primary", ...(step.verb === "update" ? [step.eventId!] : []),
           ...step.args, "--from", step.start, "--to", step.end, "--private-prop", `meetlyOperation=${step.token}`, "--json"], step.account);
         if (outcome && "output" in outcome) step.output = outcome.output;
@@ -198,13 +226,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         if (outcome && "error" in outcome) intent.failed = true;
         writeJson(journal, intent);
       }
-      if (intent.failed) {
-        const created = intent.steps.filter(s => s.verb === "create" && s.output).map(s => ({ holdId: parseEvent(s.output!).id, account: s.account }));
-        queue(created);
-        rmSync(journal);
-        await cleanup();
-        throw new Error("calendar write failed; previous offer retained");
-      }
+      if (intent.failed) await fail();
       if (step.output === undefined) {
         const output = await call(step.verb === "create"
           ? ["events", "primary", "--from", step.start, "--to", step.end, "--private-prop-filter", `meetlyOperation=${step.token}`, "--all-pages", "--json"]
@@ -216,15 +238,22 @@ export async function calendarAction(id: string, input: CalendarAction, options:
           if (matches.length === 1) step.output = JSON.stringify(matches[0]);
         }
       }
-      if (step.output === undefined) throw new Error(`calendar write unresolved for ${id}; run resume, do not repeat the write`);
+      if (step.output === undefined) {
+        if (step.verb === "create" && now() - step.sentAt! >= CREATE_WAIT_MS) {
+          step.abandoned = true; intent.failed = true; writeJson(journal, intent);
+          await fail();
+        }
+        throw new Error(`calendar write unresolved for ${id}; run resume, do not repeat the write`);
+      }
       checkedEvent(step);
       writeJson(journal, intent);
     }
+    if (intent.steps.every(s => s.skipped)) await fail();
     const completed = intent;
     updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
       let next: Ledger;
       if (completed.input.action === "offer") {
-        const offered = completed.steps.map(s => { const e = parseEvent(s.output!); return { start: e.start, end: e.end, holdId: e.id, account: s.account }; });
+        const offered = completed.steps.filter(s => !s.skipped).map(s => { const e = parseEvent(s.output!); return { start: e.start, end: e.end, holdId: e.id, account: s.account }; });
         next = saveRequest(l, { ...completed.input.request, offered }, now(), id);
       } else {
         if (completed.input.action === "format") l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location }, now());
@@ -234,7 +263,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       return { requests: next.requests.map(r => {
         if (r.id !== id) return r;
         const cleanup = [...(r.holdCleanup ?? []), ...(r.status === "booked" ? holds(r) : [])]
-          .filter((h, i, all) => all.findIndex(x => sameHold(h, x)) === i)
+          .filter((h, i, all) => all.findIndex(x => sameCleanup(h, x)) === i)
           .filter(h => !(r.status === "booked" && r.eventId === h.holdId && r.booked?.account === h.account));
         return { ...r, calendarRevision: completed.id, holdCleanup: cleanup };
       }) };

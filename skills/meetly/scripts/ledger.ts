@@ -1,6 +1,6 @@
 // Meetly's record of every scheduling request: who, which group, which times
-// were offered and held, and how it ended. Holds are only ever deleted by id
-// from here, never by searching the calendar.
+// were offered and held, and how it ended. Cleanup records event ids or exact
+// operation markers for creates whose event ids were never received.
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
@@ -15,6 +15,8 @@ import { readJson, updateJson } from "./store.ts";
 export type Status = "asked" | "offered" | "booked" | "dropped" | "expired";
 export type Offer = { start: string; end: string; holdId?: string; account: string };
 export type HoldRef = { holdId: string; account: string };
+export type HoldCleanup = (HoldRef & { token?: never }) | { token: string; account: string; start: string; end: string; holdId?: never };
+export const sameCleanup = (a: HoldCleanup, b: HoldCleanup) => a.account === b.account && a.holdId === b.holdId && a.token === b.token;
 // A time outside the owner's days or window that the other person asked for,
 // waiting for the owner's yes or no.
 export type PendingOwner = { start: string; end: string; askedAt: string };
@@ -45,7 +47,7 @@ export type Request = {
   offered: Offer[];
   status: Status;
   eventId?: string;
-  holdCleanup?: HoldRef[];
+  holdCleanup?: HoldCleanup[];
   pendingOwner?: PendingOwner;
   format?: Format;
   locale?: string;
@@ -219,7 +221,7 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
     ? [{ holdId: offer.holdId, account: offer.account }]
     : []);
   const holdCleanup = [...(existing.holdCleanup ?? []), ...replacedHolds]
-    .filter((hold, index, holds) => holds.findIndex((item) => item.holdId === hold.holdId && item.account === hold.account) === index);
+    .filter((hold, index, holds) => holds.findIndex((item) => sameCleanup(item, hold)) === index);
   const replacement: Request = {
     ...existing,
     ...validated,
