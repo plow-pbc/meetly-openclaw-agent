@@ -39,6 +39,8 @@ exits non-zero: report that line; never guess a result. State lives in
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
 
 Notes:
+- `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
+  `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-group`.
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.
   `meetUrl` only ever holds `https://meet.google.com/xxx-xxxx-xxx`, only on
   a `meet`; the ledger refuses anything else.

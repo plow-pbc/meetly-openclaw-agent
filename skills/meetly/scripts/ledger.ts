@@ -22,9 +22,9 @@ export const uniqueCleanup = (refs: HoldCleanup[]) =>
   [...refs.filter(ref => ref.sendUpdates === "all"), ...refs.filter(ref => ref.sendUpdates !== "all")]
     .filter((ref, i, all) => all.findIndex(other => sameCleanup(ref, other)) === i);
 export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
-// A time outside the owner's days or window that the other person asked for,
-// waiting for the owner's yes or no.
-export type PendingOwner = { start: string; end: string; askedAt: string };
+// One question or out-of-hours time waiting for the owner's answer.
+export const OWNER_QUESTION_LIMIT = 500;
+export type PendingOwner = { askedAt: string } & ({ start: string; end: string } | { question: string });
 export type Constraints = { days?: string[]; after?: string; before?: string; from?: string; to?: string };
 // How the meeting happens. `unknown` until the request or an answer says it.
 export type Format = "meet" | "in_person" | "phone" | "unknown";
@@ -243,8 +243,10 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   if (patch.offered !== undefined) checkOffers(patch.offered);
   const pending = patch.pendingOwner;
   if (pending) {
-    if ([pending.start, pending.end, pending.askedAt].some((t) => typeof t !== "string" || Number.isNaN(Date.parse(t)))) {
-      throw new Error(`pendingOwner needs valid start, end and askedAt: ${JSON.stringify(pending)}`);
+    if (!isDate(pending.askedAt) || ("question" in pending
+      ? typeof pending.question !== "string" || !pending.question.trim() || pending.question.length > OWNER_QUESTION_LIMIT || "start" in pending || "end" in pending
+      : !isDate(pending.start) || !isDate(pending.end))) {
+      throw new Error("pendingOwner needs askedAt and either a short question or valid start and end");
     }
   }
   if (patch.format !== undefined) checkFormat(patch.format);
@@ -314,9 +316,10 @@ export function askedList(ledger: Ledger, unnotified = false): Request[] {
   return ledger.requests.filter((r) => r.status === "asked" && (!unnotified || !r.notifiedAt));
 }
 
-// Open requests waiting for the owner to confirm an out-of-hours time.
+// Requests waiting for a question's answer or an out-of-hours approval.
 export function pendingOwnerList(ledger: Ledger): Request[] {
-  return ledger.requests.filter((r) => r.status === "offered" && r.pendingOwner !== undefined);
+  return ledger.requests.filter((r) => r.pendingOwner !== undefined
+    && (r.status === "offered" || (r.status === "booked" && "question" in r.pendingOwner)));
 }
 
 // Booked Meets whose link is due in the group: from `leadMin` before the

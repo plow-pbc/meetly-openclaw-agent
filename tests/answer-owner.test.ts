@@ -1,0 +1,132 @@
+import assert from "node:assert/strict";
+import { test, type TestContext } from "node:test";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+import { answerOwner } from "../skills/meetly/scripts/answer-owner.ts";
+import { guestAction } from "../skills/meetly/scripts/guest.ts";
+import { registerOwnerTools } from "../plugin/owner-tools.js";
+import { addRequest, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
+import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
+import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
+import { tmpHome } from "./helpers.ts";
+
+const ctx = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "plow-owner",
+  sessionKey: "agent:main:main", nativeChannelId: "owner-dm", config: {} };
+const args = { requestId: "mia", askedAt: "2026-10-03T16:00:00Z", text: "Patrick says, please bring the Q3 budget numbers." };
+
+function fixture(t: TestContext) {
+  const home = tmpHome();
+  const previous = process.env.MEETLY_HOME;
+  process.env.MEETLY_HOME = home;
+  t.after(() => {
+    if (previous === undefined) delete process.env.MEETLY_HOME; else process.env.MEETLY_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  });
+  const path = join(home, "ledger.json");
+  let ledger: Ledger = { requests: [] };
+  for (const name of ["mia", "lev"]) {
+    ledger = addRequest(ledger, { origin: "owner", name, handle: `${name}@example.com`, topic: "Call", chatUid: `group-${name}`,
+      durationMin: 30, offered: [{ start: "2026-10-05T10:00:00Z", end: "2026-10-05T10:30:00Z", account: "owner@example.com" }] }, Date.now(), name);
+    ledger = updateRequest(ledger, name, { pendingOwner: { question: "Should I bring the budget numbers?", askedAt: args.askedAt } }, Date.now());
+  }
+  writeJson(path, ledger);
+  writeJson(join(home, "config.json"), { ...DEFAULTS, ownerName: "Patrick", timezone: "UTC", defaultAccount: "owner@example.com",
+    calendars: [{ account: "owner@example.com", id: "primary" }], setupDoneAt: args.askedAt });
+  return { path, ledger, read: () => readJson<Ledger>(path, { requests: [] }) };
+}
+
+test("the owner answer sends once to the matched group, clears its question, and permits the next ask", async t => {
+  const f = fixture(t);
+  f.ledger = updateRequest(f.ledger, "mia", { status: "booked" }, Date.now());
+  writeJson(f.path, f.ledger);
+  const deliveries: any[] = [];
+  let tool: any;
+  const route = { agentId: "main", sessionKey: "agent:main:plow:group:group-mia" };
+  registerOwnerTools({ registerTool(factory: any) { tool = factory(ctx); }, runtime: { channel: {
+    routing: { resolveAgentRoute(input: any) {
+      assert.deepEqual(input.peer, { kind: "group", id: "group-mia" }); return route;
+    } },
+    session: { resolveStorePath: () => "/sessions", updateLastRoute: async () => {} },
+  } } }, answerOwner, async () => ({
+    buildOutboundSessionContext: (input: any) => input,
+    sendDurableMessageBatch: async (input: any) => {
+      assert.ok(f.read().requests[0]!.pendingOwner, "keep pending until delivery succeeds");
+      deliveries.push(input); return { status: "sent" };
+    },
+  }));
+  const result = await tool.execute("answer", { ...args, chatUid: "intruder" });
+  assert.equal(result.isError, false);
+  assert.equal(deliveries.length, 1);
+  assert.equal(deliveries[0].to, "group-mia");
+  assert.deepEqual(deliveries[0].payloads, [{ text: args.text }]);
+  assert.deepEqual(deliveries[0].mirror, route);
+  assert.equal(deliveries[0].session.conversationType, "group");
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+  assert.equal(f.read().requests[0]!.status, "booked");
+  assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
+  assert.equal((await tool.execute("repeat", args)).isError, true);
+  assert.equal(deliveries.length, 1);
+  const next = await guestAction({ messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "group-mia", requesterSenderId: "mia@example.com" },
+    "ask_owner", { question: "Which quarter?" }, async () => {});
+  assert.ok(!("error" in next));
+  assert.equal((f.read().requests[0]!.pendingOwner as { question: string }).question, "Which quarter?");
+});
+
+test("guests, other channels and other groups cannot answer a pending question", async t => {
+  const f = fixture(t);
+  for (const context of [{}, { ...ctx, senderIsOwner: false }, { ...ctx, agentAccountId: "email" },
+    { ...ctx, messageChannel: "webchat" }, { ...ctx, requesterSenderId: undefined },
+    { ...ctx, sessionKey: "group-other", nativeChannelId: "group-other" },
+    { ...ctx, sessionKey: "group-mia", nativeChannelId: "group-MIA" },
+    { ...ctx, sessionKey: "group-mia", nativeChannelId: "plow:group-mia" }]) {
+    assert.ok("error" in await answerOwner(context, args, async () => assert.fail("must not send")));
+  }
+  for (const invalid of [{ ...args, askedAt: "old" }, { ...args, requestId: "missing" }, { ...args, text: " " }]) {
+    assert.ok("error" in await answerOwner(ctx, invalid, async () => assert.fail("must not send")));
+  }
+  assert.deepEqual(f.read(), f.ledger);
+});
+
+test("only a question, not a time approval, can be answered", async t => {
+  const f = fixture(t);
+  f.ledger = updateRequest(f.ledger, "mia", { pendingOwner: { askedAt: args.askedAt, start: "2026-10-05T20:00:00Z", end: "2026-10-05T20:30:00Z" } }, Date.now());
+  writeJson(f.path, f.ledger);
+  assert.ok("error" in await answerOwner(ctx, args, async () => assert.fail("must not send")));
+  assert.deepEqual(f.read(), f.ledger);
+});
+
+for (const status of ["queued", "throw"]) test(`answer delivery ${status} preserves the pending question`, async t => {
+  const f = fixture(t);
+  let tool: any;
+  registerOwnerTools({ registerTool(factory: any) { tool = factory(ctx); }, runtime: { channel: {
+    routing: { resolveAgentRoute: () => ({ agentId: "main", sessionKey: "group-mia" }) },
+    session: { resolveStorePath: () => "/sessions", updateLastRoute: async () => {} },
+  } } }, answerOwner, async () => ({ buildOutboundSessionContext: (input: any) => input, sendDurableMessageBatch: async () => {
+    if (status === "throw") throw new Error("PRIVATE TRANSPORT ERROR");
+    return { status };
+  } }));
+  const result = await tool.execute("answer", args);
+  assert.match(result.content[0].text, /delivery is unknown/);
+  assert.doesNotMatch(result.content[0].text, /PRIVATE/);
+  assert.deepEqual(f.read(), f.ledger);
+});
+
+test("an owner answer already visible in the group clears the question without sending it again", async t => {
+  const f = fixture(t);
+  const result = await answerOwner({ ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" }, args,
+    async () => assert.fail("the owner's answer is already in the group"));
+  assert.ok("answered" in result);
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+  assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
+});
+
+test("concurrent sends and stale clears cannot consume another question", async t => {
+  const f = fixture(t);
+  const newer = { question: "Which entrance?", askedAt: "2026-10-03T17:00:00Z" };
+  const result = await answerOwner(ctx, args, async () => {
+    assert.ok("error" in await answerOwner(ctx, args, async () => assert.fail("concurrent send")));
+    writeJson(f.path, updateRequest(f.read(), "mia", { pendingOwner: newer }, Date.now()));
+  });
+  assert.ok("sent" in result);
+  assert.deepEqual(f.read().requests[0]!.pendingOwner, newer);
+});

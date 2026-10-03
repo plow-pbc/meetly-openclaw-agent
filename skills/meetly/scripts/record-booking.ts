@@ -21,8 +21,8 @@ export function recordBooking(ledger: Ledger, id: string, event: EventInfo, acco
     eventId: event.id,
     booked: { start: event.start, end: event.end, account },
     meetUrl: isMeet ? event.meetUrl : null,
-    pendingOwner: null,
   };
+  if (request.pendingOwner && "start" in request.pendingOwner) patch.pendingOwner = null;
   // A reminder belongs to one start time: a moved meeting gets a new one.
   if (request.booked && Date.parse(request.booked.start) !== Date.parse(event.start)) patch.reminder = null;
   const next = updateRequest(ledger, id, patch, now);
