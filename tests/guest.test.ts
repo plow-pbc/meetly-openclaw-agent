@@ -661,18 +661,6 @@ test("a blank question cannot store a time approval on a booked meeting", async 
   assert.equal(f.ownerLines.length, 1);
 });
 
-// Older owner-group records without a chat must never use first-reply linking.
-test("an unlinked owner-group request cannot be claimed from another group", async t => {
-  const f = fixture(t);
-  const ledger = f.read();
-  Object.assign(ledger.requests[0]!, { startedInGroup: true });
-  delete ledger.requests[0]!.chatUid;
-  f.save(ledger);
-  assert.ok("error" in await guestAction({ ...context, nativeChannelId: "other-group" }, "view"));
-  assert.deepEqual(f.read(), ledger);
-});
-
-
 test("the owner tool records the runtime chat uid and refuses another group's claim", async t => {
   const f = fixture(t);
   f.save({ requests: [] });
@@ -686,7 +674,7 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
   const result = await tool.execute("offer", args);
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.request().chatUid, "cht_MiXeD");
-  assert.equal(f.request().startedInGroup, true);
+  assert.equal(f.request().origin, "owner-group");
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "other-group" }, "view"));
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "cht_mixed" }, "view"));
   assert.ok(!("error" in await guestAction({ ...context, nativeChannelId: "cht_MiXeD" }, "view")));
@@ -701,5 +689,38 @@ test("the owner-group tool refuses guests, DMs and requests already linked elsew
     assert.ok("error" in await offerOwnerGroup(invalid, args));
   }
   assert.deepEqual(f.read(), f.ledger);
+  assert.equal(f.commands.length, 0);
+});
+
+
+test("owner-group offers keep calendar identifiers out of tool content and details", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  f.events.clear();
+  const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
+  let tool: any;
+  registerOwnerGroupTool({ registerTool(factory: any) { tool = factory(ctx); } }, offerOwnerGroup);
+  const args = { handle: context.requesterSenderId, topic: "Planning", offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })) };
+  const result = await tool.execute("offer", args);
+  assert.equal(result.isError, false, JSON.stringify(result));
+  assert.equal(f.request().durationMin, DEFAULTS.durationMin);
+  assert.ok(f.request().offered.every(o => o.account === "owner@example.com" && o.holdId !== "injected-hold"));
+  assert.equal(result.details.ownerName, "Alex");
+  assert.equal(result.details.offered.length, 2);
+  assert.equal(result.content[0].text, JSON.stringify(result.details));
+  assert.doesNotMatch(JSON.stringify(result), /account|holdId|calendarRevision|chatUid|example\.com|injected|new-\d|r_[a-f0-9]/);
+  assert.equal(tool.parameters.properties.offered.items.properties.account, undefined);
+  assert.ok(!tool.parameters.properties.offered.items.required.includes("account"));
+  assert.ok(!tool.parameters.required.includes("durationMin"));
+});
+
+test("owner-group failures never echo private validation details", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { ...f.ledger.requests[0]!, offered: offers.map(({ holdId, ...slot }) => slot) },
+    { validate() { throw new Error("PRIVATE CALENDAR TITLE owner@example.com hold-one"); } });
+  assert.ok("error" in result);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE|example\.com|hold-one/);
   assert.equal(f.commands.length, 0);
 });

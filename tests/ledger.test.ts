@@ -410,3 +410,14 @@ test("CLI lists and clears a general owner question using the existing pending c
   assert.equal(cli("ledger.ts", ["update", "--id", id, "--json", '{"pendingOwner":null}'], env).status, 0);
   assert.deepEqual(cli("ledger.ts", ["pending"], env).json.requests, []);
 });
+
+
+test("owner-group origin requires and preserves its exact chat across re-offers", () => {
+  assert.throws(() => addRequest(empty(), input({ origin: "owner-group" }), T0, "r_1"), /requires its chat uid/);
+  const ledger = addRequest(empty(), input({ origin: "owner-group", chatUid: "cht_MiXeD" }), T0, "r_1");
+  assert.throws(() => saveRequest(ledger, input({ chatUid: "cht_mixed" }), T0 + HOUR, "r_2"), /cannot move/);
+  assert.throws(() => updateRequest(ledger, "r_1", { chatUid: "elsewhere" }, T0 + HOUR), /cannot move/);
+  const saved = saveRequest(ledger, input(), T0 + HOUR, "r_2").requests[0]!;
+  assert.equal(saved.origin, "owner-group");
+  assert.equal(saved.chatUid, "cht_MiXeD");
+});

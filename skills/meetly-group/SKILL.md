@@ -59,8 +59,10 @@ free there.
      accounts. Tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
 4. For a new owner request in this group, call `meetly_offer_owner_group`
-   with the fields below (no `origin` or `chatUid`); it records the exact runtime
-   chat uid and writes the holds. Otherwise run `calendar.ts offer --json '<request>'` with `origin`, `handle` (the
+   with the fields below except `origin`, `chatUid`, `account` and `allowOverlap`;
+   omit `durationMin` unless explicitly specified. It resolves the configured
+   duration and calendar account internally, records the exact runtime chat uid
+   and returns only group-safe offer fields. Otherwise run `calendar.ts offer --json '<request>'` with `origin`, `handle` (the
    resolved phone), `name`, `sourceRowid`, `chatUid` if already known, `topic`,
    `location`, `durationMin`, `constraints` (the owner's conditions), `proposed`,
    `allowOverlap`, `format`, `locale`, and `offered[]` with each slot's
@@ -165,7 +167,7 @@ An answer that arrives before booking is recorded with
 one. Never ask about the format twice in a row: once in the opener, and once
 after booking if the pick did not answer it.
 
-For a request with `startedInGroup: true`, never ask the guest for missing
+For a request with `origin: "owner-group"`, never ask the guest for missing
 details. Use the thread context for format and place; otherwise leave them
 unknown and let the owner supply them. This overrides every format question
 in the offering and booking flows; missing details do not block scheduling.
@@ -235,10 +237,10 @@ booked or closed ones. For a pending question or time approval, follow
 "Owner confirms". Never lowercase a chat uid.
 
 If no request matches and the group is exactly the owner, one other member
-and Meetly, the owner's scheduling ask is a request for that member. Read
-`setup-status.ts`; use the member's handle and known name from the conversation,
+and Meetly, the owner's scheduling ask is a request for that member. Use
+the member's handle and known name from the conversation,
 the owner's words for topic and conditions, and thread context for format and
-place. Use the configured duration unless specified. Preferred dates/times go
+place. Omit duration unless the owner specifies it; the tool uses the configured default. Preferred dates/times go
 in `proposed`; explicit non-relaxable conditions go in `constraints`. Follow
 "Offer times" from step 2, using `meetly_offer_owner_group` to record and hold
 this request. Reply here, never open a new thread or DM the owner. An existing

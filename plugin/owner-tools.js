@@ -39,12 +39,12 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
     description: "For the owner's scheduling ask in a group with exactly one guest and Meetly. Read meetly-group and find free slots first. Records the request with this turn's exact chat uid and creates holds through the calendar writer. Use the guest's participant handle and known name, the owner's conditions and the slot results. Reply with the returned offer here; never open another thread. Owner only.",
-    parameters: { type: "object", additionalProperties: false, required: ["handle", "topic", "durationMin", "offered"], properties: {
-      handle: string, name: string, topic: string, durationMin: { type: "integer", minimum: 1 },
+    parameters: { type: "object", additionalProperties: false, required: ["handle", "topic", "offered"], properties: {
+      handle: string, name: string, topic: string, durationMin: { type: "integer", minimum: 1, description: "Only when explicitly specified; otherwise uses the configured duration." },
       constraints, proposed: constraints, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
       location: string, locale: string,
       offered: { type: "array", minItems: 1, items: { type: "object", additionalProperties: false,
-        required: ["start", "end", "account"], properties: { start: string, end: string, account: string } } },
+        required: ["start", "end"], properties: { start: string, end: string } } },
     } },
     async execute(_id, args) {
       const result = await execute(context, args);
