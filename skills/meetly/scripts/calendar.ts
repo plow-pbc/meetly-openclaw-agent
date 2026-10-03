@@ -170,7 +170,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const location = input.action === "format" ? input.location ?? request.location : request.location;
         add(verb, slot, ["--summary", `${request.topic} with ${request.name ?? request.handle}`, "--send-updates", "all",
           ...(format === "meet" ? ["--with-meet"] : []),
-          ...(format === "phone" ? ["--location", "Phone call"] : location ? ["--location", location] : []),
+          ...(format === "phone" ? ["--location=Phone call"] : location ? [`--location=${location}`] : []),
           ...(input.action === "book" && input.attendees ? ["--attendees", input.attendees] : [])]);
       }
       intent = { id: randomUUID(), input, steps };
