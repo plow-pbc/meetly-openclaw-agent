@@ -34,6 +34,9 @@ exits non-zero: report that line; never guess a result. State lives in
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
 
 Notes:
+- On a re-offer, `slots.ts --request <id>` loads the offered request's saved
+  conditions and removes its own holds from busy time by id and account. Search
+  flags only narrow those conditions; `--duration` can apply the owner's new length.
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
   `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-group`.
 - `startedInGroup: true` marks a request initiated by the owner in its

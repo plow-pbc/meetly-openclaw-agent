@@ -302,6 +302,13 @@ test("a guest replying in an older group can neither find nor link their asked r
   assert.equal(cli("ledger.ts", ["find", "--handle", "+15551234567"], env).json.request.status, "asked");
 });
 
+test("an owner's duration and weekday change preserves the saved next-week bounds", () => {
+  let l = addRequest(empty(), input({ constraints: { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-11", after: "11:30", before: "14:00" } }), T0, "r_1");
+  l = saveRequest(l, input({ durationMin: 60, constraints: { days: ["tue"] } }), T0, "unused");
+  assert.equal(l.requests[0]!.durationMin, 60);
+  assert.deepEqual(l.requests[0]!.constraints, { days: ["tue"], from: "2026-10-05", to: "2026-10-11", after: "11:30", before: "14:00" });
+});
+
 test("chat lookup accepts one case-only match but never conflates distinct recorded chats", () => {
   let l = addRequest(empty(), input({ chatUid: "cht_abc" }), T0, "r_1");
   assert.equal(findByChat(l, "cht_AbC")?.id, "r_1");

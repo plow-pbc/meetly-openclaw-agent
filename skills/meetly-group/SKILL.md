@@ -32,6 +32,14 @@ free there.
 
 ## Offer times
 
+Resolve relative dates such as "next week" to explicit `constraints.from` and
+`constraints.to` in the owner's timezone, using the date of the owner's request.
+For example, on October 2, 2026, next week is 2026-10-05 through 2026-10-11;
+Mon–Wed is also `constraints.days: ["mon","tue","wed"]`. Pass both bounds to
+the first search and save them with the offer. Carry them into every re-offer
+unless the owner explicitly changes them. Never widen the saved date range to
+find more slots. Do not invent a narrower lunch window than the owner specified.
+
 1. Resolve one E.164 phone before any calendar read or hold. If none is
    known, ask the owner for a phone; if several match, ask which one. In
    either case, ask in the owner's main DM and end the turn.
@@ -45,6 +53,11 @@ free there.
    first offer, its `proposed` times: `--days`, `--after`, `--before`,
    `--from`/`--to`, `--duration`, `--allow-overlap`. Slots stay inside the
    owner's days and window; constraints only narrow them.
+   For an existing offer, add `--request <id>` to `slots.ts`: it loads saved
+   conditions, intersects any search preferences, and removes only that request's
+   own holds by event id and account. Keep the holds in the ledger until the
+   replacement is saved, even after deleting them, so stale busy data cannot
+   make them look like other commitments.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
      If `constraints` block it, tell the owner which one and suggest
@@ -265,8 +278,16 @@ request is not a no-match; handle the owner's instruction on that request.
   and the person's name, without "Hold:"), location and the person's email as
   an attendee if contacts has one, following "Book the event". Only then delete
   the other holds.
-- **Other times:** delete the current holds and follow "Offer times", carrying
-  the request's conditions and any changes the owner gives.
+- **Other times or a duration change:** follow "Offer times" with the saved
+  request and `--request <id>`, carrying its date bounds and other conditions.
+  If the owner explicitly changes a condition, first update `constraints` with
+  `ledger.ts update`, merging that change into the saved conditions.
+  Pass a new duration with `--duration`; search a preferred weekday with `--days`.
+  Search before deleting the holds; do not drop Tuesday merely because its old
+  holds appear busy. Once replacements are found, delete the old holds, read the
+  calendar again, and re-check before creating new holds. Save the new duration
+  and only the condition changes the owner gave. If no slots remain in the saved
+  range, say so and ask the owner before extending it.
 - **Format or place after booking:** record it ("Meeting format"), then run
   `plow-gog calendar update primary <eventId> --account <booked.account>`
   following "Book the event".

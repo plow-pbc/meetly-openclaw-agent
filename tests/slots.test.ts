@@ -5,6 +5,7 @@ import { writeFileSync } from "node:fs";
 import type { Config } from "../skills/meetly/scripts/config.ts";
 import { checkTime, findSlots, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
 import { writeJson } from "../skills/meetly/scripts/store.ts";
+import { addRequest } from "../skills/meetly/scripts/ledger.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
 const CONFIG: Config = {
@@ -132,6 +133,37 @@ test("the CLI reads busy.ts output and the stored config", () => {
   assert.equal(cli("slots.ts", ["--in", busyFile, "--locale", "??"], env).status, 1);
   assert.equal(cli("slots.ts", ["--in", busyFile, "--days", "someday"], env).status, 1);
   assert.equal(cli("slots.ts", ["--in", busyFile, "--from", "5/10"], env).status, 1);
+});
+
+test("owner re-offer uses saved week bounds and ignores only its own holds", () => {
+  const home = tmpHome();
+  const account = CONFIG.defaultAccount;
+  writeJson(join(home, "config.json"), { ...CONFIG, horizonDays: 21 });
+  const offered = [
+    { start: "2026-10-06T11:30:00-03:00", end: "2026-10-06T12:00:00-03:00", holdId: "hold-1", account },
+    { start: "2026-10-06T12:00:00-03:00", end: "2026-10-06T12:30:00-03:00", holdId: "hold-2", account },
+  ];
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
+    origin: "owner", handle: "+15550107812", topic: "lunch", durationMin: 30, offered,
+    constraints: { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-11", after: "11:30", before: "14:00" },
+  }, NOW, "lunch"));
+  const busyFile = join(home, "busy.json");
+  const busy = offered.map(o => ({ start: o.start, end: o.end, id: o.holdId, account }));
+  const args = ["--in", busyFile, "--request", "lunch", "--now", "2026-10-02T20:00:00-03:00", "--duration", "60", "--days", "tue", "--from", "2026-10-01", "--to", "2026-10-20"];
+  const run = (extra: object[] = []) => {
+    writeJson(busyFile, { busy: [...busy, ...extra], degraded: [] });
+    return cli("slots.ts", args, { MEETLY_HOME: home });
+  };
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.json.slots[0].start, offered[0]!.start);
+  assert.equal(result.json.slots[0].end, offered[1]!.end);
+  assert.ok(result.json.slots.every((s: { start: string; end: string }) => s.start.startsWith("2026-10-06") && s.end.slice(11, 16) <= "14:00"));
+  const blocked = run([{ id: "hold-1", account: "another@example.com", start: "2026-10-06T11:30:00-03:00", end: "2026-10-06T14:00:00-03:00" }]);
+  assert.equal(blocked.status, 0, blocked.stderr);
+  assert.deepEqual(blocked.json.slots, []);
+  const unknown = cli("slots.ts", args.map(a => a === "lunch" ? "missing" : a), { MEETLY_HOME: home });
+  assert.notEqual(unknown.status, 0);
 });
 
 test("checkTime: a time the person insists on", () => {

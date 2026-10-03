@@ -10,6 +10,9 @@ import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
 import type { Busy } from "./busy.ts";
+import type { Ledger } from "./ledger.ts";
+import { file } from "./paths.ts";
+import { readJson } from "./store.ts";
 import { addDays, DAYS, localIso, wallParts, zonedToUtc, type Day } from "./time.ts";
 
 export type Slot = { start: string; end: string; dayOfWeek: Day; label: string };
@@ -173,6 +176,7 @@ if (isMain(import.meta.url)) {
     const { values } = parseArgs({
       options: {
         in: { type: "string" },
+        request: { type: "string" },
         duration: { type: "string" },
         days: { type: "string" },
         after: { type: "string" },
@@ -198,7 +202,7 @@ if (isMain(import.meta.url)) {
     if (Number.isNaN(now)) throw new Error(`--now is not a time: ${values.now}`);
     const degraded = input.degraded ?? [];
     if (values.at !== undefined) {
-      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count"] as const) {
+      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "request"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
       const check: Parameters<typeof checkTime>[0] = { now, config, busy: input.busy, start: values.at };
@@ -228,6 +232,20 @@ if (isMain(import.meta.url)) {
     if (values.exclude) {
       for (const e of values.exclude) if (Number.isNaN(Date.parse(e))) throw new Error(`--exclude is not a time: ${e}`);
       q.exclude = values.exclude;
+    }
+    if (values.request !== undefined) {
+      const request = readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
+      if (!request || request.status !== "offered") throw new Error("--request needs an offered request");
+      const conditions = request.constraints ?? {};
+      q.days = (conditions.days && q.days ? q.days.filter(d => conditions.days!.includes(d)) : conditions.days ?? q.days) as Day[] | undefined;
+      q.after = [conditions.after, q.after].filter(Boolean).sort().at(-1);
+      q.before = [conditions.before, q.before].filter(Boolean).sort()[0];
+      q.from = [conditions.from, q.from].filter(Boolean).sort().at(-1);
+      q.to = [conditions.to, q.to].filter(Boolean).sort()[0];
+      q.durationMin ??= request.durationMin;
+      q.locale ??= request.locale;
+      q.allowOverlap = request.allowOverlap;
+      q.busy = q.busy.filter(b => !request.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
     }
     return { ...findSlots(q), degraded };
   });

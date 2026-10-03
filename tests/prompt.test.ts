@@ -107,6 +107,15 @@ test("the owner's conditions hold for every offer of a request; the person's pro
   assert.ok(pollSkill().includes("`proposed` for any times they proposed"));
 });
 
+test("owner offers persist relative date bounds and re-offers use the request-aware search", () => {
+  const group = groupSkill();
+  assert.ok(group.includes('Resolve relative dates such as "next week" to explicit `constraints.from` and `constraints.to`'));
+  assert.ok(group.includes("2026-10-05 through 2026-10-11"));
+  assert.ok(group.includes("add `--request <id>` to `slots.ts`"));
+  assert.ok(group.includes("Never widen the saved date range to find more slots"));
+  assert.ok(group.includes("do not drop Tuesday merely because its old holds appear busy"));
+});
+
 test("guests route to their tool descriptions without loading skills or running scripts", () => {
   const rule = prompt.match(/- \*\*Guest phone turns:\*\*([\s\S]*?)(?=\n- \*\*)/)?.[1] ?? "";
   assert.match(rule, /meetly_view_request/);
