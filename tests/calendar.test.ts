@@ -358,7 +358,7 @@ test("resume-pending continues past an unresolved update and reconciles another 
   assert.equal(f.calls.filter(c => c[2] === "create").length, 1);
 });
 
-test("validation runs on the latest request after acquiring its calendar lock", async t => {
+test("a queued pick cannot move a meeting booked while it waits for the calendar lock", async t => {
   const f = fixture(t);
   let entered!: () => void, release!: () => void;
   const waiting = new Promise<void>(resolve => { entered = resolve; });
@@ -369,10 +369,8 @@ test("validation runs on the latest request after acquiring its calendar lock", 
   };
   const booking = calendarAction("r_one", { action: "book", start }, { ...f.options, command });
   await waiting;
-  const stalePick = calendarAction("r_one", { action: "book", start: f.input.offered[1]!.start }, {
-    ...f.options, validate(request) { if (request.status !== "offered") throw new Error("request changed"); },
-  });
-  const rejected = assert.rejects(stalePick, /request changed/);
+  const stalePick = calendarAction("r_one", { action: "book", start: f.input.offered[1]!.start }, f.options);
+  const rejected = assert.rejects(stalePick, /request is booked/);
   release();
   await booking;
   await rejected;
