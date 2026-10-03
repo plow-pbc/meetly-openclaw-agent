@@ -797,6 +797,27 @@ test("guests can re-offer and book dinner but cannot widen its meal window", asy
 });
 
 
+test("a duration change's replacement topic reaches holds, booking titles and the owner-facing group label", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.topic = "30-minute call";
+  f.save(f.ledger);
+  const { origin, handle, name, chatUid, constraints, allowOverlap, format, locale } = f.request();
+  await calendarAction("request-one", { action: "offer", request: {
+    origin, handle, name, chatUid, constraints, allowOverlap, format, locale, topic: "60-minute call", durationMin: 60,
+    offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T12:00:00Z", account: "owner@example.com" }],
+  } });
+  f.ledger.requests[0]!.durationMin = 60;
+  const hold = f.commands.find(c => c[2] === "create")!;
+  assert.equal(hold[hold.indexOf("--summary") + 1], "Hold: 60-minute call with Guest");
+  const booked = await guestAction(context, "pick", { start: f.request().offered[0]!.start });
+  assert.ok(!("error" in booked), JSON.stringify(booked));
+  const booking = f.commands.find(c => c[2] === "update")!;
+  assert.equal(booking[booking.indexOf("--summary") + 1], "60-minute call with Guest");
+  assert.equal(f.request().durationMin, 60);
+  await f.act(context, "ask_owner", { question: "Should I bring the budget numbers?" });
+  assert.deepEqual(f.ownerLines, ['Guest in your 60-minute call group asks: "Should I bring the budget numbers?" — what should I tell them?']);
+});
+
 test("an owner duration change keeps an unanswered opener question suppressed on guest re-offers", async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.detailsAskedAt = new Date(now).toISOString();
