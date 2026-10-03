@@ -19,8 +19,12 @@ test("dashboard documentation identifies the default and configurable host port"
   assert.match(readme, /Set `HOST_PORT` to bind another loopback port/);
 });
 
-test("Meetly's groups are trusted: the image presets the base's group trust mode, so nobody is asked", () => {
+test("new groups are untrusted and grant exactly the registered guest tools", () => {
   const dockerfile = readFileSync(join(ROOT, "Dockerfile"), "utf8");
   const env = dockerfile.match(/^ENV [\s\S]*?(?=\n\S)/m)?.[0] ?? "";
-  assert.match(env, /PLOW_THREAD_TRUST=trusted/);
+  assert.match(env, /PLOW_THREAD_TRUST=untrusted/);
+  const names = env.match(/PLOW_GUEST_TOOLS=(\S+)/)?.[1]?.split(",");
+  const manifest = JSON.parse(readFileSync(join(ROOT, "plugin", "openclaw.plugin.json"), "utf8"));
+  assert.deepEqual(names, manifest.contracts.tools);
+  assert.equal(new Set(names).size, 6);
 });
