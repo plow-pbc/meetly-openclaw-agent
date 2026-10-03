@@ -153,7 +153,7 @@ message is skipped.
 
 - **Image.** A variant of Plow's
   [OpenClaw base image](https://github.com/plow-pbc/plow-openclaw-agent),
-  pinned by digest: the base's gateway, Plow channel and reporter, plus
+  currently pinned to a local commit-tagged image (see below): the base's gateway, Plow channel and reporter, plus
   Meetly's prompt, skills and its own entrypoint, `boot/preboot.ts`. That is
   the base's `boot/main.ts` step for step, on the base's compiled modules,
   with three additions before the config is synced: the model (see
@@ -175,7 +175,9 @@ message is skipped.
 - **Chat.** Your phone DM is the main session and runs setup. A group Meetly
   opened is recognized from its ledger and handled as that one meeting.
 - **Opening groups.** Only in the owner's DM, with the base's
-  `plow_start_thread`; the image makes every group trusted. An uncertain
+  `plow_start_thread`; new groups are untrusted. Guests get the six scheduling
+  tools in `PLOW_GUEST_TOOLS`; owner turns keep full tools. Existing trusted
+  groups stay trusted until the owner changes them. An uncertain
   delivery is recorded without a chat and never retried automatically; Meetly
   may retry after the owner explicitly clears the recorded attempt. Meeting
   confirmations and approval asks stay in that group; the owner is a participant.
@@ -262,11 +264,20 @@ npm test            # node --test
 ```
 
 Node 24.16 or newer. The OpenClaw runtime (`2026.9.6`) comes from the base
-image, pinned by digest.
+image.
 
 ### Bumping the base image
 
-Pick a newer `base-<sha>` tag and its digest from the
+The temporary base is `plow-openclaw:base-5d4d2c6312f545b52de4de9e5b0b44020c7d5256`,
+built locally from that commit of `feat/guest-tool-allowlist`. Before building
+Meetly, check out that base commit and run in the base checkout:
+
+```sh
+docker build --build-arg PLOW_REVISION=5d4d2c6312f545b52de4de9e5b0b44020c7d5256 \
+  -t plow-openclaw:base-5d4d2c6312f545b52de4de9e5b0b44020c7d5256 .
+```
+
+For a published base pin, pick a newer `base-<sha>` tag and its digest from the
 [gallery](https://gallery.ecr.aws/e1h7x4a2/plow-cloud-agents) and update the
 `FROM` line in `Dockerfile`. Then:
 
