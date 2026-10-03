@@ -24,7 +24,7 @@ export const uniqueCleanup = (refs: HoldCleanup[]) =>
 export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
 // One question or out-of-hours time waiting for the owner's answer.
 export const OWNER_QUESTION_LIMIT = 500;
-export type PendingOwner = { askedAt: string } & ({ start: string; end: string } | { question: string });
+export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ start: string; end: string } | { question: string });
 export type Constraints = { days?: string[]; after?: string; before?: string; from?: string; to?: string };
 // How the meeting happens. `unknown` until the request or an answer says it.
 export type Format = "meet" | "in_person" | "phone" | "unknown";
@@ -277,13 +277,22 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   return { requests };
 }
 
-// Owner notices can retry until completed; group starts need an explicit clear.
+// Owner notices can retry until completed; group starts and answers need an explicit clear.
 export function recordDelivery(ledger: Ledger, id: string, kind: string, action: string, now: number): Ledger {
-  if (!["notify", "start"].includes(kind) || !["begin", "complete", "clear"].includes(action)) {
-    throw new Error("delivery needs --kind notify|start and --action begin|complete|clear");
+  if (!["notify", "start", "answer"].includes(kind) || !["begin", "complete", "clear"].includes(action)) {
+    throw new Error("delivery needs --kind notify|start|answer and --action begin|complete|clear");
   }
   const request = ledger.requests.find((r) => r.id === id);
   if (!request) throw new Error(`no request ${id}`);
+  if (kind === "answer") {
+    const pending = request.pendingOwner;
+    if (!request.chatUid || !["offered", "booked"].includes(request.status) || !pending || !("question" in pending) || action === "complete") {
+      throw new Error("answer delivery needs a pending question and begin or clear");
+    }
+    if (action === "begin" && pending.answerAttemptedAt) throw new Error("answer delivery already attempted; only the owner can authorize clearing it");
+    const { answerAttemptedAt, ...question } = pending;
+    return updateRequest(ledger, id, { pendingOwner: action === "begin" ? { ...question, answerAttemptedAt: new Date(now).toISOString() } : question }, now);
+  }
   if (request.status !== (kind === "notify" ? "asked" : "offered")) throw new Error(`cannot ${kind} for ${request.status} request`);
   const [attempt, completed] = kind === "notify"
     ? ["notifyAttemptedAt", "notifiedAt"] as const : ["startedAt", "startCompletedAt"] as const;

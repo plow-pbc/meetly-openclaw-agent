@@ -483,18 +483,6 @@ for (const kind of ["question", "time"] as const) test(`ask-owner accepts an emp
   assert.equal("question" in f.request().pendingOwner!, kind === "question");
 });
 
-test("a second time approval cannot replace an open ask", async t => {
-  const f = fixture(t);
-  await f.act(context, "ask_owner", { start: "2026-10-05T20:00" });
-  const pending = f.request().pendingOwner;
-  const reads = f.commands.length;
-  const result = await f.act(context, "ask_owner", { start: "2026-10-06T20:00" });
-  assert.match(JSON.stringify(result), /already open/);
-  assert.deepEqual(f.request().pendingOwner, pending);
-  assert.equal(f.commands.length, reads);
-  assert.equal(f.ownerLines.length, 1);
-});
-
 test("questions and time approvals share one slot, including concurrent asks", async t => {
   const f = fixture(t);
   const ask = f.tools.get("meetly_ask_owner")!;
@@ -569,5 +557,18 @@ test('an owner-approved time is booked and cleared by the seam', async t => {
   assert.equal(f.request().booked!.start, pending.start);
   assert.equal(f.request().pendingOwner, undefined);
   assert.ok(f.request().calendarRevision);
+  assert.equal(f.ownerLines.length, 1);
+});
+
+test("a blank question cannot store a time approval on a booked meeting", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.status = "booked";
+  f.save(f.ledger);
+  await f.act(context, "ask_owner", { start: "2026-10-05T20:00", question: "  " });
+  assert.equal(f.request().pendingOwner, undefined);
+  assert.deepEqual(f.ownerLines, []);
+  assert.deepEqual(f.commands, []);
+  const next = await f.act(context, "ask_owner", { question: "Which entrance?" });
+  assert.ok(!("error" in next));
   assert.equal(f.ownerLines.length, 1);
 });

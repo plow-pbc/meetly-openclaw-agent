@@ -193,7 +193,9 @@ disclose private information.
   clears that question only after the send succeeds. In the same group, the
   owner's answer is already visible: it clears without sending; acknowledge briefly.
   Never send the answer separately. If delivery is unknown, tell the owner;
-  do not resend automatically.
+  do not resend automatically. Only if the owner explicitly authorizes a retry,
+  run `ledger.ts delivery --id <id> --kind answer --action clear` before calling
+  the answer tool again.
 - **Time (`pendingOwner.start`):** follow the owner's yes or no below. From
   the DM, send the result to the recorded group with `plow_reply_to`.
 
