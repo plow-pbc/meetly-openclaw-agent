@@ -112,7 +112,7 @@ export default {
       return context ? { prependContext: context } : undefined;
     });
     api.on("after_tool_call", silence.afterTool);
-    api.on("message_sending", silence.sending);
+    api.on("reply_payload_sending", silence.sending);
     api.on("agent_end", silence.endTurn);
     api.on("session_end", silence.end);
   },

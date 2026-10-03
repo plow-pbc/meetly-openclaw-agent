@@ -1,13 +1,12 @@
-// Silence applies only to outgoing messages from the same active run.
-// A later owner answer can target this group from a different run or no run.
+// Silence applies only to dispatcher reply payloads from the same active run.
+// Tool-driven sends, including an owner's DM answer, use a separate delivery path.
 export function createReplySilencer() {
   const turns = new Map();
-  const target = value => typeof value === "string" ? value.replace(/^plow:/, "").toLowerCase() : undefined;
   return {
     begin(ctx) {
       if (ctx.channel !== "plow" || (ctx.accountId ?? "chat") !== "chat" || !ctx.sessionKey?.includes(":plow:group:")) return;
       if (ctx.runId && turns.get(ctx.sessionKey)?.runId === ctx.runId) return;
-      turns.set(ctx.sessionKey, { runId: ctx.runId, to: target(ctx.chatId ?? ctx.channelId), silent: false });
+      turns.set(ctx.sessionKey, { runId: ctx.runId, silent: false });
     },
     afterTool(event, ctx) {
       const turn = turns.get(ctx.sessionKey);
@@ -17,11 +16,10 @@ export function createReplySilencer() {
       turn.silent = true;
     },
     sending(event, ctx) {
-      if (ctx.channelId !== "plow" || (ctx.accountId ?? "chat") !== "chat") return;
-      const turn = turns.get(ctx.sessionKey);
-      if (!turn?.silent || !turn.to || target(event.to) !== turn.to) return;
-      if (!ctx.runId || ctx.runId !== turn.runId) return;
-      return { cancel: true, cancelReason: "Meetly tool requested a silent group turn" };
+      if ((event.channel ?? ctx.channelId) !== "plow" || (ctx.accountId ?? "chat") !== "chat") return;
+      const turn = turns.get(event.sessionKey);
+      if (!turn?.silent || !event.runId || event.runId !== turn.runId) return;
+      return { cancel: true, reason: "Meetly tool requested a silent group turn" };
     },
     endTurn(_event, ctx) {
       if (turns.get(ctx.sessionKey)?.runId === ctx.runId) turns.delete(ctx.sessionKey);
