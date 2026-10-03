@@ -26,8 +26,10 @@ known meeting chat uid as its target.
 
 ## Read the calendar
 
-Run `busy.ts --fetch`. It reads every calendar in the config on the Mac
-itself and writes `/var/lib/plow/meetly/tmp/busy.json`; it prints only
+Run `busy.ts --fetch`. For events the owner explicitly allowed overlapping, add
+`--allow-overlap-title <owner-supplied event name>` for each name. Exact matching
+event ids stay in the busy file; slot search uses them without exposing them.
+The reader checks every calendar in the config on the Mac itself and writes `/var/lib/plow/meetly/tmp/busy.json`; it prints only
 `{file, busy, degraded, unknownAfter?}`. Never run `plow-gog calendar events`
 yourself or copy a calendar listing into a file. An account in `degraded`
 could not be read: `slots.ts` reports it, and you never claim the owner is
@@ -60,7 +62,9 @@ free there.
    - **`unknownAfter` is set:** offer only what came back.
 4. For a new owner request in this group, call `meetly_offer_owner_group`
    with the fields below except `origin`, `chatUid`, `account` and `allowOverlap`;
-   omit `durationMin` unless explicitly specified. It resolves the configured
+   pass `allowOverlapTitles` with only the event names the owner explicitly
+   authorized. The tool resolves and saves matching event ids internally.
+   Omit `durationMin` unless explicitly specified. It resolves the configured
    duration and calendar account internally, records the exact runtime chat uid
    and returns only group-safe offer fields. Otherwise run `calendar.ts offer --json '<request>'` with `origin`, `handle` (the
    resolved phone), `name`, `sourceRowid`, `chatUid` if already known, `topic`,
@@ -263,8 +267,9 @@ are out of scope. A booked or closed request is not a no-match.
   for the confirmation.
 - **Cancel or drop:** run `calendar.ts cancel --id <id>` for a booked meeting,
   or `calendar.ts drop --id <id>` for an open request.
-- The owner can authorize an out-of-hours time or a conflict override. Record
-  allowed event ids in `allowOverlap` before calling the writer.
+- The owner can authorize an out-of-hours time or a conflict override. For a
+  group offer, pass their event names as `allowOverlapTitles`; never pass calendar
+  ids in group tool arguments. Other writer flows use saved `allowOverlap`.
 
 Confirm once in the group: day, time, whether an invitation was sent, and how
 they will meet. For `meet`, say the link will be posted here 10 minutes before.

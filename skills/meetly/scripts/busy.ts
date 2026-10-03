@@ -12,11 +12,12 @@ import { writeJson } from "./store.ts";
 import { zonedToUtc } from "./time.ts";
 
 export type Busy = { start: string; end: string; id?: string; account?: string };
-export type BusyResult = { busy: Busy[]; unknownAfter?: string; degraded: string[] };
+export type BusyResult = { busy: Busy[]; unknownAfter?: string; degraded: string[]; allowOverlap?: string[] };
 
 type Stamp = string | { dateTime?: string; date?: string } | undefined;
 type CalEvent = {
   id?: string;
+  summary?: string;
   account?: string;
   startLocal?: string;
   endLocal?: string;
@@ -121,8 +122,10 @@ const FETCH_MAX = 100;
 export async function fetchBusy(
   config: Pick<Config, "timezone" | "calendars">,
   range: { from: string; to: string },
-  opts: BridgeOptions = {},
+  opts: BridgeOptions & { allowOverlapTitles?: string[] } = {},
 ): Promise<BusyResult> {
+  const titles = new Set(opts.allowOverlapTitles?.map(title => title.trim().toLowerCase()).filter(Boolean));
+  const allowOverlap: string[] = [];
   const byAccount = new Map<string, string[]>();
   for (const c of config.calendars) byAccount.set(c.account, [...(byAccount.get(c.account) ?? []), c.id]);
   const results: unknown[] = [];
@@ -142,22 +145,24 @@ export async function fetchBusy(
       degraded.push(account);
       continue;
     }
+    allowOverlap.push(...events.filter(e => e.id && !skipped(e) && titles.has(e.summary?.trim().toLowerCase() ?? "")).map(e => e.id!));
     results.push({ events: events.map((e) => ({ ...e, account })) });
   }
   const out = toBusy(results, { tz: config.timezone, max: FETCH_MAX });
   out.degraded.push(...degraded);
+  if (titles.size) out.allowOverlap = [...new Set(allowOverlap)];
   return out;
 }
 
 if (isMain(import.meta.url)) {
   run(async () => {
     const { values } = parseArgs({
-      options: { in: { type: "string", multiple: true }, max: { type: "string", default: "100" }, fetch: { type: "boolean", default: false } },
+      options: { in: { type: "string", multiple: true }, max: { type: "string", default: "100" }, fetch: { type: "boolean", default: false }, "allow-overlap-title": { type: "string", multiple: true } },
     });
     if (values.fetch) {
       const current = status();
       if (current.status !== "READY") throw new Error("Meetly is not set up yet");
-      const result = await fetchBusy(current.config, current.range);
+      const result = await fetchBusy(current.config, current.range, { allowOverlapTitles: values["allow-overlap-title"] });
       const out = file("tmp/busy.json");
       writeJson(out, result);
       const summary: { file: string; busy: number; degraded: string[]; unknownAfter?: string } = { file: out, busy: result.busy.length, degraded: result.degraded };

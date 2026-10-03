@@ -203,6 +203,7 @@ if (isMain(import.meta.url)) {
     const config = loadConfig();
     const input = JSON.parse(readInput(values.in !== undefined ? [values.in] : [])[0]!) as {
       busy?: Busy[];
+      allowOverlap?: string[];
       unknownAfter?: string;
       degraded?: string[];
     };
@@ -214,14 +215,14 @@ if (isMain(import.meta.url)) {
       for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "request"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
-      const check: Parameters<typeof checkTime>[0] = { now, config, busy: input.busy, start: values.at };
+      const check: Parameters<typeof checkTime>[0] = { now, config, busy: input.busy, start: values.at, allowOverlap: input.allowOverlap };
       if (input.unknownAfter !== undefined) check.unknownAfter = input.unknownAfter;
       if (values.duration !== undefined) check.durationMin = positiveInt(values.duration, "--duration");
       if (values["allow-overlap"]) check.allowOverlap = values["allow-overlap"];
       if (values.locale !== undefined) check.locale = values.locale;
       return { ...checkTime(check), degraded };
     }
-    const q: SlotQuery = { now, config, busy: input.busy };
+    const q: SlotQuery = { now, config, busy: input.busy, allowOverlap: input.allowOverlap };
     if (input.unknownAfter !== undefined) q.unknownAfter = input.unknownAfter;
     if (values.duration !== undefined) q.durationMin = positiveInt(values.duration, "--duration");
     if (values.count !== undefined) q.count = positiveInt(values.count, "--count");
