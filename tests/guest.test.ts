@@ -420,3 +420,11 @@ test('a concurrent owner booking cannot turn a stale guest pick into a reschedul
   assert.equal(f.request().booked!.start, offers[1]!.start);
   assert.equal(f.commands.filter(c => c[2] === 'update').length, 1);
 });
+
+test('formatted full phone identity matches exactly and survives canonical ledger saves', async t => {
+  const f = fixture(t);
+  const result = await guestAction({ ...context, requesterSenderId: '+1 (555) 123-4567' }, 'view');
+  assert.ok(!('error' in result), JSON.stringify(result));
+  f.ledger.requests[0]!.handle = '+1 (555) 123-4567'; f.save(f.ledger);
+  assert.ok(!('error' in await guestAction(context, 'view')));
+});
