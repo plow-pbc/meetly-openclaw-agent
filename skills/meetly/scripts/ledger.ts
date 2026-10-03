@@ -119,26 +119,19 @@ function checkReminder(r: Reminder): void {
   }
 }
 
-const isEmail = (h: string) => h.includes("@");
-
-// An email is lowercased; a phone keeps a leading + and its digits.
+// Keep the full country code. Formatting never supplies missing identity digits.
 export function normalizeHandle(h: string): string {
-  const t = h.trim();
-  if (isEmail(t)) return t.toLowerCase();
-  return (t.startsWith("+") ? "+" : "") + t.replace(/\D/g, "");
+  if (typeof h !== "string") throw new Error("handle must be an E.164 phone or email");
+  const value = h.trim();
+  if (/^[^\s@]+@[^\s@]+$/.test(value)) return value.toLowerCase();
+  const phone = value.replace(/[\s().-]/g, "");
+  if (/^\+[1-9]\d{1,14}$/.test(phone)) return phone;
+  throw new Error("handle must be an E.164 phone or email");
 }
 
-// iMessage gives +15551234567 while Contacts gives (555) 123-4567: two phones
-// match when the shorter one (7+ digits) is a suffix of the longer.
 export function sameHandle(a: string, b: string): boolean {
-  const na = normalizeHandle(a);
-  const nb = normalizeHandle(b);
-  if (na === nb) return na !== "" && na !== "+";
-  if (isEmail(na) || isEmail(nb)) return false;
-  const da = na.replace("+", "");
-  const db = nb.replace("+", "");
-  const [short, long] = da.length <= db.length ? [da, db] : [db, da];
-  return short.length >= 7 && long.endsWith(short);
+  try { return normalizeHandle(a) === normalizeHandle(b); }
+  catch { return false; }
 }
 
 // The person's `asked` or `offered` request; `statuses` narrows it.
@@ -179,12 +172,12 @@ function checkOffers(offered: unknown): Offer[] {
 }
 
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
+  input = { ...input, handle: normalizeHandle(input.handle) };
   if ("calendarRevision" in input) throw new Error("calendarRevision is managed by calendar.ts");
   for (const key of ["notifyAttemptedAt", "notifiedAt", "startedAt", "startCompletedAt"]) {
     if (key in input) throw new Error(`${key} is managed by ledger.ts delivery`);
   }
   if (input.origin !== "inbound" && input.origin !== "owner") throw new Error(`origin must be inbound or owner, got ${input.origin}`);
-  if (typeof input.handle !== "string" || !input.handle.trim()) throw new Error("handle is required");
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
   if (!Number.isInteger(input.durationMin) || input.durationMin <= 0) throw new Error("durationMin must be a positive whole number");
   const status = input.status ?? "offered";
@@ -212,6 +205,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
 // `asked` request turns it into `offered`; asking again while one is open
 // leaves the ledger as it is.
 export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
+  input = { ...input, handle: normalizeHandle(input.handle) };
   const byHandle = findOpenByHandle(ledger, input.handle);
   const bySource = findOpenBySource(ledger, input);
   if (bySource && byHandle && bySource.id !== byHandle.id) throw new Error("resolved handle belongs to another open request");
