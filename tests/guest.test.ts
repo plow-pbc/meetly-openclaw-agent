@@ -279,7 +279,7 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
     if (tool.name !== "meetly_offer_owner_group") assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap", "constraints"].includes(k)));
   } });
   assert.deepEqual(names, JSON.parse(readFileSync(new URL("../plugin/openclaw.plugin.json", import.meta.url), "utf8")).contracts.tools);
-  assert.deepEqual(hooks, ["before_prompt_build"]);
+  assert.deepEqual(hooks, ["before_prompt_build", "after_tool_call", "message_sending", "session_end"]);
 });
 
 test("pick books the chosen hold with fixed arguments, records the event, and deletes only the other holds", async t => {
@@ -750,6 +750,23 @@ test("the owner-group tool refuses guests, DMs and requests already linked elsew
   assert.equal(f.commands.length, 0);
 });
 
+
+test("owner DM misuse of the group offer tool points to the DM offer and thread-start flow", async t => {
+  const f = fixture(t);
+  let tool: any;
+  registerOwnerGroupTool({ registerTool(factory: any) {
+    tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main", nativeChannelId: "owner-dm" });
+  } }, offerOwnerGroup);
+  assert.match(tool.description, /Group-only: never use in the owner's DM/);
+  const result = await tool.execute("offer", { ...f.request(), offered: offers });
+  assert.equal(result.isError, true);
+  assert.match(result.details.error, /meetly-group.*Owner request/);
+  assert.match(result.details.error, /calendar.ts offer/);
+  assert.match(result.details.error, /plow_start_thread/);
+  assert.match(result.details.error, /Nothing was saved or sent/);
+  assert.deepEqual(f.read(), f.ledger);
+  assert.deepEqual(f.commands, []);
+});
 
 test("owner-group failures never echo private validation details", async t => {
   const f = fixture(t);

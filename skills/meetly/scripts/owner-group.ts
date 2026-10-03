@@ -16,6 +16,10 @@ function conditions(value?: Constraints): Constraints | undefined {
 }
 
 export async function offerOwnerGroup(ctx: Context, args: GroupRequest, options: CalendarOptions = {}): Promise<object> {
+  if (ctx.messageChannel === "plow" && ctx.agentAccountId === "chat" && ctx.senderIsOwner === true
+    && ctx.requesterSenderId && ctx.sessionKey === "agent:main:main") {
+    return { error: 'This tool is group-only. Nothing was saved or sent. Continue in this DM: read meetly-group, "Owner request", find times and save the offer with calendar.ts offer (origin: owner), then follow "Offer times" delivery steps to call plow_start_thread with the guest and opener. Do not retry meetly_offer_owner_group here.' };
+  }
   if (ctx.messageChannel !== "plow" || ctx.agentAccountId !== "chat" || ctx.senderIsOwner !== true
     || !ctx.requesterSenderId || !ctx.sessionKey?.includes(":plow:group:") || !ctx.nativeChannelId) {
     return { error: "Only the owner's own Plow group turn can start this request." };

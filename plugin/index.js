@@ -9,6 +9,7 @@
 import { execFile } from "node:child_process";
 import { registerGuestTools } from "./guest-tools.js";
 import { registerOwnerTools, registerOwnerGroupTool } from "./owner-tools.js";
+import { createReplySilencer } from "./reply-silence.js";
 
 export const OWNER_DM_SESSION = "agent:main:main";
 export const SETUP_STATUS = "/opt/plow/skills/meetly/scripts/setup-status.ts";
@@ -92,10 +93,12 @@ export default {
   name: "Meetly",
   description: "Guest scheduling tools and the owner DM setup check.",
   register(api) {
+    const silence = createReplySilencer();
     registerGuestTools(api);
     registerOwnerTools(api);
     registerOwnerGroupTool(api);
     api.on("before_prompt_build", async (_event, ctx) => {
+      silence.begin(ctx);
       if (!isOwnerDmTurn(ctx)) return undefined;
       let context;
       try {
@@ -108,5 +111,8 @@ export default {
       api.logger.info(context ? `meetly setup gate prepended: ${context.split("\n")[0]}` : "meetly setup gate: unreadable status; prompt fallback applies");
       return context ? { prependContext: context } : undefined;
     });
+    api.on("after_tool_call", silence.afterTool);
+    api.on("message_sending", silence.sending);
+    api.on("session_end", silence.end);
   },
 };
