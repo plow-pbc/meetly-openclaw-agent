@@ -16,23 +16,30 @@ test("the query filters on the handle's last eight digits and never reads notes 
   assert.throws(() => contactQuery("ana"), /E\.164.*or email/);
 });
 
-test("a card matches a phone handle when one number is a suffix of the other", () => {
+test("phone candidates match only the full canonical handle across stores", () => {
   const out = [
     "S|0",
+    "R|7|Local|Number|",
+    "P|7|(47) 99254-7532",
+    "E|7|wrong@example.com",
     "S|1",
     "R|7|Ana|Souza|",
-    "P|7|(47) 99254-7532",
+    "P|7|+55 (47) 99254-7532",
     "P|7|+55 11 3333-0000",
     "E|7|ana@example.com",
     "R|8|Other|Person|",
     "P|8|+1 (650) 992-5475 32",
+    "R|9|Longer|Number|",
+    "P|9|+15547992547532",
+    "R|10|Invalid|Number|",
+    "P|10|+5547992547532junk",
   ].join("\n");
-  const people = parseContacts(out, "+5547992547532");
-  assert.deepEqual(people, [{ name: "Ana Souza", phones: ["(47) 99254-7532", "+55 11 3333-0000"], emails: ["ana@example.com"] }]);
+  const people = parseContacts(out, " +55 (47) 99254-7532 ");
+  assert.deepEqual(people, [{ name: "Ana Souza", phones: ["+55 (47) 99254-7532", "+55 11 3333-0000"], emails: ["ana@example.com"] }]);
 });
 
 test("organization stands in for a card without a person's name", () => {
-  const people = parseContacts("S|0\nR|3|||Acme\nE|3|hi@acme.com\n", "hi@acme.com");
+  const people = parseContacts("S|0\nR|3|||Acme\nE|3|Hi@Acme.com\n", " HI@ACME.COM ");
   assert.equal(people[0]!.name, "Acme");
 });
 
@@ -45,8 +52,10 @@ function bridge(output: string | undefined): typeof fetch {
 }
 
 test("lookupContact says found, not found, or no Mac, and never throws for a missing card", async () => {
-  assert.deepEqual(await lookupContact(" +55 (47) 99254-7532 ", { token: "tok", fetch: bridge("S|0\nR|7|Ana|Souza|\nP|7|47992547532\n") }),
-    { found: true, handle: "+5547992547532", name: "Ana Souza", phones: ["47992547532"], emails: [], matches: 1 });
+  assert.deepEqual(await lookupContact(" +55 (47) 99254-7532 ", { token: "tok", fetch: bridge("S|0\nR|7|Ana|Souza|\nP|7|+55 (47) 99254-7532\n") }),
+    { found: true, handle: "+5547992547532", name: "Ana Souza", phones: ["+55 (47) 99254-7532"], emails: [], matches: 1 });
+  assert.deepEqual(await lookupContact("+5547992547532", { token: "tok", fetch: bridge("S|0\nR|7|Local|Number|\nP|7|47992547532\nE|7|wrong@example.com\n") }),
+    { found: false, handle: "+5547992547532" });
   assert.deepEqual(await lookupContact("+5547992547532", { token: "tok", fetch: bridge("S|0\n") }), { found: false, handle: "+5547992547532" });
   assert.deepEqual(await lookupContact(" A@B ", { token: "tok", fetch: bridge("S|0\nR|7|Ana|Souza|\nE|7|a@b\n") }),
     { found: true, handle: "a@b", name: "Ana Souza", phones: [], emails: ["a@b"], matches: 1 });

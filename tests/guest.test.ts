@@ -22,7 +22,7 @@ const actions: [GuestAction, GuestArgs][] = [
   ["format", { format: "meet" }], ["ask_owner", { start: "2026-10-05T20:00" }], ["decline", {}],
 ];
 
-function fixture(t: TestContext) {
+function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+15551234567||\nE|1|guest@example.net||") {
   const home = tmpHome();
   const previousHome = process.env.MEETLY_HOME;
   const previousToken = process.env.PLOW_MCP_BRIDGE_TOKEN;
@@ -54,7 +54,7 @@ function fixture(t: TestContext) {
     let output: string;
     let exit_code = 0;
     if (fail.has(argv[2]!) || fail.has(argv[4]!)) { output = "PRIVATE BACKEND ERROR owner@example.com"; exit_code = 1; }
-    else if (argv[0] === "/bin/sh") output = "S|0\nR|1|Guest||\nP|1|+15551234567||\nE|1|guest@example.net||";
+    else if (argv[0] === "/bin/sh") output = contactOutput;
     else {
       const result = await command({ argv });
       output = result.output ?? result.error!;
@@ -183,6 +183,18 @@ test("pick books the chosen hold with fixed arguments, records the event, and de
   assert.ok(update.includes("--with-meet"));
   assert.match(update[update.indexOf("--private-prop") + 1]!, /^meetlyOperation=/);
   assert.deepEqual(f.commands.filter(c => c[2] === "delete"), [["plow-gog", "calendar", "delete", "primary", "hold-two", "--send-updates", "none", "--force", "--account", "owner@example.com"]]);
+});
+
+test("pick never invites a contact whose local number only shares the guest's suffix", async t => {
+  const f = fixture(t, "S|0\nR|1|Other|Person|\nP|1|(555) 123-4567||\nE|1|wrong@example.net||");
+  const result = await guestAction(context, "pick", { start: offers[0]!.start });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().status, "booked");
+  assert.equal("invitationSent" in result && result.invitationSent, false);
+  const update = f.commands.find(c => c[2] === "update")!;
+  assert.ok(update);
+  assert.ok(!update.includes("--attendees"));
+  assert.doesNotMatch(JSON.stringify(f.commands), /wrong@example.net/);
 });
 
 for (const allowed of [true, false]) test(`pick rechecks conflicts; owner-approved=${allowed}`, async t => {

@@ -5,21 +5,20 @@
 import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
 import { runOnMac, type BridgeOptions } from "./mac.ts";
-import { normalizeHandle } from "./ledger.ts";
+import { normalizeHandle, sameHandle } from "./ledger.ts";
 
 export type Person = { name: string | null; phones: string[]; emails: string[] };
 export type Lookup =
   | { found: true; handle: string; name: string | null; phones: string[]; emails: string[]; matches: number }
   | { found: false; handle: string; reason?: "mac-unavailable" };
 
-const digits = (s: string) => s.replace(/\D/g, "");
 const STRIPPED = "replace(replace(replace(replace(replace(replace(p.ZFULLNUMBER, ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')";
 
-// Lines `R|id|first|last|org`, `P|id|number`, `E|id|email` for each card with
-// the handle; the digits filter is loose, parseContacts makes it exact.
+// Lines `R|id|first|last|org`, `P|id|number`, `E|id|email` for candidate cards;
+// suffix SQL only narrows the search, parseContacts requires canonical equality.
 export function contactQuery(handle: string): string {
   handle = normalizeHandle(handle);
-  const phone = handle.startsWith("+") ? digits(handle).slice(-8) : "";
+  const phone = handle.startsWith("+") ? handle.slice(1).slice(-8) : "";
   const email = phone ? "" : handle.replaceAll("'", "''");
   const match = phone
     ? `select p.ZOWNER from ZABCDPHONENUMBER p where ${STRIPPED} like '%${phone}'`
@@ -28,12 +27,6 @@ export function contactQuery(handle: string): string {
     "select 'R', r.Z_PK, coalesce(r.ZFIRSTNAME, ''), coalesce(r.ZLASTNAME, ''), coalesce(r.ZORGANIZATION, '') from ZABCDRECORD r where r.Z_PK in m " +
     "union all select 'P', p.ZOWNER, p.ZFULLNUMBER, '', '' from ZABCDPHONENUMBER p where p.ZOWNER in m " +
     "union all select 'E', e.ZOWNER, e.ZADDRESS, '', '' from ZABCDEMAILADDRESS e where e.ZOWNER in m;";
-}
-
-function samePhone(a: string, b: string): boolean {
-  const x = digits(a);
-  const y = digits(b);
-  return Math.min(x.length, y.length) >= 8 && (x.endsWith(y) || y.endsWith(x));
 }
 
 // The cards in the output (`S|n` starts store n) that really carry the handle.
@@ -48,9 +41,8 @@ export function parseContacts(output: string, handle: string): Person[] {
     if (kind === "P") cards.get(key)?.phones.push(a);
     if (kind === "E") cards.get(key)?.emails.push(a);
   }
-  const wanted = handle.toLowerCase();
   return [...cards.values()].filter((p) =>
-    handle.startsWith("+") ? p.phones.some((n) => samePhone(n, handle)) : p.emails.some((e) => e.toLowerCase() === wanted));
+    [...p.phones, ...p.emails].some((value) => sameHandle(value, handle)));
 }
 
 export async function lookupContact(handle: string, opts: BridgeOptions = {}): Promise<Lookup> {
