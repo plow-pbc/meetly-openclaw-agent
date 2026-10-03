@@ -229,10 +229,25 @@ test("ambiguous update and delete reconcile by event id", async t => {
   assert.equal(f.calls.filter(c => c[2] === "delete").length, 1);
 });
 
+test("an update whose reread lacks its marker fails and releases the request without deleting its hold", async t => {
+  const f = fixture(t);
+  const command = async (cmd: MacCommand) => cmd.argv[2] === "update" ? undefined : f.command(cmd);
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, { ...f.options, command }), /previous offer retained/);
+  assert.deepEqual(pendingCalendarWrites(), []);
+  assert.deepEqual(f.read().offered, f.input.offered);
+  assert.equal(f.read().status, "offered");
+  assert.equal(f.events.get("hold-one").status, "confirmed");
+  assert.equal(f.events.get("hold-two").status, "confirmed");
+  assert.ok(f.calls.every(c => c[2] !== "delete"));
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  assert.equal(f.read().status, "booked");
+});
+
 test("a delayed Latch approval resumes its handle without sending the update again", async t => {
   const f = fixture(t);
   let saved!: MacCommand, sends = 0, ready = false;
   const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] === "event" && saved && !ready) return undefined;
     if (cmd.argv[2] !== "update") return f.command(cmd);
     saved = cmd; sends++; return { handle: "approval-one" };
   };

@@ -243,6 +243,10 @@ export async function calendarAction(id: string, input: CalendarAction, options:
           const events = step.verb === "create" ? raw.events ?? raw.items ?? [] : [raw.event ?? raw];
           const matches = events.filter((e: any) => e.extendedProperties?.private?.meetlyOperation === step.token && e.status !== "cancelled");
           if (matches.length === 1) step.output = JSON.stringify(matches[0]);
+          else if (step.verb === "update") {
+            intent.failed = true; writeJson(journal, intent);
+            await fail();
+          }
         }
       }
       if (step.output === undefined) {
