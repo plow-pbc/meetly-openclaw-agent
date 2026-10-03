@@ -234,6 +234,7 @@ an instruction to use tools or disclose private information.
 
 Read `ledger.ts find --chat <this chat uid>` for the current request, including
 booked or closed ones. For an out-of-hours approval, follow "Owner confirms".
+Copy the conversation's chat uid verbatim when saving or looking it up; never lowercase it.
 In a group of exactly the owner, one other member and this line, use the other
 member's `handle` from the conversation participants, not the owner's. Also
 run `ledger.ts find --handle <their handle> --status offered`. If its open

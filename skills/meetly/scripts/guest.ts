@@ -3,7 +3,7 @@ import { fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { parseEvent, type EventInfo } from "./event.ts";
-import { findByChat, findOpenByHandle, OWNER_QUESTION_LIMIT, sameHandle, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Offer, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { findByChat, findOpenByHandle, OWNER_QUESTION_LIMIT, resolveChatUid, sameHandle, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Offer, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { runOnMac } from "./mac.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
@@ -24,14 +24,14 @@ function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
   const linked = findByChat(ledger, chat);
   if (linked?.status === "booked" && sameHandle(linked.handle, sender)) return linked;
   const open = findOpenByHandle(ledger, sender, ["offered"]);
-  if (open && ((open.chatUid && open.chatUid !== chat) || (linked?.status === "offered" && linked.id !== open.id))) return;
+  if (open && ((open.chatUid && open.chatUid !== resolveChatUid(ledger, chat)) || (linked?.status === "offered" && linked.id !== open.id))) return;
   const request = open ?? linked;
   return request && sameHandle(request.handle, sender) && request.status !== "asked" ? request : undefined;
 }
 
 function resolveRequest(ctx: GuestContext): Request | undefined {
   const request = current(readJson<Ledger>(file("ledger.json"), EMPTY), ctx);
-  if (!request || request.chatUid) return request;
+  if (!request || request.chatUid === (ctx.nativeChannelId ?? ctx.deliveryContext?.to)?.replace(/^plow:/i, "")) return request;
   const ledger = updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
     const latest = current(l, ctx);
     if (!latest || latest.id !== request.id) throw new Error("request changed");

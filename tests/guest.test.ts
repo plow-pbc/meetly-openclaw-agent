@@ -178,6 +178,18 @@ test("pick books the chosen hold with fixed arguments, records the event, and de
   assert.deepEqual(f.commands.filter(c => c[2] === "delete"), [["plow-gog", "calendar", "delete", "primary", "hold-two", "--send-updates", "none", "--force", "--account", "owner@example.com"]]);
 });
 
+test("owner-group pick repairs a lowercased chat link from the runtime identity", async t => {
+  const f = fixture(t);
+  const chat = "cht_-CKlWPPl1W6OdcwwglDx1g";
+  f.ledger.requests[0]!.chatUid = chat.toLowerCase();
+  f.ledger.requests[0]!.startedInGroup = true;
+  f.save(f.ledger);
+  const result = await guestAction({ ...context, nativeChannelId: chat }, "pick", { start: offers[0]!.start });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().status, "booked");
+  assert.equal(f.request().chatUid, chat);
+});
+
 test("guest tool results retain the owner-in-group detail policy through booking", async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.startedInGroup = true; f.save(f.ledger);

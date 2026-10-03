@@ -145,7 +145,14 @@ function findOpenBySource(ledger: Ledger, input: NewRequest): Request | undefine
     : undefined;
 }
 
+export function resolveChatUid(ledger: Ledger, chatUid: string): string {
+  const matches = [...new Set(ledger.requests.flatMap(r => r.chatUid?.toLowerCase() === chatUid.toLowerCase() ? [r.chatUid] : []))];
+  // Prefer an exact identity; repair spelling only when the stored link is unambiguous.
+  return matches.includes(chatUid) || matches.length !== 1 ? chatUid : matches[0]!;
+}
+
 export function findByChat(ledger: Ledger, chatUid: string, handle?: string): Request | undefined {
+  chatUid = resolveChatUid(ledger, chatUid);
   // Resolve an open request for the sender even when it has not been linked
   // yet. This lets a replacement offer supersede a closed request in the chat.
   // An `asked` request has no group yet, so no chat ever resolves to one.
