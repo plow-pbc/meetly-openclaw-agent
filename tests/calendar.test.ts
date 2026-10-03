@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { calendarAction, pendingCalendarWrites, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
 import { addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
-import type { MacCommand, MacOutcome } from "../skills/meetly/scripts/mac.ts";
+import { macOutcome, type MacCommand, type MacOutcome } from "../skills/meetly/scripts/mac.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { tmpHome } from "./helpers.ts";
@@ -177,6 +177,45 @@ for (const conflicting of [[0], [1], [0, 1]]) {
     assert.equal(f.calls.filter(c => c[2] === "create").length, 2 - conflicting.length);
     assert.deepEqual(pendingCalendarWrites(), []);
     for (const index of conflicting) assert.equal(f.events.get(`busy-${index}`).status, "confirmed");
+  });
+}
+
+for (const refused of [[0], [1], [0, 1]]) for (const pending of [false, true]) {
+  test(`Latch busy refusals skip offer slots ${refused.join(",")} (${pending ? "polled" : "immediate"})`, async t => {
+    const f = fixture(t), before = f.read().offered;
+    const refusal = async () => {
+      const error = { status: "error", error: "the slot is busy — owner@example.com: busy 2026-10-05T10:00:00Z/2026-10-05T10:30:00Z; could not check: holidays. Follow the Google Workspace skill's conflict rule before re-sending the same command with --confirm-conflict; this refusal carries busy times only." };
+      const result = await macOutcome(pending ? "plow_get_result" : "plow_run_command", {}, { token: "test", fetch: async () => new Response(JSON.stringify({
+        result: { content: [{ type: "text", text: JSON.stringify(pending ? { status: "ready", result: error } : error) }] },
+      })) });
+      assert.deepEqual(result, { error: "Calendar slot is busy", code: "calendar-conflict" });
+      return result;
+    };
+    const writes: string[][] = [];
+    const command = async (cmd: MacCommand) => {
+      if (cmd.argv[2] === "create") {
+        writes.push(cmd.argv);
+        if (refused.includes(writes.length - 1)) return pending ? { handle: "busy-slot" } : refusal();
+      }
+      return f.command(cmd);
+    };
+    // The selected-calendar conflict gate sees a busy calendar outside the
+    // configured preflight scope, even though these reads report no conflicts.
+    for (const event of f.events.values()) event.status = "cancelled";
+    const options = { ...f.options, command, poll: async () => refusal() };
+    const offer = calendarAction("r_one", { action: "offer", request: f.offer }, options);
+    if (refused.length === f.offer.offered.length) {
+      await assert.rejects(offer, /previous offer retained/);
+      assert.deepEqual(f.read().offered, before);
+    } else {
+      const result = await offer;
+      assert.deepEqual(result.request.offered, [{ ...f.offer.offered[1 - refused[0]!]!, holdId: "new-1" }]);
+      assert.equal(f.events.get("new-1").status, "confirmed");
+      assert.deepEqual(result.request.holdCleanup, []);
+    }
+    assert.equal(writes.length, 2, "attempt each candidate once, including after a refusal");
+    assert.ok(writes.every(argv => !argv.includes("--confirm-conflict")), "never retry a refusal with an override");
+    assert.deepEqual(pendingCalendarWrites(), []);
   });
 }
 

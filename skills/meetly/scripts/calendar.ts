@@ -217,16 +217,23 @@ export async function calendarAction(id: string, input: CalendarAction, options:
           ...step.args, "--from", step.start, "--to", step.end, "--private-prop", `meetlyOperation=${step.token}`, "--json"], step.account);
         if (outcome && "output" in outcome) step.output = outcome.output;
         if (outcome && "handle" in outcome) step.handle = outcome.handle;
-        if (outcome && "error" in outcome) intent.failed = true;
+        if (outcome && "error" in outcome) {
+          if (intent.input.action === "offer" && outcome.code === "calendar-conflict") step.skipped = true;
+          else intent.failed = true;
+        }
         writeJson(journal, intent);
       }
       if (step.handle && step.output === undefined && !intent.failed) {
         const outcome = await poll(step.handle).catch(() => undefined);
         if (outcome && "output" in outcome) step.output = outcome.output;
-        if (outcome && "error" in outcome) intent.failed = true;
+        if (outcome && "error" in outcome) {
+          if (intent.input.action === "offer" && outcome.code === "calendar-conflict") step.skipped = true;
+          else intent.failed = true;
+        }
         writeJson(journal, intent);
       }
       if (intent.failed) await fail();
+      if (step.skipped) continue;
       if (step.output === undefined) {
         const output = await call(step.verb === "create"
           ? ["events", "primary", "--from", step.start, "--to", step.end, "--private-prop-filter", `meetlyOperation=${step.token}`, "--all-pages", "--json"]

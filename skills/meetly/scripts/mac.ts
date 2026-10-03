@@ -11,7 +11,7 @@ export const LATCH_ABOUT_URL = "https://plow.co/latch";
 export type BridgeOptions = { fetch?: typeof fetch; url?: string; token?: string };
 export type MacCommand = { argv: string[]; readPaths: string[]; goal: string; timeoutMs?: number };
 
-export type MacOutcome = { output: string } | { error: string } | { handle: string };
+export type MacOutcome = { output: string } | { error: string; code?: "calendar-conflict" } | { handle: string };
 
 // Keep explicit failures distinct from unknown delivery for calendar reconciliation.
 export async function macOutcome(name: string, args: unknown, opts: BridgeOptions = {}, timeoutMs = 20_000): Promise<MacOutcome | undefined> {
@@ -33,6 +33,11 @@ export async function macOutcome(name: string, args: unknown, opts: BridgeOption
   let out = JSON.parse(text);
   if (out.status === "ready") out = out.result;
   if (out.status === "pending" && typeof out.handle === "string") return { handle: out.handle };
+  // Latch refuses before creating the event. Keep the reason without exposing
+  // its private busy times, so an offer can try its remaining candidates.
+  if (out.status === "error" && typeof out.error === "string" && out.error.startsWith("the slot is busy — ")) {
+    return { error: "Calendar slot is busy", code: "calendar-conflict" };
+  }
   if (["denied", "blocked", "failed", "error"].includes(out.status)) return { error: "Mac command refused or failed" };
   if (typeof out.exit_code === "number" && out.exit_code !== 0) return { error: "Mac command failed" };
   if (out.exit_code === 0 && typeof out.output === "string") return { output: out.output };
