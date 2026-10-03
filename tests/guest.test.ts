@@ -279,7 +279,7 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
     if (tool.name !== "meetly_offer_owner_group") assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap", "constraints"].includes(k)));
   } });
   assert.deepEqual(names, JSON.parse(readFileSync(new URL("../plugin/openclaw.plugin.json", import.meta.url), "utf8")).contracts.tools);
-  assert.deepEqual(hooks, ["before_prompt_build", "after_tool_call", "message_sending", "agent_end", "session_end"]);
+  assert.deepEqual(hooks, ["before_prompt_build", "after_tool_call", "reply_payload_sending", "agent_end", "session_end"]);
 });
 
 test("pick books the chosen hold with fixed arguments, records the event, and deletes only the other holds", async t => {
