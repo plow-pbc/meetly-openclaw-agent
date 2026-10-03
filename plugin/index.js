@@ -9,7 +9,7 @@
 import { execFile } from "node:child_process";
 import { registerGuestTools } from "./guest-tools.js";
 import { registerOwnerTools, registerOwnerGroupTool } from "./owner-tools.js";
-import { createReplySilencer } from "./reply-silence.js";
+import { getReplySilencer } from "./reply-silence.js";
 
 export const OWNER_DM_SESSION = "agent:main:main";
 export const SETUP_STATUS = "/opt/plow/skills/meetly/scripts/setup-status.ts";
@@ -93,7 +93,7 @@ export default {
   name: "Meetly",
   description: "Guest scheduling tools and the owner DM setup check.",
   register(api) {
-    const silence = createReplySilencer();
+    const silence = getReplySilencer();
     registerGuestTools(api);
     registerOwnerTools(api);
     registerOwnerGroupTool(api);
@@ -112,7 +112,8 @@ export default {
       return context ? { prependContext: context } : undefined;
     });
     api.on("after_tool_call", silence.afterTool);
-    api.on("reply_payload_sending", silence.sending);
+    api.on("message_sending", silence.sending);
+    api.on("reply_payload_sending", silence.sendingReply);
     api.on("agent_end", silence.endTurn);
     api.on("session_end", silence.end);
   },

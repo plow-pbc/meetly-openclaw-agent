@@ -259,7 +259,7 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
     if (tool.name !== "meetly_offer_owner_group") assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap", "constraints"].includes(k)));
   } });
   assert.deepEqual(names, JSON.parse(readFileSync(new URL("../plugin/openclaw.plugin.json", import.meta.url), "utf8")).contracts.tools);
-  assert.deepEqual(hooks, ["before_prompt_build", "after_tool_call", "reply_payload_sending", "agent_end", "session_end"]);
+  assert.deepEqual(hooks, ["before_prompt_build", "after_tool_call", "message_sending", "reply_payload_sending", "agent_end", "session_end"]);
 });
 
 test("every guest tool drops blank optional arguments and preserves required and nonempty values", async () => {
@@ -962,4 +962,18 @@ test("owner-group lunch resolves its default duration without model-supplied con
   assert.equal(f.request().meal, "lunch");
   assert.equal(f.request().durationMin, 60);
   assert.equal(f.request().offered[0]!.account, "owner@example.com");
+});
+
+test("a topic ending in the guest name stays separate from hold titles and owner question labels", async t => {
+  const f = fixture(t);
+  const { origin, handle, chatUid, constraints, allowOverlap, format, locale } = f.request();
+  await calendarAction("request-one", { action: "offer", request: {
+    origin, handle, name: "Kai", chatUid, constraints, allowOverlap, format, locale, topic: "lunch with Kai", durationMin: 30,
+    offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account: "owner@example.com" }],
+  } });
+  assert.equal(f.request().topic, "lunch");
+  const hold = f.commands.find(c => c[2] === "create")!;
+  assert.equal(hold[hold.indexOf("--summary") + 1], "Hold: lunch with Kai");
+  await f.act(context, "ask_owner", { question: "Should I bring the budget numbers?" });
+  assert.deepEqual(f.ownerLines, ["Kai asked in your lunch thread: 'Should I bring the budget numbers?'. Reply there, or tell me what to say."]);
 });

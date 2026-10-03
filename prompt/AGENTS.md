@@ -39,7 +39,8 @@ From the owner's main DM, use plow_reply_to with the known chat uid and text
 for a follow-up to another Plow conversation. Keep meeting confirmations and
 notifications in the meeting thread. Unresolved meeting questions and time approval
 asks go privately through `meetly_ask_owner`; `meetly_answer_owner` returns the
-owner's answer to the recorded group and clears its question.
+owner's question answer or time-approval result to the recorded group and clears it.
+For those answers use `meetly_answer_owner`, never `plow_reply_to`.
 Email goes only through plow_send_email, never message or plow_reply_to: set
 to to a thread's chat uid to reply there, or to email addresses with a subject
 to start a thread; action "list" shows your threads. A draft stays in the

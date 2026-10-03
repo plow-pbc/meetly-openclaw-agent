@@ -53,7 +53,9 @@ The script resolves the meal window and duration; an explicit `--duration` wins.
 Persist the search result's `durationMin` with its offered slots, rather than
 computing a duration yourself.
 When the owner changes the duration, update any duration wording in `topic`
-and save it with the replacement offer. For example, "30-minute call" becomes
+and save it with the replacement offer. Keep `topic` to the meeting purpose
+or meal ("lunch", "budget review"), without "with <guest name>"; `name`
+is stored separately and the calendar title adds it. For example, "30-minute call" becomes
 "60-minute call" when changed to an hour. The saved topic supplies calendar
 titles and the group label in owner notifications.
 

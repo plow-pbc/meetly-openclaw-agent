@@ -185,6 +185,16 @@ function checkOffers(offered: unknown): Offer[] {
   return offered as Offer[];
 }
 
+// The guest is a separate field; calendar titles append it and owner messages name it first.
+export function meetingTopic(request: Pick<Request, "topic" | "name" | "handle">): string {
+  let topic = request.topic.trim();
+  const suffix = ` with ${request.name?.trim() || request.handle}`.toLowerCase();
+  while (topic.length > suffix.length && topic.toLowerCase().endsWith(suffix)) {
+    topic = topic.slice(0, -suffix.length).trimEnd();
+  }
+  return topic;
+}
+
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
   input = { ...input, handle: normalizeHandle(input.handle) };
   if ("calendarRevision" in input) throw new Error("calendarRevision is managed by calendar.ts");
@@ -195,6 +205,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   if (input.origin !== "inbound" && input.origin !== "owner" && input.origin !== "owner-group") throw new Error(`origin must be inbound, owner or owner-group, got ${input.origin}`);
   if (input.origin === "owner-group" && !input.chatUid) throw new Error("an owner-group request requires its chat uid");
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
+  input = { ...input, topic: meetingTopic(input) };
   if (!Number.isInteger(input.durationMin) || input.durationMin <= 0) throw new Error("durationMin must be a positive whole number");
   if (input.meal !== undefined && !["lunch", "dinner", "coffee"].includes(input.meal)) throw new Error("meal must be lunch, dinner or coffee");
   const status = input.status ?? "offered";
@@ -286,6 +297,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
     if (value === null && (NULLABLE as readonly string[]).includes(key)) delete updated[key as (typeof NULLABLE)[number]];
     else if (value !== undefined) (updated as Record<string, unknown>)[key] = value;
   }
+  updated.topic = meetingTopic(updated);
   // A link belongs to a Meet: moving to another format drops it, and a link
   // is never set on a meeting that is not one.
   if (updated.meetUrl !== undefined && updated.format !== "meet") {

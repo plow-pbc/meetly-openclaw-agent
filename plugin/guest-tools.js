@@ -1,3 +1,5 @@
+import { withMeetlySend } from "./reply-silence.js";
+
 const object = (properties = {}, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 const text = description => ({ type: "string", description });
 const start = text("An offered ISO start time; for an owner approval request, ISO with offset or YYYY-MM-DDTHH:MM in the owner's timezone.");
@@ -37,11 +39,11 @@ export async function sendPlowMessage(api, context, to, text, kind, outbound = l
     storePath: session.resolveStorePath(cfg.session?.store, { agentId: route.agentId }),
     sessionKey: route.sessionKey, channel: "plow", accountId: "chat", to, createIfMissing: true,
   });
-  const result = await sendDurableMessageBatch({
+  const result = await withMeetlySend(() => sendDurableMessageBatch({
     cfg, channel: "plow", accountId: "chat", to, payloads: [{ text }],
     session: buildOutboundSessionContext({ cfg, ...route, conversationType: kind }),
     mirror: { agentId: route.agentId, sessionKey: route.sessionKey }, skipQueue: true,
-  });
+  }));
   if (result.status !== "sent") throw new Error("Message delivery is unknown.");
 }
 
