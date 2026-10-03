@@ -629,10 +629,14 @@ test("ask-owner sends a capped human question to the fixed owner DM and mirrors 
   const question = 'Could we discuss "the new project"? ' + "x".repeat(600);
   const result = await f.tools.get("meetly_ask_owner")!.execute("ask", { question, to: "intruder", chatUid: "intruder" });
   assert.doesNotMatch(JSON.stringify(result), /error|intruder/);
+  const reply = JSON.parse(result.content[0]!.text);
+  assert.equal(reply.silent, true);
+  assert.equal(reply.ownerAskSent, true);
+  assert.equal(reply.message, undefined);
   const saved = { question: question.slice(0, 500), askedAt: new Date(now).toISOString() };
   assert.deepEqual(f.request().pendingOwner, saved);
   assert.deepEqual(f.commands, []);
-  assert.deepEqual(f.ownerLines, [`Guest in your Lunch group asks: ${JSON.stringify(saved.question)} — what should I tell them?`]);
+  assert.deepEqual(f.ownerLines, [`Guest asked in your Lunch thread: '${saved.question}'. Reply there, or tell me what to say.`]);
   assert.doesNotMatch(f.ownerLines[0]!, /chat-one|request-one|plow_reply_to|ledger|owner@example.com/);
   assert.deepEqual(f.deliveries, [{
     cfg: {}, channel: "plow", accountId: "chat", to: "plow-owner", payloads: [{ text: f.ownerLines[0] }],
@@ -674,6 +678,7 @@ for (const failure of ["unknown", "throw"] as const) test(`ask-owner ${failure} 
   const ask = f.tools.get("meetly_ask_owner")!;
   const result = await ask.execute("one", { question: "Which project?" });
   assert.match(result.content[0]!.text, /could not confirm delivery/);
+  assert.equal(JSON.parse(result.content[0]!.text).silent, true);
   assert.doesNotMatch(result.content[0]!.text, /PRIVATE/);
   assert.ok(f.request().pendingOwner);
   assert.match((await ask.execute("two", { question: "Which project?" })).content[0]!.text, /already open/);
@@ -859,7 +864,7 @@ for (const question of ['"Should I bring the budget numbers?"', '“Should I bri
   const f = fixture(t);
   await f.act(context, "ask_owner", { question });
   assert.deepEqual(f.request().pendingOwner, { question: "Should I bring the budget numbers?", askedAt: new Date(now).toISOString() });
-  assert.deepEqual(f.ownerLines, ['Guest in your Lunch group asks: "Should I bring the budget numbers?" — what should I tell them?']);
+  assert.deepEqual(f.ownerLines, ["Guest asked in your Lunch thread: 'Should I bring the budget numbers?'. Reply there, or tell me what to say."]);
 });
 
 
@@ -899,7 +904,7 @@ test("a duration change's replacement topic reaches holds, booking titles and th
   assert.equal(booking[booking.indexOf("--summary") + 1], "60-minute call with Guest");
   assert.equal(f.request().durationMin, 60);
   await f.act(context, "ask_owner", { question: "Should I bring the budget numbers?" });
-  assert.deepEqual(f.ownerLines, ['Guest in your 60-minute call group asks: "Should I bring the budget numbers?" — what should I tell them?']);
+  assert.deepEqual(f.ownerLines, ["Guest asked in your 60-minute call thread: 'Should I bring the budget numbers?'. Reply there, or tell me what to say."]);
 });
 
 test("an owner duration change keeps an unanswered opener question suppressed on guest re-offers", async t => {
