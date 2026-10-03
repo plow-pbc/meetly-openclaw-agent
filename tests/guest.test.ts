@@ -670,7 +670,8 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
     sessionKey: "agent:main:plow:group:cht_mixed", nativeChannelId: "cht_MiXeD" };
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory(ctx); } }, offerOwnerGroup);
   assert.equal(tool.parameters.properties.chatUid, undefined);
-  const args = { handle: context.requesterSenderId, topic: "Planning", name: "", format: "", location: "", locale: "", durationMin: "", offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
+  const args = { handle: context.requesterSenderId, topic: "Planning", name: "", format: "", location: "", locale: "", durationMin: "", constraints: { days: [], after: "", before: "", from: "", to: "" },
+    proposed: { days: ["tue"], from: "2026-10-06", to: "2026-10-06", after: "", before: "" }, offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
   const result = await tool.execute("offer", args);
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.request().chatUid, "cht_MiXeD");
@@ -687,6 +688,8 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
   assert.deepEqual(tool.parameters.properties.constraints.properties.days.items.enum, ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
   assert.equal(tool.parameters.properties.constraints.properties.after.description, "Earliest time, HH:MM.");
   assert.equal(tool.parameters.properties.proposed.properties, tool.parameters.properties.constraints.properties);
+  assert.equal(f.request().constraints, undefined);
+  assert.deepEqual(f.request().proposed, { days: ["tue"], from: "2026-10-06", to: "2026-10-06" });
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "other-group" }, "view"));
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "cht_mixed" }, "view"));
   assert.ok(!("error" in await guestAction({ ...context, nativeChannelId: "cht_MiXeD" }, "view")));

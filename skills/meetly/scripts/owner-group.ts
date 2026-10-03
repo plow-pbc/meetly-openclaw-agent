@@ -3,10 +3,16 @@ import { fetchBusy } from "./busy.ts";
 import { durationFor } from "./slots.ts";
 import { loadConfig } from "./config.ts";
 import { view } from "./request-view.ts";
-import type { NewRequest } from "./ledger.ts";
+import type { Constraints, NewRequest } from "./ledger.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
 type GroupRequest = Pick<NewRequest, "handle" | "name" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale"> & { allowOverlapTitles?: string[]; durationMin?: number; offered: { start: string; end: string }[] };
+
+// Tool callers may fill unused optional fields with empty values.
+function conditions(value?: Constraints): Constraints | undefined {
+  const entries = Object.entries(value ?? {}).filter(([, v]) => Array.isArray(v) ? v.length > 0 : typeof v === "string" && v.trim());
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, options: CalendarOptions = {}): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -24,7 +30,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
       if (busy.degraded.length || busy.unknownAfter) throw new Error("calendar coverage incomplete");
       allowOverlap = busy.allowOverlap;
     }
-    const { request } = await offerRequest({ handle, name, topic, meal, durationMin: durationFor({ config, meal, durationMin }), constraints, proposed, format, location, locale, ...(allowOverlap ? { allowOverlap } : {}),
+    const { request } = await offerRequest({ handle, name, topic, meal, durationMin: durationFor({ config, meal, durationMin }), constraints: conditions(constraints), proposed: conditions(proposed), format, location, locale, ...(allowOverlap ? { allowOverlap } : {}),
       offered: offered.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),
       origin: "owner-group", chatUid: chat }, {
       ...options,
