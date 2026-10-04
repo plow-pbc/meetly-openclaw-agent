@@ -75,7 +75,7 @@ thread. For a message to the owner with no meeting thread, use
       `sourceRowid` = the request's rowid, `topic`, `meal` if applicable, and
       `durationMin` only when explicitly stated; otherwise omit it and let the
       ledger resolve the meal/config default. Include `proposed` for any times they proposed, their `locale`, and
-      `format`: the format if their words say it (`meetly-group` "Meeting
+      `format`: the format if their words say it (`meetly` "Meeting
       format"; otherwise `unknown`). No holds, no group, no message to them.
       For "next week", run `time.ts next_week --anchor <source message timestamp>
       --timezone <config.timezone>` and save its returned `from`/`to` in
