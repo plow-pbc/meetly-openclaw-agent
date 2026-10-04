@@ -12,14 +12,14 @@ import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { calendarEvent as event, fakeCalendar, tmpHome } from "./helpers.ts";
 
 const now = Date.parse("2026-10-02T08:00:00Z");
-const context = { messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "chat-one", requesterSenderId: "+15551234567" };
+const context = { messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "chat-one", requesterSenderId: "+15551234567", config: {} };
 const offers = [
   { start: "2026-10-05T10:00:00Z", end: "2026-10-05T10:30:00Z", holdId: "hold-one", account: "owner@example.com" },
   { start: "2026-10-06T10:00:00Z", end: "2026-10-06T10:30:00Z", holdId: "hold-two", account: "owner@example.com" },
 ];
 const actions: [GuestAction, GuestArgs][] = [
   ["view", {}], ["pick", { start: offers[0]!.start }], ["other_times", { after: "11:00" }],
-  ["format", { format: "meet" }], ["ask_owner", { start: "2026-10-05T20:00" }], ["decline", {}],
+  ["format", { format: "meet" }], ["ask_owner", { question: "Which entrance?" }], ["decline", {}],
 ];
 
 function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+15551234567||\nE|1|guest@example.net||") {
@@ -77,11 +77,34 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     if (previousToken === undefined) delete process.env.PLOW_MCP_BRIDGE_TOKEN; else process.env.PLOW_MCP_BRIDGE_TOKEN = previousToken;
     rmSync(home, { recursive: true, force: true });
   });
+  const ownerLines: string[] = [];
+  const deliveries: Record<string, any>[] = [];
+  const routes: Record<string, any>[] = [];
+  const delivery = { status: "sent", fail: false };
+  const ownerRoute = { agentId: "main", sessionKey: "agent:main:main" };
+  const sendOwner = async (text: string) => { ownerLines.push(text); };
+  const outbound = async () => ({
+    buildOutboundSessionContext: (args: object) => args,
+    sendDurableMessageBatch: async (args: Record<string, any>) => {
+      assert.ok(read().requests[0]!.pendingOwner, "save the question before sending");
+      deliveries.push(args);
+      if (delivery.fail) throw new Error("PRIVATE TRANSPORT ERROR");
+      ownerLines.push(args.payloads[0].text);
+      return { status: delivery.status };
+    },
+  });
   const tools = new Map<string, { execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
-  registerGuestTools({ registerTool(factory: (ctx: GuestContext) => { name: string; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
+  registerGuestTools({ runtime: { channel: {
+    routing: { resolveAgentRoute(args: object) {
+      assert.deepEqual(args, { cfg: context.config, channel: "plow", accountId: "chat", peer: { kind: "direct", id: "plow-owner" } });
+      return ownerRoute;
+    } },
+    session: { resolveStorePath: () => "/sessions", updateLastRoute: async (args: Record<string, any>) => { routes.push(args); } },
+  } }, registerTool(factory: (ctx: GuestContext) => { name: string; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
     const tool = factory(context); tools.set(tool.name, tool);
-  } }, guestAction);
-  return { home, read, save, ledger, events, commands, fail, lost, hooks, tools, request: () => read().requests[0]! };
+  } }, guestAction, outbound);
+  const act = (ctx: GuestContext, action: GuestAction, args: GuestArgs = {}) => guestAction(ctx, action, args, sendOwner);
+  return { home, read, save, ledger, events, commands, fail, lost, hooks, tools, act, ownerLines, deliveries, routes, delivery, request: () => read().requests[0]! };
 }
 
 for (const [action, args] of actions) test(`${action} refuses missing or mismatched runtime sender/chat and ignores identity arguments`, async t => {
@@ -102,10 +125,51 @@ for (const [action, args] of actions) test(`${action} refuses an unlinked offer 
   delete f.ledger.requests[0]!.chatUid;
   f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "other", chatUid: "other-chat", handle: "+15557654321" });
   f.save(f.ledger);
-  const result = await guestAction(context, action, args);
+  const result = await f.act(context, action, args);
   assert.match(JSON.stringify(result), /No scheduling request matches/);
   assert.deepEqual(f.read(), f.ledger);
   assert.deepEqual(f.commands, []);
+});
+
+test("other-times files a free outside-window approval without replacing holds", async t => {
+  const args = { start: "2026-10-05T20:00" };
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints!.before = "21:00";
+  f.save(f.ledger);
+  const tool = f.tools.get("meetly_other_times")!;
+  const result = JSON.parse((await tool.execute("ask", args)).content[0]!.text);
+  assert.equal(result.ownerAskSent, true);
+  assert.equal(result.message, "I've asked Alex and will get back to you here when Alex replies.");
+  assert.equal(result.askDetails, false);
+  assert.deepEqual(f.request().offered, offers);
+  assert.equal(f.request().status, "offered");
+  assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T20:00:00+00:00", end: "2026-10-05T20:30:00+00:00", askedAt: new Date(now).toISOString() });
+  assert.equal(f.deliveries.length, 1);
+  assert.ok(f.commands.every(c => c[2] === "events"));
+  const again = JSON.parse((await tool.execute("again", args)).content[0]!.text);
+  assert.match(again.error, /already open/);
+  assert.notEqual(again.ownerAskSent, true);
+  assert.equal(f.deliveries.length, 1);
+});
+
+test("an exact in-window other-times request holds that time without asking the owner", async t => {
+  const f = fixture(t);
+  const result = await f.act(context, "other_times", { start: "2026-10-05T11:15" });
+  assert.ok(!("error" in result));
+  assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, false);
+  assert.deepEqual(f.request().offered.map(o => [o.start, o.end]), [["2026-10-05T11:15:00+00:00", "2026-10-05T11:45:00+00:00"]]);
+  assert.equal(f.ownerLines.length, 0);
+});
+
+for (const reason of ["busy", "owner constraints"] as const) test(`an exact other-times request falls back when blocked by ${reason}`, async t => {
+  const f = fixture(t);
+  if (reason === "busy") f.events.set("conflict", event("conflict", "2026-10-05T11:15:00Z", "2026-10-05T11:45:00Z"));
+  else { f.ledger.requests[0]!.constraints!.after = "12:00"; f.save(f.ledger); }
+  const result = await f.act(context, "other_times", { start: "2026-10-05T11:15" });
+  assert.ok(!("error" in result));
+  assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true);
+  assert.ok(f.request().offered.every(o => o.start !== "2026-10-05T11:15:00+00:00"));
+  assert.equal(f.ownerLines.length, 0);
 });
 
 test("decline requires the guest's clear refusal, never an other-times refusal", () => {
@@ -115,13 +179,23 @@ test("decline requires the guest's clear refusal, never an other-times refusal",
   } });
   assert.match(descriptions.get("meetly_decline")!, /Only use when the guest clearly declines the meeting/);
   assert.match(descriptions.get("meetly_decline")!, /A refusal from meetly_other_times is not a guest decline/);
+  assert.match(descriptions.get("meetly_other_times")!, /automatically asks the owner/);
+  assert.match(descriptions.get("meetly_other_times")!, /ownerAskSent is true/);
+  assert.match(descriptions.get("meetly_other_times")!, /ask for a specific date and time if needed/);
+  assert.match(descriptions.get("meetly_ask_owner")!, /Never invent a question or turn your own uncertainty into a guest question/);
+  assert.match(descriptions.get("meetly_ask_owner")!, /ownerAskSent is true/);
+  assert.match(descriptions.get("meetly_ask_owner")!, /Do not paraphrase or add a guest-asks prefix/);
 });
 
 test("ordinary plugin tool factories retain context, have no identity arguments, and declare their contracts", () => {
   const names: string[] = [];
   const hooks: string[] = [];
-  plugin.register({ on(name: string) { hooks.push(name); }, registerTool(factory: (ctx: object) => { name: string; parameters: { properties: object } }) {
+  plugin.register({ on(name: string) { hooks.push(name); }, registerTool(factory: (ctx: object) => { name: string; parameters: { properties: object; required: string[] } }) {
     const tool = factory(context); names.push(tool.name);
+    if (tool.name === "meetly_ask_owner") {
+      assert.deepEqual(Object.keys(tool.parameters.properties), ["question"]);
+      assert.deepEqual(tool.parameters.required, ["question"]);
+    }
     assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap", "constraints"].includes(k)));
   } });
   assert.deepEqual(names, JSON.parse(readFileSync(new URL("../plugin/openclaw.plugin.json", import.meta.url), "utf8")).contracts.tools);
@@ -218,12 +292,19 @@ test("decline drops the open request, clears approval, deletes holds and queues 
   assert.equal(f.commands.filter(c => c[2] === "delete").length, 2);
 });
 
-test("outside-hours request records approval without creating or booking anything", async t => {
+test("an outside-hours refusal can proceed to owner approval without dropping or booking the request", async t => {
   const f = fixture(t);
-  const result = await guestAction(context, "ask_owner", { start: "2026-10-05T20:00" });
+  f.ledger.requests[0]!.constraints!.before = "21:00";
+  f.save(f.ledger);
+  for (const date of ["2026-10-05", "2026-10-06"]) f.events.set(date, event(date, `${date}T09:00:00Z`, `${date}T18:00:00Z`));
+  const refused = await guestAction(context, "other_times", { after: "20:00" });
+  assert.ok("error" in refused);
+  assert.deepEqual(f.read(), f.ledger);
+  const result = await f.act(context, "other_times", { start: "2026-10-05T20:00" });
   assert.ok(!("error" in result)); assert.equal(f.request().status, "offered");
   assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T20:00:00+00:00", end: "2026-10-05T20:30:00+00:00", askedAt: new Date(now).toISOString() });
   assert.ok(f.commands.every(c => c[2] === "events"));
+  assert.equal(f.ownerLines.length, 1);
 });
 
 test("format before and after booking updates the event and records only the backend Meet link", async t => {
@@ -248,8 +329,8 @@ test("format before and after booking updates the event and records only the bac
 
 for (const status of ["booked", "dropped", "expired"] as const) test(`${status} stays this chat's request; guest cannot rebook or cancel it`, async t => {
   const f = fixture(t); f.ledger.requests[0]!.status = status; f.save(f.ledger);
-  for (const [action, args] of actions.filter(([a]) => a !== "format")) {
-    const result = await guestAction(context, action, args);
+  for (const [action, args] of actions.filter(([a]) => a !== "format" && !(status === "booked" && a === "ask_owner"))) {
+    const result = await f.act(context, action, args);
     assert.equal((result as { status: string }).status, status);
   }
   assert.deepEqual(f.commands, []); assert.deepEqual(f.read(), f.ledger);
@@ -257,7 +338,7 @@ for (const status of ["booked", "dropped", "expired"] as const) test(`${status} 
 
 test("calendar failure leaks no event data and leaves the offer untouched", async t => {
   const f = fixture(t); f.fail.add("events");
-  for (const action of ["pick", "other_times", "ask_owner"] as const) {
+  for (const action of ["pick", "other_times"] as const) {
     const result = await guestAction(context, action, { start: offers[0]!.start });
     assert.ok("error" in result); assert.doesNotMatch(JSON.stringify(result), /PRIVATE|owner@example.com/);
   }
@@ -270,6 +351,7 @@ for (const scenario of ["different open request in chat", "sender offer linked e
   if (scenario === "different open request in chat") f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "different", handle: "+15557654321" });
   else if (scenario === "sender offer linked elsewhere") {
     f.ledger.requests[0]!.chatUid = "another-chat";
+    f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "closed", status: "booked", chatUid: context.nativeChannelId, handle: "+15557654321" });
   } else { f.ledger.requests[0]!.status = "asked"; delete f.ledger.requests[0]!.chatUid; }
   f.save(f.ledger);
   for (const [action, args] of actions) assert.match(JSON.stringify(await guestAction(context, action, args)), /No scheduling request matches/);
@@ -286,11 +368,11 @@ test("an unlinked replacement cannot be claimed from a closed group", async t =>
   assert.deepEqual(f.commands, []);
 });
 
-for (const action of ["pick", "ask_owner"] as const) test(`${action} cannot bypass the current offer or authorize a busy time`, async t => {
+test("pick cannot bypass the current offer", async t => {
   const f = fixture(t);
-  const start = action === "pick" ? "2026-10-05T12:00:00Z" : "2026-10-05T20:00:00Z";
+  const start = "2026-10-05T12:00:00Z";
   f.events.set("conflict", event("private", start, start.replace(":00:00Z", ":30:00Z")));
-  const result = await guestAction(context, action, { start });
+  const result = await guestAction(context, "pick", { start });
   assert.ok("error" in result); assert.deepEqual(f.read(), f.ledger);
   assert.ok(f.commands.every(c => c[2] === "events"));
 });
@@ -387,7 +469,7 @@ test('a failed replacement through the writer preserves the original offer and l
 
 for (const action of ['pick', 'other_times'] as const) test(`guest ${action} reconciles a lost write response through the writer`, async t => {
   const f = fixture(t); f.lost.add(action === 'pick' ? 'update' : 'create');
-  const result = await guestAction(context, action, { start: offers[0]!.start, after: '11:00' });
+  const result = await guestAction(context, action, action === 'pick' ? { start: offers[0]!.start } : { after: '11:00' });
   assert.ok(!('error' in result), JSON.stringify(result));
   assert.ok(f.request().calendarRevision);
   if (action === 'pick') {
@@ -444,4 +526,112 @@ test('formatted full phone identity matches exactly and survives canonical ledge
   assert.ok(!('error' in result), JSON.stringify(result));
   f.ledger.requests[0]!.handle = '+1 (555) 123-4567'; f.save(f.ledger);
   assert.ok(!('error' in await guestAction(context, 'view')));
+});
+
+test("ask-owner sends a capped human question to the fixed owner DM and mirrors the owner session", async t => {
+  const f = fixture(t);
+  const question = 'Could we discuss "the new project"? ' + "x".repeat(600);
+  const result = await f.tools.get("meetly_ask_owner")!.execute("ask", { question, to: "intruder", chatUid: "intruder" });
+  assert.doesNotMatch(JSON.stringify(result), /error|intruder/);
+  const saved = { question: question.slice(0, 500), askedAt: new Date(now).toISOString() };
+  assert.deepEqual(f.request().pendingOwner, saved);
+  assert.deepEqual(f.commands, []);
+  assert.deepEqual(f.ownerLines, [`Guest in your Lunch group asks: ${JSON.stringify(saved.question)} — what should I tell them?`]);
+  assert.doesNotMatch(f.ownerLines[0]!, /chat-one|request-one|plow_reply_to|ledger|owner@example.com/);
+  assert.deepEqual(f.deliveries, [{
+    cfg: {}, channel: "plow", accountId: "chat", to: "plow-owner", payloads: [{ text: f.ownerLines[0] }],
+    session: { cfg: {}, agentId: "main", sessionKey: "agent:main:main", conversationType: "direct" },
+    mirror: { agentId: "main", sessionKey: "agent:main:main" }, skipQueue: true,
+  }]);
+  assert.deepEqual(f.routes, [{ storePath: "/sessions", sessionKey: "agent:main:main", channel: "plow", accountId: "chat", to: "plow-owner", createIfMissing: true }]);
+  const view = await guestAction(context, "view");
+  assert.deepEqual((view as { pendingOwner: object }).pendingOwner, { question: saved.question });
+});
+
+test("questions and time approvals share one slot, including concurrent asks", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints!.before = "21:00";
+  f.save(f.ledger);
+  const ask = f.tools.get("meetly_ask_owner")!;
+  const times = f.tools.get("meetly_other_times")!;
+  const results = await Promise.all([times.execute("one", { start: "2026-10-05T20:00" }), ask.execute("two", { question: "Which project?" })]);
+  assert.equal(results.filter(r => /error/.test(r.content[0]!.text)).length, 1);
+  assert.equal(f.deliveries.length, 1);
+  const pending = f.request().pendingOwner;
+  const result = await times.execute("three", { start: "2026-10-06T20:00" });
+  assert.match(result.content[0]!.text, /already open/);
+  assert.deepEqual(f.request().pendingOwner, pending);
+});
+
+for (const failure of ["unknown", "throw"] as const) test(`ask-owner ${failure} keeps the pending slot and never retries or claims delivery`, async t => {
+  const f = fixture(t);
+  f.delivery.status = "queued";
+  f.delivery.fail = failure === "throw";
+  const ask = f.tools.get("meetly_ask_owner")!;
+  const result = await ask.execute("one", { question: "Which project?" });
+  assert.match(result.content[0]!.text, /could not confirm delivery/);
+  assert.doesNotMatch(result.content[0]!.text, /PRIVATE/);
+  assert.ok(f.request().pendingOwner);
+  assert.match((await ask.execute("two", { question: "Which project?" })).content[0]!.text, /already open/);
+  assert.equal(f.deliveries.length, 1);
+});
+
+test("ask-owner rejects malformed or unscoped questions without sending", async t => {
+  const f = fixture(t);
+  const ask = f.tools.get("meetly_ask_owner")!;
+  for (const args of [{}, { question: " " }, { question: 123 }, { start: "2026-10-05T20:00" }]) {
+    assert.match((await ask.execute("bad", args)).content[0]!.text, /error/);
+  }
+  assert.match(JSON.stringify(await f.act({ ...context, nativeChannelId: "other-chat" }, "ask_owner", { question: "Where?" })), /No scheduling request/);
+  assert.deepEqual(f.read(), f.ledger);
+  assert.deepEqual(f.ownerLines, []);
+  assert.deepEqual(f.commands, []);
+});
+
+test("a booked meeting can ask the owner even when the guest has an offer in another chat", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.status = "booked";
+  f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "other", status: "offered", chatUid: "other-chat" });
+  f.save(f.ledger);
+  const result = await f.tools.get("meetly_ask_owner")!.execute("ask", { question: "Which entrance?" });
+  assert.doesNotMatch(result.content[0]!.text, /error/);
+  assert.equal(f.request().status, "booked");
+  assert.deepEqual(f.commands, []);
+  assert.equal(f.deliveries.length, 1);
+});
+
+
+test('an open owner question survives booking and format commits through the seam', async t => {
+  const f = fixture(t);
+  await f.tools.get('meetly_ask_owner')!.execute('ask', { question: 'Which entrance?' });
+  const pending = f.request().pendingOwner;
+  assert.ok(!('error' in await f.act(context, 'pick', { start: offers[0]!.start })));
+  assert.equal(f.request().status, 'booked');
+  assert.deepEqual(f.request().pendingOwner, pending);
+  const revision = f.request().calendarRevision;
+  assert.ok(revision);
+  assert.ok(!('error' in await f.act(context, 'format', { format: 'meet' })));
+  assert.notEqual(f.request().calendarRevision, revision);
+  assert.deepEqual(f.request().pendingOwner, pending);
+  assert.equal(f.deliveries.length, 1);
+});
+
+for (const constraints of [
+  { days: ["mon", "tue", "wed"] },
+  { from: "2026-10-12" },
+  { to: "2026-10-07" },
+  { days: [] },
+  { after: "20:15" },
+  { before: "20:15" },
+]) test(`out-of-hours approval cannot bypass owner conditions: ${JSON.stringify(constraints)}`, async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = constraints;
+  f.save(f.ledger);
+  const before = f.read();
+  const result = await f.act(context, "other_times", { start: "2026-10-08T20:00:00Z" });
+  assert.match(JSON.stringify(result), /time.*outside.*owner.*conditions/i);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.ownerLines.length, 0);
+  assert.equal(f.deliveries.length, 0);
+  assert.ok(f.commands.every(c => c[2] === "events"));
 });

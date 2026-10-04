@@ -24,9 +24,9 @@ export const uniqueCleanup = (refs: HoldCleanup[]) =>
   [...refs.filter(ref => ref.sendUpdates === "all"), ...refs.filter(ref => ref.sendUpdates !== "all")]
     .filter((ref, i, all) => all.findIndex(other => sameCleanup(ref, other)) === i);
 export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
-// A time outside the owner's days or window that the other person asked for,
-// waiting for the owner's yes or no.
-export type PendingOwner = { start: string; end: string; askedAt: string };
+// One question or out-of-hours time waiting for the owner's answer.
+export const OWNER_QUESTION_LIMIT = 500;
+export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ start: string; end: string } | { question: string });
 // How the meeting happens. `unknown` until the request or an answer says it.
 export type Format = "meet" | "in_person" | "phone" | "unknown";
 // The booked event's time, and the Google account it lives on.
@@ -244,8 +244,10 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   if (patch.offered !== undefined) checkOffers(patch.offered);
   const pending = patch.pendingOwner;
   if (pending) {
-    if ([pending.start, pending.end, pending.askedAt].some((t) => typeof t !== "string" || Number.isNaN(Date.parse(t)))) {
-      throw new Error(`pendingOwner needs valid start, end and askedAt: ${JSON.stringify(pending)}`);
+    if (!isDate(pending.askedAt) || ("question" in pending
+      ? typeof pending.question !== "string" || !pending.question.trim() || pending.question.length > OWNER_QUESTION_LIMIT || "start" in pending || "end" in pending
+      : !isDate(pending.start) || !isDate(pending.end))) {
+      throw new Error("pendingOwner needs askedAt and either a short question or valid start and end");
     }
   }
   if (patch.format !== undefined) checkFormat(patch.format);
@@ -276,13 +278,22 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   return { requests };
 }
 
-// Owner notices can retry until completed; group starts need an explicit clear.
+// Owner notices can retry until completed; group starts and answers need an explicit clear.
 export function recordDelivery(ledger: Ledger, id: string, kind: string, action: string, now: number): Ledger {
-  if (!["notify", "start"].includes(kind) || !["begin", "complete", "clear"].includes(action)) {
-    throw new Error("delivery needs --kind notify|start and --action begin|complete|clear");
+  if (!["notify", "start", "answer"].includes(kind) || !["begin", "complete", "clear"].includes(action)) {
+    throw new Error("delivery needs --kind notify|start|answer and --action begin|complete|clear");
   }
   const request = ledger.requests.find((r) => r.id === id);
   if (!request) throw new Error(`no request ${id}`);
+  if (kind === "answer") {
+    const pending = request.pendingOwner;
+    if (!request.chatUid || !["offered", "booked"].includes(request.status) || !pending || action === "complete") {
+      throw new Error("answer delivery needs a pending question or time approval and begin or clear");
+    }
+    if (action === "begin" && pending.answerAttemptedAt) throw new Error("answer delivery already attempted; only the owner can authorize clearing it");
+    const { answerAttemptedAt, ...question } = pending;
+    return updateRequest(ledger, id, { pendingOwner: action === "begin" ? { ...question, answerAttemptedAt: new Date(now).toISOString() } : question }, now);
+  }
   if (request.status !== (kind === "notify" ? "asked" : "offered")) throw new Error(`cannot ${kind} for ${request.status} request`);
   const [attempt, completed] = kind === "notify"
     ? ["notifyAttemptedAt", "notifiedAt"] as const : ["startedAt", "startCompletedAt"] as const;
@@ -293,7 +304,7 @@ export function recordDelivery(ledger: Ledger, id: string, kind: string, action:
     delete updated[attempt];
     delete updated[completed];
   } else if (action === "begin") {
-    if (kind === "start" && (request.startedAt || request.chatUid)) throw new Error("group start already attempted; only the owner can authorize clearing it");
+    if (kind === "start" && (request.startedAt || request.chatUid)) throw new Error("group start already attempted. Do not send or clear this attempt. Only an explicit owner retry instruction can authorize clearing it.");
     if (request[completed]) throw new Error(`${kind} delivery already completed`);
     updated[attempt] = at;
   } else {
@@ -315,9 +326,10 @@ export function askedList(ledger: Ledger, unnotified = false): Request[] {
   return ledger.requests.filter((r) => r.status === "asked" && (!unnotified || !r.notifiedAt));
 }
 
-// Open requests waiting for the owner to confirm an out-of-hours time.
+// Requests waiting for a question's answer or an out-of-hours approval.
 export function pendingOwnerList(ledger: Ledger): Request[] {
-  return ledger.requests.filter((r) => r.status === "offered" && r.pendingOwner !== undefined);
+  return ledger.requests.filter((r) => r.pendingOwner !== undefined
+    && (r.status === "offered" || r.status === "booked"));
 }
 
 // Booked Meets whose link is due in the group: from `leadMin` before the
@@ -404,7 +416,14 @@ if (isMain(import.meta.url)) {
       case "delivery": {
         if (!values.id) throw new Error("delivery needs --id X");
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => recordDelivery(l, values.id!, values.kind ?? "", values.action ?? "", now));
-        return { request: ledger.requests.find((r) => r.id === values.id) };
+        const request = ledger.requests.find((r) => r.id === values.id);
+        if (values.kind !== "start") return { request };
+        const delivery = values.action === "begin"
+          ? { state: "reserved", sendNow: true, instruction: "Send the opener now, exactly once, using the channel's start tool. This call reserved the attempt; it did not send anything. Do not begin or clear again, and do not treat the startedAt just returned by this call as an earlier attempt. Record complete only after the send returns success or unknown delivery." }
+          : values.action === "clear"
+            ? { state: "cleared", sendNow: false, instruction: "Start reservation cleared. Run begin once before sending; retry only on the owner's explicit instruction." }
+            : { state: "completed", sendNow: false, instruction: "The send outcome is recorded. Do not send again. Link the returned chat uid if known; unknown delivery must not be retried automatically." };
+        return { request, delivery };
       }
       case "asked":
         return { requests: askedList(readJson<Ledger>(path, EMPTY), values.unnotified) };
