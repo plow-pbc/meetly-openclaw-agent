@@ -7,7 +7,7 @@ import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findByChat
 import { file } from "./paths.ts";
 import { checkTime, findSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
-import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, type WeekdayTime } from "./time.ts";
+import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, wallParts, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
 import { plowApi } from "./owner-chat.ts";
 
@@ -151,16 +151,29 @@ async function pick(request: Request, config: Config, start: string, attendees?:
 }
 
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
+  let start = args.start;
+  if (start !== undefined && typeof start !== "string") {
+    try {
+      start = resolveWeekday(start, request.reoffer?.offered ?? request.offered, config.timezone, request.constraints);
+    } catch (error) {
+      if (error instanceof WeekdayDateRequired) throw error;
+      return { error: "Provide a valid weekday (mon–sun) and time (HH:MM), or an explicit calendar date and time." };
+    }
+  }
   const preferred = preferences(args, config.timezone);
   const excludedDays = preferences({ days: args.excludedDays }, config.timezone).days ?? [];
   const availableDays = { days: DAYS.filter(day => !excludedDays.includes(day)) };
   const relative = typeof args.start === "object" || (!args.start && args.days?.length && !args.from && !args.to && !args.next_week);
   const window = relative ? offerDateWindow(request.reoffer?.offered ?? request.offered, config.timezone, request.constraints) : undefined;
   const bounds = intersectConstraints(intersectConstraints(request.constraints, window), availableDays);
-  const start = args.start;
+  const bookedDate = request.status === "booked" && request.booked
+    ? localIso(Date.parse(request.booked.start), config.timezone).slice(0, 10) : undefined;
+  let requestedBookedDate = bookedDate !== undefined && (preferred.from === preferred.to && preferred.from === bookedDate
+    || args.days?.length === 1 && args.days[0] === wallParts(Date.parse(request.booked!.start), config.timezone).weekday);
   let exact: Slot | undefined;
   if (start) {
     const checked = await check(request, config, start);
+    requestedBookedDate = checked.slot.start.slice(0, 10) === bookedDate;
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) {
       return { error: "That weekday was ruled out. Choose a different day." };
     }
@@ -173,7 +186,9 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   const now = Date.now();
   const busy = await busyFor(request, config, localIso(now, config.timezone), localIso(now + (config.horizonDays + 1) * 86_400_000, config.timezone));
   const narrowed = intersectConstraints(bounds, preferred);
-  const query: SlotQuery = { ...busy, ...narrowed, days: narrowed.days as Day[] | undefined, now, config,
+  // Keep the date exclusion in every fallback, before selecting the limited offer.
+  const excludeDates = bookedDate && !requestedBookedDate ? [bookedDate] : [];
+  const query: SlotQuery = { ...busy, ...narrowed, excludeDates, days: narrowed.days as Day[] | undefined, now, config,
     meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
   let { slots } = exact ? { slots: [exact] } : findSlots(query);
   const preferencesUnavailable = slots.length === 0;
