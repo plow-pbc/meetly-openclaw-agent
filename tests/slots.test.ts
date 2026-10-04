@@ -21,7 +21,7 @@ const CONFIG: Config = {
   setupDoneAt: "2026-09-26T12:00:00.000Z",
 };
 const NOW = Date.parse("2026-09-28T08:00:00-03:00");
-const q = (over: Partial<SlotQuery> = {}): SlotQuery => ({ now: NOW, config: CONFIG, busy: [], ...over });
+const q = (over: Partial<SlotQuery> = {}): SlotQuery => ({ now: NOW, config: CONFIG, durationMin: 30, busy: [], ...over });
 const starts = (over: Partial<SlotQuery> = {}) => findSlots(q(over)).slots.map((s) => s.start);
 const labels = (over: Partial<SlotQuery> = {}) => findSlots(q(over)).slots.map((s) => s.label);
 
@@ -117,14 +117,14 @@ test("the CLI reads busy.ts output and the stored config", () => {
     degraded: ["other@example.com"],
   }));
   const env = { MEETLY_HOME: home };
-  const now = ["--now", "2026-09-28T08:00:00-03:00"];
+  const now = ["--now", "2026-09-28T08:00:00-03:00", "--duration", "30"];
   const r = cli("slots.ts", ["--in", busyFile, ...now], env);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.json.slots[0].start, "2026-09-28T11:00:00-03:00");
   assert.deepEqual(r.json.degraded, ["other@example.com"]);
   const allowed = cli("slots.ts", ["--in", busyFile, ...now, "--allow-overlap", '{"account":"jean@example.com","id":"weekly"}', "--count", "1"], env);
   assert.deepEqual(allowed.json.slots.map((s: { label: string }) => s.label), ["mon 28/9 10:00"]);
-  const at = cli("slots.ts", ["--in", busyFile, ...now, "--at", "2026-10-03T10:00:00-03:00", "--duration", "60", "--locale", "pt-BR"], env);
+  const at = cli("slots.ts", ["--in", busyFile, ...now.slice(0, 2), "--at", "2026-10-03T10:00:00-03:00", "--duration", "60", "--locale", "pt-BR"], env);
   assert.equal(at.status, 0, at.stderr);
   assert.deepEqual(at.json, {
     slot: { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T11:00:00-03:00", dayOfWeek: "sat", label: "sáb., 03/10, 10:00" },
@@ -162,7 +162,7 @@ test("the CLI reads busy.ts output and the stored config", () => {
 
 test("checkTime: a time the person insists on", () => {
   const check = (start: string, over: Partial<Parameters<typeof checkTime>[0]> = {}) =>
-    checkTime({ now: NOW, config: CONFIG, busy: [], start, ...over });
+    checkTime({ now: NOW, config: CONFIG, durationMin: 30, busy: [], start, ...over });
   assert.deepEqual(check("2026-09-28T10:00:00-03:00"), {
     slot: { start: "2026-09-28T10:00:00-03:00", end: "2026-09-28T10:30:00-03:00", dayOfWeek: "mon", label: "mon 28/9 10:00" },
     free: true,
@@ -213,4 +213,9 @@ test("replacement slot search keeps saved and newly resolved overlap authorizati
   assert.equal(blocked.status, 0, blocked.stderr);
   assert.equal(blocked.json.reason, "busy");
   assert.notEqual(cli("slots.ts", args.map(a => a === "r_one" ? "missing" : a), env).status, 0);
+});
+
+test("slot planning requires an explicit duration instead of the config default", () => {
+  assert.throws(() => findSlots(q({ durationMin: undefined })), /[Ss]et durationMin/);
+  assert.throws(() => checkTime({ ...q({ durationMin: undefined }), start: "2026-09-28T10:00:00-03:00" }), /[Ss]et durationMin/);
 });

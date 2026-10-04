@@ -9,7 +9,7 @@ import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
-import { expiredRequests, findOpenByHandle, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
+import { expiredRequests, findOpenByHandle, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
@@ -148,7 +148,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const { origin, handle, name, sourceRowid, chatUid, constraints, proposed, format, location, locale, askDetails } = request;
         const config = loadConfig();
         if (config.paused) throw new Error("Scheduling is paused.");
-        const { durationMin } = input;
+        const durationMin = requireDuration(input.durationMin);
         if (input.offered.some(slot => Date.parse(slot.end) - Date.parse(slot.start) !== durationMin * 60_000)) {
           throw new Error("Replacement slots must match the new duration.");
         }
@@ -320,7 +320,14 @@ export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, 
   if (args.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
   const config = loadConfig();
   if (config.paused) throw new Error("Scheduling is paused.");
-  const input: NewRequest = { ...args, durationMin: args.durationMin ?? config.durationMin,
+  const current = ledger();
+  const saved = findOpenByHandle(current, args.handle) ?? current.requests.find(r => args.origin === "inbound" &&
+    args.sourceRowid !== undefined && r.sourceRowid === args.sourceRowid && ["asked", "offered"].includes(r.status));
+  const durationMin = requireDuration(args.durationMin === undefined ? saved?.durationMin : args.durationMin);
+  if (args.offered.some(slot => Date.parse(slot.end) - Date.parse(slot.start) !== durationMin * 60_000)) {
+    throw new Error("Every offered interval must match the request durationMin. Set the request duration and search again.");
+  }
+  const input: NewRequest = { ...args, durationMin,
     offered: args.offered.map(slot => ({ ...slot, account: slot.account ?? config.defaultAccount })) };
   if (allowOverlapTitles?.length) {
     const busy = await fetchBusy(config, {
@@ -339,7 +346,10 @@ export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, 
     provisional = !existing;
     return existing ? l : saveRequest(l, input, (options.now ?? Date.now)(), id);
   });
-  return calendarAction(id, { action: "offer", request: input, provisional }, options);
+  return calendarAction(id, { action: "offer", request: input, provisional }, { ...options, validate(request) {
+    options.validate?.(request);
+    if (args.durationMin === undefined && request.durationMin !== durationMin) throw new Error("Request duration changed; read the saved request and search again.");
+  } });
 }
 
 export async function resumePending(options: CalendarOptions = {}) {

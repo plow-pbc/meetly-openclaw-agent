@@ -10,12 +10,15 @@ import { findOpenByHandle, intersectConstraints, normalizeHandle, sameHandle, ty
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "topic" | "constraints" | "proposed" | "format" | "location" | "locale" | "name">;
+type GroupRequest = Pick<OfferInput, "topic" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & { durationMin: number };
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Promise<object> {
   const chat = resolveOwnerChat(ctx);
   if (!chat || !ctx.sessionKey?.includes(":plow:group:")) {
     return { error: "Only the owner's own Plow group turn can start this request." };
+  }
+  if (!Number.isInteger(args.durationMin) || args.durationMin <= 0) {
+    return { error: "Set durationMin to your chosen positive whole number of minutes when saving this request." };
   }
   try {
     const api = plowApi();
@@ -46,7 +49,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
     }
     const config = loadConfig(), now = Date.now();
     const { topic, format, location } = args;
-    const durationMin = existing?.durationMin ?? config.durationMin;
+    const durationMin = args.durationMin;
     const locale = args.locale ?? existing?.locale;
     const constraints = args.constraints ? intersectConstraints(existing?.constraints, args.constraints) : existing?.constraints;
     const proposed = args.proposed ?? (existing?.status === "asked" ? existing.proposed : undefined);

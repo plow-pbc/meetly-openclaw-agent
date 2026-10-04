@@ -128,7 +128,7 @@ test("DM recipient selection precedes calendar access while current groups use r
   const offer = group.slice(group.indexOf("## Offer times"), group.indexOf("## Owner request"));
   assert.ok(offer.includes("In the owner's DM, resolve one E.164 phone before any calendar read or hold"));
   assert.ok(offer.includes("In the current group, call `meetly_offer_owner_group`"));
-  assert.ok(offer.includes("never supply `durationMin` or `offered` intervals"));
+  assert.ok(offer.includes("never supply `offered` intervals"));
   assert.doesNotMatch(offer, /`--allow-overlap`/);
   assert.ok(group.includes("slots.ts --at <pendingOwner.start> --request <id>"));
   assert.ok(offer.includes("If none is known, ask the owner for a phone; if several match, ask which one. In either case, ask in the owner's main DM and end the turn."));

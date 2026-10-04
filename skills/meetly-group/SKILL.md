@@ -36,12 +36,12 @@ free there.
 
 ## Offer times
 
-1. In the current group, call `meetly_offer_owner_group` with `topic`, `constraints`,
+1. In the current group, call `meetly_offer_owner_group` with `topic`, required `durationMin`, `constraints`,
    `proposed`, `name` as given by the owner in this thread, `format`, `location` and `locale` as known.
    It resolves the guest and chat, searches within the owner's conditions and
-   holds times itself using the saved or configured duration; never supply `durationMin` or `offered` intervals. On error, stop. Otherwise
-   apply any explicit owner duration as described below before delivery, then
-   continue at step 6 with the final returned offer; if `preferencesUnavailable` is true,
+   holds times itself using your chosen duration; never supply `offered` intervals.
+   Choose the duration from the meeting context, honoring an explicit owner length.
+   On error, stop. Otherwise continue at step 6 with the returned offer; if `preferencesUnavailable` is true,
    explain that the preferred times do not work and offer the returned alternatives
    in their returned order. For a busy requested date/time, the tool uses the same
    nearest-time ranking as `slots.ts --near`, keeping all hard conditions.
@@ -59,7 +59,8 @@ free there.
    exclude this request's own holds. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
    first offer, its `proposed` times: `--days`, `--after`, `--before`,
-   `--from`/`--to`, `--duration`. Slots stay inside the
+   `--from`/`--to`, and `--duration <chosen minutes>` (or the saved request duration).
+   No configured duration is applied automatically. Slots stay inside the
    owner's days and window; constraints only narrow them.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
@@ -69,12 +70,17 @@ free there.
      accounts. Tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
 4. Save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,
-   `name`, `sourceRowid`, known `chatUid`, `topic`, `location`, optional `durationMin`,
+   `name`, `sourceRowid`, known `chatUid`, `topic`, `location`, `durationMin` with your chosen length,
    `constraints` (the owner's conditions), `proposed`, `format`,
    `locale`, and `offered[]` with each slot's `start`/`end`. The writer supplies
-   the configured duration/account. To authorize an overlap explicitly requested in
-   the owner's main DM, call `meetly_offer_owner_dm` with these same fields plus
-   `allowOverlapTitles` instead of the raw command. The registered tool checks the
+   configured account and rejects intervals that do not match the request duration.
+   To authorize an overlap explicitly requested in the owner's main DM, first ensure
+   the request is saved with your chosen duration. For a new request, use `ledger.ts save`
+   with `status: "asked"`, `origin: "owner"`, resolved `handle`, `topic`, required
+   `durationMin`, `offered: []` and known details, without a chat link.
+   Then call `meetly_offer_owner_dm` with the offer fields except `durationMin`, plus
+   `allowOverlapTitles` instead of the raw command. It uses the saved request duration;
+   a missing duration is an error telling you to set it. The registered tool checks the
    runtime owner and main-DM session and resolves event titles internally.
    Raw calendar commands reject `allowOverlap` and `allowOverlapTitles`.
    Do not supply hold ids.
@@ -133,16 +139,19 @@ for a pending question or time approval follow "Owner confirms". No match means
 offer only after the owner makes a scheduling request. The group tool reuses a
 same-handle unlinked `asked` request and binds it to this chat.
 
-For an explicit owner-stated length on an open request, read busy times and run
+Duration is your decision, recorded as `durationMin` on every saved request.
+Honor explicit owner instructions and otherwise judge the meeting context; do not
+leave this decision to a tool or silently rely on a configured default.
+To change the saved duration on an open request, read busy times and run
 `slots.ts --request <saved id> --duration <minutes>` with the busy file and saved
 conditions as in "Offer times". Then run
 `calendar.ts duration --id <saved id> --json '{"durationMin":<minutes>,"topic":"<matching topic>","offered":[{"start":"<slot.start>","end":"<slot.end>"}]}'`
 with the returned slots. This operation commits duration, topic and replacement
 holds together under the calendar lock; use only its returned request for delivery.
-Keep duration wording in `topic` consistent. For a new group request, create its
-initial offer without replying, find its saved id using the exact runtime chat uid,
-and run this operation before delivering times. Do not change duration when the
-owner did not state one. Never patch duration with `ledger.ts update`.
+Keep duration wording in `topic` consistent. A new group request saves your chosen
+duration through `meetly_offer_owner_group` in its first offer. Preserve a saved
+duration unless the meeting context calls for a change. Never patch duration with
+`ledger.ts update`; use the atomic operation above.
 
 Extract the topic, proposed times, hard conditions, explicit duration, format,
 place. Extract owner-authorized overlap titles only in the owner's DM.

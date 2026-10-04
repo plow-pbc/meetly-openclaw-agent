@@ -511,3 +511,49 @@ test("raw ledger mutations cannot bypass DM overlap authorization", t => {
     assert.deepEqual(f.read(), before);
   }
 });
+
+for (const durationMin of [15, 60]) test(`offer rejects intervals that differ from request duration ${durationMin}`, async t => {
+  const f = fixture(t), before = f.read();
+  await assert.rejects(offerRequest({ ...f.offer, durationMin }, f.options), /interval.*duration/i);
+  assert.deepEqual(f.read(), before);
+  assert.deepEqual(f.calls, []);
+});
+
+test("an unsaved offer without duration must ask the model to set it", async t => {
+  const f = fixture(t);
+  writeJson(join(f.home, "ledger.json"), { requests: [] });
+  const { durationMin, ...offer } = f.offer;
+  await assert.rejects(offerRequest(offer, f.options), /set.*durationMin/i);
+  assert.deepEqual(readJson(join(f.home, "ledger.json"), {}), { requests: [] });
+  assert.deepEqual(f.calls, []);
+});
+
+test("an offer uses saved duration rather than the configured duration", async t => {
+  const f = fixture(t), { durationMin, ...offer } = f.offer;
+  const saved = f.read();
+  saved.durationMin = 45;
+  writeJson(join(f.home, "ledger.json"), { requests: [saved] });
+  const { request } = await offerRequest({ ...offer, offered: [{ start, end: "2026-10-05T10:45:00Z" }] }, f.options);
+  assert.equal(request.durationMin, 45);
+});
+
+test("an offer waiting for the lock cannot overwrite a newer saved duration", async t => {
+  const f = fixture(t), { durationMin, ...offer } = f.offer;
+  let entered!: () => void, release!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] === "create") { entered(); await gate; }
+    return f.command(cmd);
+  };
+  const change = calendarAction("r_one", { action: "duration", durationMin: 60, topic: "Hour",
+    offered: [{ start, end: "2026-10-05T11:00:00Z" }] }, { ...f.options, command });
+  await waiting;
+  const stale = assert.rejects(offerRequest(offer, f.options), /duration changed/);
+  release();
+  await change;
+  await stale;
+  assert.equal(f.read().durationMin, 60);
+  assert.equal(f.read().offered[0]!.end, "2026-10-05T11:00:00Z");
+  assert.equal(f.calls.filter(cmd => cmd[2] === "create").length, 1);
+});

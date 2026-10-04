@@ -10,7 +10,7 @@ import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
 import { allowsOverlap, uniqueEvents, type EventRef, type Busy } from "./busy.ts";
-import { intersectConstraints, type Ledger } from "./ledger.ts";
+import { intersectConstraints, requireDuration, type Ledger } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { addDays, DAYS, localIso, wallParts, zonedToUtc, type Day } from "./time.ts";
@@ -73,9 +73,9 @@ export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}
 export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string } {
   const { config, now } = q;
   const tz = config.timezone;
-  const duration = q.durationMin ?? config.durationMin;
+  const duration = requireDuration(q.durationMin);
   const count = q.count ?? SLOT_COUNT;
-  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], start: q.near }).slot.start);
+  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], durationMin: duration, start: q.near }).slot.start);
 
   const startMin = Math.ceil(minutes(config.windowStart) / STEP_MIN) * STEP_MIN;
   const endMin = minutes(config.windowEnd);
@@ -160,7 +160,7 @@ export function checkTime(q: {
     ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz)
     : Date.parse(q.start);
   if (Number.isNaN(start)) throw new Error(`not a time: ${q.start}`);
-  const end = start + (q.durationMin ?? q.config.durationMin) * 60_000;
+  const end = start + requireDuration(q.durationMin) * 60_000;
   const s = wallParts(start, tz);
   const e = wallParts(end, tz);
   const sameDay = s.y === e.y && s.m === e.m && s.d === e.d;

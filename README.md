@@ -177,12 +177,16 @@ message is skipped.
   opened is recognized from its ledger and handled as that one meeting. In an
   existing group with the owner, one guest and Meetly, the owner can request
   scheduling directly; Meetly resolves the guest from the group, links the
-  request and offers times there. Explicit duration changes replace the topic,
+  request and offers times there. The model chooses duration from the meeting
+  context and records it on the request; code requires that decision and checks
+  interval lengths instead of supplying a configured default. Duration changes replace the topic,
   duration and holds together under the calendar lock. Unnamed requests stay in
   their originating group; chat lookup requires the exact runtime chat uid.
   Overlap authorization goes through the registered `meetly_offer_owner_dm` tool,
   which verifies the runtime Plow owner and main-DM session before calling the
-  internal calendar writer. Raw calendar commands reject overlap authorization.
+  internal calendar writer. It uses the saved duration and has no separate duration
+  argument; missing duration is an error telling the model to set it. Raw calendar
+  commands reject overlap authorization.
 - **Opening groups.** Only in the owner's DM, with the base's
   `plow_start_thread`; new groups are untrusted. Guests receive the six
   scheduling tools in `PLOW_GUEST_TOOLS`; owner turns keep full tools. An uncertain

@@ -185,6 +185,11 @@ function checkOffers(offered: unknown): Offer[] {
   return offered as Offer[];
 }
 
+export function requireDuration(value: number | undefined): number {
+  if (!Number.isInteger(value) || value! <= 0) throw new Error("Set durationMin on the request to a positive whole number of minutes before saving or offering it.");
+  return value!;
+}
+
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
   input = { ...input, handle: normalizeHandle(input.handle) };
   if ("calendarRevision" in input) throw new Error("calendarRevision is managed by calendar.ts");
@@ -194,7 +199,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   }
   if (input.origin !== "inbound" && input.origin !== "owner" && input.origin !== "owner-group") throw new Error(`origin must be inbound, owner or owner-group, got ${input.origin}`);
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
-  if (!Number.isInteger(input.durationMin) || input.durationMin <= 0) throw new Error("durationMin must be a positive whole number");
+  requireDuration(input.durationMin);
   const status = input.status ?? "offered";
   if (status === "offered") checkOffers(input.offered);
   else if (status !== "asked") throw new Error(`a new request is asked or offered, got ${status}`);
@@ -220,6 +225,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
 // `asked` request turns it into `offered`; asking again while one is open
 // leaves the ledger as it is.
 export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
+  requireDuration(input.durationMin);
   input = { ...input, handle: normalizeHandle(input.handle) };
   const byHandle = findOpenByHandle(ledger, input.handle);
   const bySource = findOpenBySource(ledger, input);
@@ -280,6 +286,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   if (index < 0) throw new Error(`no request ${id}`);
   const at = new Date(now).toISOString();
   const updated: Request = { ...ledger.requests[index]!, updatedAt: at };
+  requireDuration(updated.durationMin);
   if (updated.status === "asked" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
   if (updated.chatUid && patch.chatUid !== undefined && patch.chatUid !== updated.chatUid) throw new Error("a request cannot move to another chat");
   for (const [key, value] of Object.entries(patch)) {
