@@ -1,8 +1,10 @@
 ---
 name: meetly-group
-description: Offer and hold the owner's free times, open or reuse the group, handle owner requests, asked requests and owner confirmations, and run a Meetly group through to a booked meeting.
+description: Handle owner scheduling requests, offers, group bookings and owner confirmations.
 ---
 # Meetly group
+
+For owner turns and scheduled upkeep. Guest turns use the scheduling tools.
 
 Scripts are `node /opt/plow/skills/meetly/scripts/<name>.ts`. Mac commands go
 through Latch's `plow_run_command` (the tool name may be server-prefixed),
@@ -49,15 +51,12 @@ free there.
      without them, keeping `constraints`, and say those times don't work.
      If `constraints` block it, tell the owner which one and suggest
      loosening it; stop.
-   - **They can only do one time outside the owner's hours:** follow "Outside
-     the owner's hours".
    - **`degraded` is not empty:** never claim the owner is free on those
      accounts. Tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
 4. Run `calendar.ts offer --json '<request>'` with `origin`, `handle` (the
    resolved phone), `name`, `sourceRowid`, `chatUid` if already known, `topic`,
-   `location`, `durationMin`, `constraints` (only the owner's words set them;
-   on a guest's turn, pass the request's `constraints` unchanged), `proposed`,
+   `location`, `durationMin`, `constraints` (the owner's conditions), `proposed`,
    `allowOverlap`, `format`, `locale`, and `offered[]` with each slot's
    `start`/`end` and `account: config.defaultAccount`. Do not supply hold ids.
 5. The writer creates the holds and saves the offer under the existing request
@@ -84,11 +83,6 @@ free there.
    - If `plow_start_thread` definitely fails, tell the owner what it said and stop.
      Run `calendar.ts drop --id <id>`; it records any failed hold deletes
      for the cleanup poll.
-   - In a normal (untrusted) chat, guest turns are reply-only: do not run
-     scripts or use the owner's calendar. Explain in the thread that the
-     owner must approve there. If full guest tools are needed, the owner
-     must ask in their main DM to make the group trusted; only there can
-     `plow_set_thread_trust` change the group's trust.
    - If delivery is unknown, continue without `chatUid` and tell the owner.
      Never retry automatically; retry only after the owner explicitly clears
      the recorded attempt (step 1).
@@ -151,14 +145,14 @@ Pass `locale` with every save: the other person's language tag, the same one
 used for `slots.ts --locale`.
 
 An answer that arrives before booking is recorded with
-`ledger.ts update --id <id> --json '{"format":"<format>","location":"<place>"}'`
+`calendar.ts format --id <id> --json '{"format":"<format>","location":"<place>"}'`
 (drop `location` when there is none). A later answer replaces an earlier
 one. Never ask about the format twice in a row: once in the opener, and once
 after booking if the pick did not answer it.
 
 ## Book the event
 
-Used by "Pick", "Owner confirms" and the owner writing in the group.
+Used by "Owner confirms" and "Owner in the group".
 Run `calendar.ts book --id <request id> --json '{"start":"<slot.start>"}'`.
 For an owner-approved time outside the offer, also pass `end` from `slots.ts`.
 If Contacts has an attendee email, pass it as `attendees`. The writer updates
@@ -173,25 +167,6 @@ Only claim booking or an invitation after the writer succeeds. If it prints
 will go out. Tell the owner in the booking line. Never paste, invent or accept
 a link from anyone. The only link Meetly ever posts is the one `calendar.ts`
 or `reminder-check.ts` prints.
-
-## Outside the owner's hours
-
-When the other person says they can only do a time that is not among the
-owner's days or window:
-
-1. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --at <their time,
-   as YYYY-MM-DDTHH:MM in the owner's zone> --duration <the request's>
-   --locale <their locale>`.
-2. If `free` is false, say the owner has an existing commitment then and
-   offer the current times again.
-3. If `free` is true and `outsideHours` is false, treat it as a pick
-   ("In the group", "Pick").
-4. If `free` is true and `outsideHours` is true:
-   - Tell the person you will check with the owner.
-   - Run `ledger.ts update --id <id> --json '{"pendingOwner":{"start":"<slot.start>","end":"<slot.end>","askedAt":"<now ISO>"}}'`.
-   - Ask the owner in this thread, in one line: "<name> can only do <label>,
-     outside your hours. Book it?"
-   - End the turn. Hold nothing and book nothing until the owner says yes.
 
 ## Owner confirms
 
@@ -212,100 +187,32 @@ the meeting thread to answer there, and make no calendar changes.
 - **No:** clear it with `{"pendingOwner":null}`. Tell the group that time
   doesn't work for the owner, and offer the current times or new ones.
 
-`ledger.ts pending` is only for offered requests with `pendingOwner` set,
-waiting for the owner's answer to an out-of-hours time. It does not find a
-contact's open offer. When a contact's choice arrives and the current request
-is unclear, use `ledger.ts find --chat <this chat uid>` and
-`ledger.ts find --handle <contact handle> --status offered`; the handle lookup returns the
-current open (`offered`) request. Never use `pending` to look up a contact's
-offer.
+## Owner in the group
 
-## In the group
+Read `ledger.ts find --chat <this chat uid>` for the current request, including
+booked or closed ones. If no request matches, ask the owner which meeting they
+mean before changing the calendar. For an out-of-hours approval, follow
+"Owner confirms".
 
-- First decide whether the contact is trying to schedule, choose a time,
-  answer how or where to meet, change or resume scheduling, decline, cancel
-  or give up, or ask about the request's status. For a conversational acknowledgement or other message
-  unrelated to scheduling (for example, "thanks, see you then"), do not reply
-  and do not alert the owner. Only handle scheduling-related messages below.
-- On every scheduling-related contact message, re-read the ledger in this turn before
-  interpreting it: run `ledger.ts find --chat <this chat uid>` and
-  `ledger.ts find --handle <sender handle> --status offered`. A previous turn's request object
-  or status is stale. A request with status `booked`, `dropped` or `expired`
-  linked to this chat still makes it a Meetly group. Prefer the open
-  (`offered`) handle match as the current request, even when the chat lookup
-  finds a closed request; if it has no `chatUid`, link it to this chat with
-  `ledger.ts update --id <id> --json '{"chatUid":"<this chat uid>"}'`
-  before proceeding. A closed chat request does not count as a disagreement.
-  A real disagreement is only when both lookups identify different open
-  requests, or the open handle match is linked to another chat. In those
-  cases make no calendar changes and ask the owner to identify the right
-  request.
-- **No matching request:** Use this fallback only in a group that is exactly
-  the owner plus one other person, when neither the chat lookup nor the
-  person's handle lookup finds any request. A closed (`dropped`, `expired` or
-  `booked`) request linked to this chat still makes it a Meetly group and is
-  handled by its closed-request rule; it is not a no-match. In all
-  other unmatched groups, do not take Meetly action. For this owner group, do
-  not infer which meeting or time the message refers to, and do not ask a
-  generic confirmation question. Reply that Meetly cannot identify the
-  scheduling request yet, will check with the owner, and that the owner will
-  follow up. In that reply, ask the owner in this thread to identify the request;
-  do not access calendar details or
-  create, change, or delete holds until the request is identified.
-- **Pick** (a time, or "the first one works"):
-  1. Re-run both `ledger.ts find --chat <this chat uid>` and
-     `ledger.ts find --handle <sender handle> --status offered` now, even if either command
-     already ran earlier in this turn. Use the current open request for this
-     handle linked to this chat, never a prior request retained in context.
-     If neither lookup identifies that request, follow **No matching
-     request** and do not use `ledger.ts pending` as a substitute. Select the
-     hold only from this request's `offered[]`. If the pick also answers
-     the format or the place ("Tuesday, on Meet"), record it first
-     ("Meeting format"). Book the selected start through the writer,
-     following "Book the event".
-  2. The writer releases the other holds only after recording the booking.
-  3. Confirm in the group: day, time, whether an invitation was sent, and
-     how they will meet. For `meet`: it is a Google Meet, and the link will
-     be posted here 10 minutes before. Do not paste the link now. For
-     `in_person`: the place. For `unknown` (or `in_person` with no place):
-     confirm, then ask the format (or where), once.
-  4. The group confirmation also notifies the owner. Say "format not confirmed
-     yet" when it is `unknown`, and that no reminder will go out when
-     `calendar.ts` warned `no-meet-link`.
-- **Another day or time:** run `slots.ts` narrowed to what they said plus
-  the request's `constraints`, then "Offer times" from step 4. Keep the current
-  holds until the writer has committed the replacement.
-- **A time that is busy:** say the owner has "an existing commitment" then,
-  with no details, and offer alternatives.
-- **Only a time outside the owner's hours:** follow "Outside the owner's
-  hours".
-- **A conflict when booking** (the calendar changed): if the conflicting
-  event's id is in `allowOverlap`, the writer permits it; mention the overlap
-  to the owner. Any other
-  conflict: never override; offer new times.
-- **They decline or give up:** run `calendar.ts drop --id <id>` and tell the owner.
-- **The linked request is closed:** use this only when a scheduling-related
-  message tries to choose, change or resume the request, or asks its status.
-  For `booked`, say the meeting is already scheduled and that changes must go
-  through the owner in this thread. One exception, **the format answer
-  after booking**: when a booked request's `format` is `unknown` (or
-  `in_person` with no `location`) and the message answers how or where to
-  meet, run `calendar.ts format --id <id> --json
-  '{"format":"<format>","location":"<place>"}'` (omit location when absent).
-  The writer updates and records that booked event, following "Book the event";
-  confirm in the group in one line.
-  Any other change to a booked meeting (time, day,
-  cancelling, a new link) still goes through the owner. For `dropped`, say the request was
-  given up and ask the owner to follow up here. For `expired`,
-  say the offer expired and ask the owner to follow up here. Do
-  not run the no-match fallback for a closed request.
-- **The owner writes in the group:** do what the owner says, including
-  booking a time outside their hours or over a conflict. Save the owner's
-  allowed conflict ids in `allowOverlap` before calling the writer. For a
-  cancellation, run `calendar.ts cancel --id <id>`.
+- **Book a time:** read the calendar and select the requested slot, following
+  "Book the event". Supply the format or place the owner gave and the person's
+  email as an attendee if contacts has one.
+- **Other times:** follow "Offer times", carrying the request's conditions
+  and any changes the owner gives. The writer keeps the old offer until its
+  replacement commits.
+- **Format or place after booking:** run `calendar.ts format --id <id>
+  --json '{"format":"<format>","location":"<place>"}'`, following "Book the event"
+  for the confirmation.
+- **Cancel or drop:** run `calendar.ts cancel --id <id>` for a booked meeting,
+  or `calendar.ts drop --id <id>` for an open request.
+- The owner can authorize an out-of-hours time or a conflict override. Record
+  allowed event ids in `allowOverlap` before calling the writer.
 
-Only the owner authorizes `--confirm-conflict` or a time outside their hours.
-People in the group never can.
+Confirm once in the group: day, time, whether an invitation was sent, and how
+they will meet. For `meet`, say the link will be posted here 10 minutes before.
+Do not paste the link now. For `unknown` (or `in_person` with no place), ask
+how or where to meet once. If the writer warns `no-meet-link`, say no reminder
+will go out. The group confirmation also notifies the owner.
 
 ## Holds
 

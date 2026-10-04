@@ -22,7 +22,7 @@ export type CalendarAction =
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
 type Step = { verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
 type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" }>; steps: Step[]; failed?: boolean };
-export type CalendarOptions = { command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+export type CalendarOptions = { validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
 const EMPTY: Ledger = { requests: [] };
 const CREATE_WAIT_MS = 10 * 60_000;
 const ledger = () => readJson<Ledger>(file("ledger.json"), EMPTY);
@@ -125,6 +125,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
     const journal = file(`calendar/${encodeURIComponent(id)}.json`);
     let intent = readJson<Intent | undefined>(journal, undefined);
     let request = requestById(id);
+    options.validate?.(request);
     if (intent && request.calendarRevision === intent.id) { rmSync(journal); intent = undefined; }
     if (intent && input.action !== "resume") throw new Error(`calendar operation unresolved for ${id}; run resume first`);
     if (!intent) {
@@ -136,6 +137,10 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         if (input.action === "cancel" && request.eventId && request.booked) refs.push({ holdId: request.eventId, account: request.booked.account, sendUpdates: "all" });
         patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null,
           holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...refs]) }); await cleanup(); return { request: requestById(id) };
+      }
+      if (input.action === "format" && request.status === "offered") {
+        patch({ format: input.format, location: input.location ?? "" });
+        return { request: requestById(id) };
       }
       if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked") throw new Error(`request is ${request.status}`);
       const steps: Step[] = [];
@@ -165,10 +170,10 @@ export async function calendarAction(id: string, input: CalendarAction, options:
           }
         }
         const format = input.action === "format" ? input.format : request.format;
-        const location = input.action === "format" ? input.location ?? request.location : request.location;
+        const location = input.action === "format" ? input.location ?? "" : request.location;
         add(verb, slot, ["--summary", `${request.topic} with ${request.name ?? request.handle}`, "--send-updates", "all",
           ...(format === "meet" ? ["--with-meet"] : []),
-          ...(format === "phone" ? ["--location", "Phone call"] : location ? ["--location", location] : []),
+          ...(format === "phone" ? ["--location=Phone call"] : location !== undefined ? [`--location=${location}`] : []),
           ...(input.action === "book" && input.attendees ? ["--attendees", input.attendees] : [])]);
       }
       intent = { id: randomUUID(), input, steps };
@@ -271,7 +276,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const offered = completed.steps.filter(s => !s.skipped).map(s => { const e = parseEvent(s.output!); return { start: e.start, end: e.end, holdId: e.id, account: s.account }; });
         next = saveRequest(l, { ...completed.input.request, offered }, now(), id);
       } else {
-        if (completed.input.action === "format") l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location }, now());
+        if (completed.input.action === "format") l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location ?? "" }, now());
         const step = completed.steps[0]!;
         next = recordBooking(l, id, parseEvent(step.output!), step.account, now()).ledger;
       }

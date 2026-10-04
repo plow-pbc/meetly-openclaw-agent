@@ -1,7 +1,8 @@
 {
   "id": "meetly",
   "name": "Meetly",
-  "description": "Runs Meetly's setup check before each of the owner's DM turns.",
+  "description": "Guest scheduling tools and the owner DM setup check.",
+  "contracts": { "tools": ["meetly_view_request", "meetly_pick_time", "meetly_other_times", "meetly_set_format", "meetly_ask_owner", "meetly_decline"] },
   "activation": { "onStartup": true },
   "configSchema": { "type": "object", "additionalProperties": false }
 }

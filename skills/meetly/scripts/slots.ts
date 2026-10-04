@@ -14,17 +14,14 @@ import { addDays, DAYS, localIso, wallParts, zonedToUtc, type Day } from "./time
 
 export type Slot = { start: string; end: string; dayOfWeek: Day; label: string };
 
-export type SlotQuery = {
+export type Constraints = { days?: string[]; after?: string; before?: string; from?: string; to?: string };
+
+export type SlotQuery = Constraints & {
   now: number;
   config: Config;
   busy: Busy[];
   unknownAfter?: string;
   durationMin?: number;
-  days?: Day[];
-  after?: string;
-  before?: string;
-  from?: string;
-  to?: string;
   allowOverlap?: string[];
   exclude?: string[];
   count?: number;
@@ -50,18 +47,23 @@ function label(ms: number, tz: string, format?: Intl.DateTimeFormat): string {
   return `${p.weekday} ${p.d}/${p.m} ${pad(p.hh)}:${pad(p.mm)}`;
 }
 
+export function withinConstraints(start: number, end: number, timezone: string, constraints: Constraints = {}): boolean {
+  const s = localIso(start, timezone), e = localIso(end, timezone);
+  const date = s.slice(0, 10);
+  return !(constraints.days && !constraints.days.includes(wallParts(start, timezone).weekday))
+    && !(constraints.from && date < constraints.from) && !(constraints.to && date > constraints.to)
+    && !(constraints.after && s.slice(11, 16) < constraints.after)
+    && !(constraints.before && (e.slice(0, 10) !== date || e.slice(11, 16) > constraints.before));
+}
+
 export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string } {
   const { config, now } = q;
   const tz = config.timezone;
   const duration = q.durationMin ?? config.durationMin;
   const count = q.count ?? SLOT_COUNT;
 
-  const days = q.days ? config.days.filter((d) => q.days!.includes(d)) : config.days;
-  let startMin = minutes(config.windowStart);
-  let endMin = minutes(config.windowEnd);
-  if (q.after) startMin = Math.max(startMin, minutes(q.after));
-  if (q.before) endMin = Math.min(endMin, minutes(q.before));
-  startMin = Math.ceil(startMin / STEP_MIN) * STEP_MIN;
+  const startMin = Math.ceil(minutes(config.windowStart) / STEP_MIN) * STEP_MIN;
+  const endMin = minutes(config.windowEnd);
 
   const earliest = now + MIN_NOTICE_MIN * 60_000;
   const excluded = new Set((q.exclude ?? []).map((e) => Date.parse(e)));
@@ -75,10 +77,8 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string 
   const perDay: { start: number; end: number; day: Day }[][] = [];
   scan: for (let i = 0; i <= config.horizonDays; i++) {
     const { y, m, d } = addDays(today.y, today.m, today.d, i);
-    const date = `${y}-${pad(m)}-${pad(d)}`;
-    if ((q.from && date < q.from) || (q.to && date > q.to)) continue;
     const day = wallParts(zonedToUtc(y, m, d, 12, 0, tz), tz).weekday;
-    if (!days.includes(day)) continue;
+    if (!config.days.includes(day)) continue;
     const found: { start: number; end: number; day: Day }[] = [];
     for (let t = startMin; t + duration <= endMin; t += STEP_MIN) {
       const start = zonedToUtc(y, m, d, Math.floor(t / 60), t % 60, tz);
@@ -87,7 +87,7 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string 
         perDay.push(found);
         break scan;
       }
-      if (start < earliest || excluded.has(start)) continue;
+      if (start < earliest || excluded.has(start) || !withinConstraints(start, end, tz, q)) continue;
       if (busy.some((b) => b.start < end && b.end > start)) continue;
       found.push({ start, end, day });
     }
