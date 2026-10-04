@@ -61,7 +61,7 @@ signed as Meetly.
 - **Holds expire.** No answer in 48 hours: the holds are deleted and the
   group is told the times were released.
 - **Overlaps only with your word.** Meetly books over an existing event only
-  when you named that event in your request (or said yes in the group). People
+  when you name that event and authorize the overlap in your DM. People
   in the group can never unlock a conflict or a time outside your hours.
 - **Stays on topic in groups.** The group is for this one meeting. Meetly does
   not read your mail, files or other conversations for the other person.
