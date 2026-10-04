@@ -174,7 +174,10 @@ message is skipped.
   registered by `register-crons.ts` when setup finishes. It lives in the state
   volume and survives restarts and rebuilds.
 - **Chat.** Your phone DM is the main session and runs setup. A group Meetly
-  opened is recognized from its ledger and handled as that one meeting.
+  opened is recognized from its ledger and handled as that one meeting. In an
+  existing group with the owner, one guest and Meetly, the owner can request
+  scheduling directly; Meetly resolves the guest from the group, links the
+  request and offers times there.
 - **Opening groups.** Only in the owner's DM, with the base's
   `plow_start_thread`; new groups are untrusted. Guests receive the six
   scheduling tools in `PLOW_GUEST_TOOLS`; owner turns keep full tools. An uncertain

@@ -6,7 +6,7 @@ import { normalizeHandle, sameHandle } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "topic" | "constraints" | "proposed" | "format" | "location" | "locale" | "durationMin" | "allowOverlapTitles" | "offered">;
+type GroupRequest = Pick<OfferInput, "topic" | "constraints" | "proposed" | "format" | "location" | "locale" | "durationMin" | "offered">;
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, options: CalendarOptions = {}): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -37,7 +37,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
     }
     const { topic, durationMin, constraints, proposed, format, location, locale, offered } = args;
     const { request } = await offerRequest({ handle, name, topic, durationMin, constraints, proposed, format, location, locale,
-      allowOverlapTitles: args.allowOverlapTitles, offered: offered.map(({ start, end }) => ({ start, end })),
+      offered: offered.map(({ start, end }) => ({ start, end })),
       origin: "owner-group", chatUid: chat, askDetails: false }, options);
     return view(request, loadConfig());
   } catch {

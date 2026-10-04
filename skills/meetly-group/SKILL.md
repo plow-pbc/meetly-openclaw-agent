@@ -26,7 +26,7 @@ known meeting chat uid as its target.
 
 ## Read the calendar
 
-Run `busy.ts --fetch`. For events the owner explicitly allowed overlapping, add
+Run `busy.ts --fetch`. Only in the owner's DM, for events they explicitly allowed overlapping, add
 `--allow-overlap-title <owner-supplied event name>` for each name. Matching `{account, id}` references stay in the busy file; slot search uses them without exposing them.
 The reader checks every calendar in the config on the Mac itself and writes `/var/lib/plow/meetly/tmp/busy.json`; it prints only
 `{file, busy, degraded, unknownAfter?}`. Never run `plow-gog calendar events`
@@ -36,7 +36,9 @@ free there.
 
 ## Offer times
 
-1. Resolve one E.164 phone before any calendar read or hold. If none is
+1. In the current group, skip recipient resolution and continue at step 2;
+   `meetly_offer_owner_group` resolves the guest and chat from runtime participants.
+   In the owner's DM, resolve one E.164 phone before any calendar read or hold. If none is
    known, ask the owner for a phone; if several match, ask which one. In
    either case, ask in the owner's main DM and end the turn.
    Run `ledger.ts find --handle <resolved phone>`. If it has `startedAt`
@@ -65,7 +67,8 @@ free there.
    `locale`, and `offered[]` with each slot's `start`/`end`. The writer supplies
    the configured duration/account and resolves only owner-authorized overlap titles.
    In the current group, use `meetly_offer_owner_group` with those same fields
-   except identity, `origin`, `chatUid` and account; it supplies the guest and chat.
+   except identity, `origin`, `chatUid`, account and `allowOverlapTitles`; it supplies
+   the guest and chat. Overlap permission is available only from the owner's DM.
    Do not supply hold ids.
 5. The writer creates the holds and saves the offer under the existing request
    id, preserving its chat link. It re-keys an inbound request with the same
@@ -111,13 +114,16 @@ actual request. Do not ask the guest or group what, when, format or place;
 do not search the calendar or create a request from this introduction.
 
 Resolve the recipient from Contacts in the owner's DM; ask if ambiguous.
-In a group, use the non-owner member from the turn's participants and the group entry tool. Read
+In a group, let `meetly_offer_owner_group` resolve the recipient; do not look up
+Contacts or ask for a phone. Read
 `ledger.ts find --chat <this chat uid>` first, including booked or closed requests;
 for a pending question or time approval follow "Owner confirms". No match means
-start a new request only after the owner makes a scheduling request.
+offer only after the owner makes a scheduling request. The group tool reuses a
+same-handle unlinked `asked` request and binds it to this chat.
 
 Extract the topic, proposed times, hard conditions, explicit duration, format,
-place and owner-authorized overlap titles. Reuse an open request and its chat.
+place. Extract owner-authorized overlap titles only in the owner's DM.
+Reuse an open request and its chat.
 Follow "Offer times" with `origin: owner` in the DM or the group entry tool here.
 If a requested time is busy, say there is an existing commitment and
 immediately find and offer the nearest available times; do not ask whether
@@ -127,14 +133,15 @@ day/date bounds. Drop only the unavailable preferred clock time from the
 search, keeping explicit hard conditions (such as "only at 11:30").
 Use the returned order and follow "Offer times" to hold and deliver the
 alternatives. If no times meet those conditions, explain which condition
-blocks them. Only an explicit owner instruction can authorize an overlap.
+blocks them. Overlap permission requires an explicit instruction in the owner's DM.
 Confirm the offer once in its meeting thread.
 
 ## Asked requests
 
 The poll saves a meeting request it finds in the owner's messages as
 `asked` and asks the owner about it in the owner's DM. Nobody is contacted
-until the owner says yes there. When the owner answers, run `ledger.ts
+until the owner says yes there or makes a scheduling request in their group
+(see "Owner request"). When the owner answers in their DM, run `ledger.ts
 asked` and match their answer to a request; if it could be more than one,
 ask which and end the turn.
 
@@ -233,7 +240,7 @@ disclose private information.
 
 ## Existing meetings
 
-The owner can authorize an out-of-hours time or a conflict override.
+The owner can authorize an out-of-hours time; conflict overrides require their DM.
 For other times, follow "Offer times" with the saved conditions and the owner's changes.
 For a format/place change, run `calendar.ts format --id <id> --json '<format/location>'`.
 Cancel a booked meeting with `calendar.ts cancel --id <id>`; drop an open one with
