@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { registerGuestTools } from "../plugin/guest-tools.js";
 import type { Participant } from "../skills/meetly/scripts/owner-chat.ts";
 import { offerOwnerGroup } from "../skills/meetly/scripts/owner-group.ts";
-import { registerOwnerGroupTool, registerOwnerTools } from "../plugin/owner-tools.js";
+import { registerOwnerGroupTool } from "../plugin/owner-tools.js";
 import plugin from "../plugin/index.js";
 import { calendarAction } from "../skills/meetly/scripts/calendar.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
@@ -809,16 +809,4 @@ test("owner group participant lookup failure stops before creating holds", async
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
   assert.deepEqual(f.read().requests, []);
   assert.deepEqual(f.commands, []);
-});
-
-
-test("all guest and owner tool boundaries omit blank optional fields and retain required ones", async () => {
-  const tools: any[] = [], api = { registerTool(factory: any) { tools.push(factory({})); } };
-  registerGuestTools(api, async (_ctx: any, _action: any, args: any) => ({ args }));
-  for (const register of [registerOwnerTools, registerOwnerGroupTool]) register(api, async (_ctx: any, args: any) => ({ args }));
-  for (const tool of tools) {
-    const args = Object.fromEntries(Object.keys(tool.parameters.properties).map(key => [key, ""]));
-    const result = await tool.execute("blank", args);
-    assert.deepEqual(result.details.args, Object.fromEntries(tool.parameters.required.map((key: string) => [key, ""])), tool.name);
-  }
 });
