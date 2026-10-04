@@ -81,11 +81,14 @@ thread. For a message to the owner with no meeting thread, use
       step 6.
 5. Run `cursor.ts set <highest rowid in the batch>`.
 6. Maintenance:
-   - For each request from `ledger.ts expired`: delete its holds ("Holds" in
-     `meetly-group`), then `ledger.ts update --id <id> --json
-     '{"status":"expired","pendingOwner":null}'`. If it has a `chatUid`, tell
-     the group the held times were released; this also notifies the owner.
-     An `asked` request has neither holds nor a group.
+   - Run `calendar.ts resume-pending` before expiry or cleanup. It resumes every
+     pending write and reports each result. For results with an `error`, skip
+     that request's other mutations and report it to the owner.
+   - For each request from `ledger.ts expired`, run `calendar.ts expire --id <id>`.
+     The writer rechecks expiry while holding the request lock. If it prints
+     `skipped`, do not announce expiry. Otherwise, if its returned request has
+     a `chatUid`, tell the group the offer expired; if `holdCleanup` is not empty,
+     say some holds still need cleanup. An `asked` request has no holds or group.
    - For each request from `ledger.ts asked --unnotified`, run `ledger.ts
      delivery --id <id> --kind notify --action begin`. If it fails, skip
      this request. Send the owner one line in their DM, in their language:
@@ -94,6 +97,7 @@ thread. For a message to the owner with no meeting thread, use
      --kind notify --action complete`. On a definite failure, leave it
      unnotified for the next poll. If completion cannot be recorded, report
      the error and stop; do not send it again in this turn.
-   - For each request from `ledger.ts cleanup`: retry each delete, then
-     update `holdCleanup` to what is still left (`[]` when none).
+   - For each request from `ledger.ts cleanup`, run `calendar.ts cleanup --id <id>`.
+     If a write is unresolved, run `calendar.ts resume --id <id>`; never bypass
+     it with a direct calendar command or a hand-written ledger change.
 7. If nothing happened, end silently.

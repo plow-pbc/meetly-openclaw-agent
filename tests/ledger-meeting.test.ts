@@ -6,6 +6,8 @@ import {
   type Ledger, type NewRequest, type Patch,
 } from "../skills/meetly/scripts/ledger.ts";
 import { reminderLeadMin } from "../skills/meetly/scripts/config.ts";
+import { join } from "node:path";
+import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
 const T0 = Date.parse("2026-09-28T12:00:00Z");
@@ -185,7 +187,7 @@ test("the reminder lead reads MEETLY_REMINDER_LEAD_MIN and falls back to 10", ()
   }
 });
 
-test("CLI save with a format, book, list due reminders, mark sent", () => {
+test("CLI saves format, lists booked fixtures due for reminders and marks them sent", () => {
   const home = tmpHome();
   const env = { MEETLY_HOME: home };
   const saved = cli("ledger.ts", ["save", "--json", JSON.stringify(input({ format: "meet", locale: "pt-BR" }))], env);
@@ -195,16 +197,15 @@ test("CLI save with a format, book, list due reminders, mark sent", () => {
   // The CLI reads the real clock: book a meeting one day from now.
   const start = Date.now() + 24 * 60 * MIN;
   const tomorrow = { start: new Date(start).toISOString(), end: new Date(start + 30 * MIN).toISOString(), account: "owner@example.com" };
-  const patch = { status: "booked", eventId: "e1", booked: tomorrow, meetUrl: MEET };
-  assert.equal(cli("ledger.ts", ["update", "--id", id, "--json", JSON.stringify(patch)], env).status, 0);
+  const patch: Patch = { status: "booked", eventId: "e1", booked: tomorrow, meetUrl: MEET };
+  writeJson(join(home, "ledger.json"), updateRequest(readJson<Ledger>(join(home, "ledger.json"), { requests: [] }), id, patch, T0));
   assert.deepEqual(cli("ledger.ts", ["reminders"], env).json, { requests: [] });
   const due = cli("ledger.ts", ["reminders", "--lead-min", String(25 * 60)], env);
   assert.equal(due.status, 0, due.stderr);
   assert.deepEqual(due.json.requests.map((r: { id: string }) => r.id), [id]);
   // The env var sets the default lead.
   assert.equal(cli("ledger.ts", ["reminders"], { ...env, MEETLY_REMINDER_LEAD_MIN: String(25 * 60) }).json.requests.length, 1);
-  const mark = { reminder: { at: new Date().toISOString(), outcome: "sent" } };
-  cli("ledger.ts", ["update", "--id", id, "--json", JSON.stringify(mark)], env);
+  assert.equal(cli("reminder-check.ts", ["--id", id, "--sent"], env).status, 0);
   assert.deepEqual(cli("ledger.ts", ["reminders", "--lead-min", String(25 * 60)], env).json, { requests: [] });
   const bad = cli("ledger.ts", ["reminders", "--lead-min", "x"], env);
   assert.equal(bad.status, 1);

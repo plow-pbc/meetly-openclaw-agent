@@ -1,4 +1,4 @@
-// A read-only command on the owner's Mac, through the Latch relay that boot
+// A command on the owner's Mac, through the Latch relay that boot
 // bridges to loopback: the MCP tool plow_run_command, with the bridge's own
 // per-boot token from the gateway's environment. Undefined when there is no
 // bridge, the Mac is not connected, or the command is refused or fails.
@@ -11,28 +11,46 @@ export const LATCH_ABOUT_URL = "https://plow.co/latch";
 export type BridgeOptions = { fetch?: typeof fetch; url?: string; token?: string };
 export type MacCommand = { argv: string[]; readPaths: string[]; goal: string; timeoutMs?: number };
 
-export async function runOnMac(command: MacCommand, opts: BridgeOptions = {}): Promise<string | undefined> {
+export type MacOutcome = { output: string } | { error: string; code?: "calendar-conflict" } | { handle: string };
+
+// Keep explicit failures distinct from unknown delivery for calendar reconciliation.
+export async function macOutcome(name: string, args: unknown, opts: BridgeOptions = {}, timeoutMs = 20_000): Promise<MacOutcome | undefined> {
   const token = opts.token ?? process.env.PLOW_MCP_BRIDGE_TOKEN;
   if (!token) return undefined;
   const res = await (opts.fetch ?? fetch)(opts.url ?? BRIDGE_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
-    body: JSON.stringify({
-      jsonrpc: "2.0", id: 1, method: "tools/call",
-      params: { name: "plow_run_command", arguments: { argv: command.argv, read_paths: command.readPaths, goal: command.goal } },
-    }),
-    signal: AbortSignal.timeout(command.timeoutMs ?? 20_000),
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) return undefined;
   const body = await res.text();
-  const data = body.split("\n").find((line) => line.startsWith("data:"));
-  const reply = JSON.parse(data ? data.slice(5) : body) as { result?: { isError?: boolean; content?: { type: string; text?: string }[] } };
-  if (reply.result?.isError) return undefined;
-  const text = reply.result?.content?.find((c) => c.type === "text")?.text;
+  const data = body.split("\n").find(line => line.startsWith("data:"));
+  const reply = JSON.parse(data ? data.slice(5) : body);
+  if (reply.result?.isError) return { error: "Mac command refused or failed" };
+  const text = reply.result?.content?.find((c: { type: string }) => c.type === "text")?.text;
   if (!text) return undefined;
-  const out = JSON.parse(text) as { exit_code?: number; output?: string };
-  if (out.exit_code !== 0 || typeof out.output !== "string") return undefined;
-  return out.output;
+  let out = JSON.parse(text);
+  if (out.status === "ready") out = out.result;
+  if (out.status === "pending" && typeof out.handle === "string") return { handle: out.handle };
+  // Latch refuses before creating the event. Keep the reason without exposing
+  // its private busy times, so an offer can try its remaining candidates.
+  if (out.status === "error" && typeof out.error === "string" && out.error.startsWith("the slot is busy — ")) {
+    return { error: "Calendar slot is busy", code: "calendar-conflict" };
+  }
+  if (["denied", "blocked", "failed", "error"].includes(out.status)) return { error: "Mac command refused or failed" };
+  if (typeof out.exit_code === "number" && out.exit_code !== 0) return { error: "Mac command failed" };
+  if (out.exit_code === 0 && typeof out.output === "string") return { output: out.output };
+  return undefined;
+}
+
+export async function runOnMacOutcome(command: MacCommand, opts: BridgeOptions = {}): Promise<MacOutcome | undefined> {
+  return macOutcome("plow_run_command", { argv: command.argv, read_paths: command.readPaths, goal: command.goal }, opts, command.timeoutMs);
+}
+
+export async function runOnMac(command: MacCommand, opts: BridgeOptions = {}): Promise<string | undefined> {
+  const result = await runOnMacOutcome(command, opts);
+  return result && "output" in result ? result.output : undefined;
 }
 
 // Whether the Mac answers at all: `/usr/bin/true` through the bridge.
