@@ -54,7 +54,7 @@ export async function sendPlowMessage(api, context, to, text, kind, outbound = l
     session: buildOutboundSessionContext({ cfg, ...route, conversationType: kind }),
     mirror: { agentId: route.agentId, sessionKey: route.sessionKey }, skipQueue: true,
   }));
-  if (result.status !== "sent") throw new Error("Message delivery is unknown.");
+  if (result.status !== "sent") throw new Error("Plow delivery is unknown; not replaying this send. Do NOT retry; check the thread.");
 }
 
 export function registerGuestTools(api, execute = run, outbound = loadOutbound) {

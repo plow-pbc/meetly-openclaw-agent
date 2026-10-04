@@ -6,6 +6,7 @@ import { answerOwner } from "../skills/meetly/scripts/answer-owner.ts";
 import { calendarAction } from "../skills/meetly/scripts/calendar.ts";
 import { recordBooking } from "../skills/meetly/scripts/record-booking.ts";
 import { guestAction } from "../skills/meetly/scripts/guest.ts";
+import { sendPlowMessage } from "../plugin/guest-tools.js";
 import { registerOwnerTools } from "../plugin/owner-tools.js";
 import { addRequest, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
@@ -175,4 +176,16 @@ test("concurrent sends and stale clears cannot consume another question", async 
   });
   assert.ok("sent" in result);
   assert.deepEqual(f.read().requests[0]!.pendingOwner, newer);
+});
+
+
+test("unknown Plow delivery explicitly forbids retrying", async () => {
+  const api = { runtime: { channel: {
+    routing: { resolveAgentRoute: () => ({ agentId: "main", sessionKey: "agent:main:main" }) },
+    session: { resolveStorePath: () => "/sessions", updateLastRoute: async () => {} },
+  } } };
+  await assert.rejects(sendPlowMessage(api, ctx, "plow-owner", "Question", "direct", async () => ({
+    buildOutboundSessionContext: (input: object) => input,
+    sendDurableMessageBatch: async () => ({ status: "queued" }),
+  })), { message: "Plow delivery is unknown; not replaying this send. Do NOT retry; check the thread." });
 });
