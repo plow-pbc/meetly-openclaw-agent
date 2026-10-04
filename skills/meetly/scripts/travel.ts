@@ -11,10 +11,11 @@ export function checkTravel(travel: Travel): void {
 }
 
 export function travelFor(input: TravelInput): Travel {
-  if (input.travel !== undefined) checkTravel(input.travel);
-  if (input.format === "meet" || input.format === "phone") return { beforeMin: 0, afterMin: 0 };
-  return input.travel ?? { beforeMin: input.format === "in_person" || input.meal ? 15 : 0,
-    afterMin: input.format === "in_person" || input.meal ? 15 : 0 };
+  if (input.travel === undefined) throw new Error("Supply an explicit travel estimate, including zero minutes for virtual meetings");
+  checkTravel(input.travel);
+  if ((input.format === "meet" || input.format === "phone") && (input.travel.beforeMin || input.travel.afterMin))
+    throw new Error("Virtual meetings require zero travel minutes");
+  return input.travel;
 }
 
 export function travelRange(start: string | number, end: string | number, input: TravelInput) {
@@ -27,4 +28,13 @@ export function travelNote(request: TravelInput & { topic: string; location?: st
   const { beforeMin, afterMin } = travelFor(request);
   return beforeMin || afterMin
     ? `Held ${beforeMin} min travel before and ${afterMin} min after ${request.topic}${request.location ? ` at ${request.location}` : ""} — say if that's off.` : undefined;
+}
+
+export class TravelBaseRequired extends Error {
+  constructor() { super("Ask the owner privately for their home/office base before preparing in-person travel"); }
+}
+
+export function checkTravelBase(input: TravelInput, base?: string): void {
+  const travel = travelFor(input);
+  if (!base?.trim() && (input.format === "in_person" || travel.beforeMin || travel.afterMin)) throw new TravelBaseRequired();
 }

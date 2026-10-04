@@ -78,7 +78,7 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; durationMin: number; u
   const tz = config.timezone;
   const duration = durationFor(q);
   const count = Math.min(q.count ?? SLOT_COUNT, SLOT_COUNT);
-  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], start: q.near }).slot.start);
+  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], travel: { beforeMin: 0, afterMin: 0 }, start: q.near }).slot.start);
 
   let [startMin, endMin] = windowFor(config, q.meal);
   startMin = Math.ceil(startMin / STEP_MIN) * STEP_MIN;
@@ -237,8 +237,9 @@ if (isMain(import.meta.url)) {
       : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
     if (values.request !== undefined && (!request || !["offered", "booked"].includes(request.status))) throw new Error("--request needs an offered or booked request");
     if (request) input.busy = input.busy.filter(b => !requestEvents(request).some(o => o.holdId === b.id && o.account === b.account));
-    const travelInput: TravelInput = { format: request?.format ?? values.format as TravelInput["format"],
-      travel: request?.travel?.override ? request.travel : values.travel ? JSON.parse(values.travel) : request?.travel };
+    const format = (values.format ?? request?.format) as TravelInput["format"];
+    const travelInput: TravelInput = { format,
+      travel: request?.travel?.override && format !== "meet" && format !== "phone" ? request.travel : values.travel ? JSON.parse(values.travel) : request?.travel };
     if (values.at !== undefined) {
       for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);

@@ -43,8 +43,8 @@ test("AGENTS.md opens as Meetly and keeps the base's tool and authority contract
   assert.ok(prompt.includes("Meetly poll."));
 });
 
-test("the four Meetly skills exist", () => {
-  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-group", "meetly-poll", "meetly-setup"]);
+test("the scheduling flow skills exist", () => {
+  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-email", "meetly-group", "meetly-manage", "meetly-poll", "meetly-setup", "meetly-travel"]);
 });
 
 test("every skill has frontmatter naming its directory and a description", () => {
@@ -100,9 +100,9 @@ test("the owner's yes or no in their DM decides an asked request", () => {
   assert.ok(group.includes("## Asked requests"));
   assert.ok(group.includes("Nobody is contacted until the owner says yes there"));
   assert.ok(group.includes("if it could be more than one, ask which and end the turn"));
-  assert.ok(group.includes("**Yes:** follow \"Offer times\" with `origin: inbound`"));
+  assert.ok(group.includes("**Yes:** read `meetly-group`, then follow \"Offer times\" with `origin: inbound`"));
   assert.ok(group.includes("**No:** run `calendar.ts drop --id <id>`. Send nothing to the person."));
-  assert.ok(flat(prompt).includes("the owner answers Meetly's \"Want me to offer times?\" → `meetly-group`, \"Asked requests\""));
+  assert.ok(flat(prompt).includes("the owner answers Meetly's \"Want me to offer times?\" → `meetly-manage`, \"Asked requests\""));
 });
 
 
@@ -176,7 +176,7 @@ test("calendar mutations are owned by the writer, never assembled in skills", ()
   assert.ok(pollSkill().includes("calendar.ts cleanup --id <id>"));
 });
 
-const groupSkill = () => flat(readFileSync(join(SKILLS, "meetly-group", "SKILL.md"), "utf8"));
+const groupSkill = () => flat(["meetly-group", "meetly-manage", "meetly-travel", "meetly-confirm", "meetly-email"].map(name => readFileSync(join(SKILLS, name, "SKILL.md"), "utf8")).join("\n"));
 const pollSkill = () => flat(readFileSync(join(SKILLS, "meetly-poll", "SKILL.md"), "utf8"));
 
 test("format comes from explicit words and questions follow the request view", () => {
@@ -310,7 +310,7 @@ test("owner-started groups introduce Meetly and name the owner in the first repl
   const group = groupSkill();
   const identity = "Meetly, <ownerName>'s scheduling assistant";
   const offer = group.slice(group.indexOf("## Offer times"), group.indexOf("## Owner request"));
-  const owner = group.slice(group.indexOf("## Existing meetings"), group.indexOf("## Holds"));
+  const owner = group.slice(group.indexOf("## Existing meetings"), group.indexOf("## Changes after booking"));
   assert.ok(offer.includes(`If this is your first reply in an owner-started group, introduce yourself as "${identity}"`));
   assert.ok(owner.includes(`Without an owner scheduling ask, on your first reply introduce yourself as "${identity}"`));
   registerOwnerGroupTool({ registerTool(factory: (ctx: object) => { description: string }) {

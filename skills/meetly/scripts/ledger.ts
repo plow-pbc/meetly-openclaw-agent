@@ -341,7 +341,7 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
   if (existing.channel === "email" && existing.chatUid && input.chatUid && input.chatUid !== existing.chatUid) throw new Error("an email request cannot move to another thread");
   input = { ...input, channel: existing.channel, origin: existing.origin, chatUid: input.chatUid ?? existing.chatUid,
     askDetails: input.askDetails ?? existing.askDetails,
-    travel: existing.travel?.override ? existing.travel : input.travel ?? existing.travel,
+    travel: existing.travel?.override && input.format !== "meet" && input.format !== "phone" ? existing.travel : input.travel ?? existing.travel,
     allowOverlap: uniqueEvents([...(existing.allowOverlap ?? []), ...(input.allowOverlap ?? [])]) };
   if (existing.chatUid && input.chatUid !== existing.chatUid) throw new Error("a request cannot move to another chat");
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;

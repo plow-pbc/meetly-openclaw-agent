@@ -11,14 +11,14 @@ import { writeJson } from "../skills/meetly/scripts/store.ts";
 const config = { ...DEFAULTS, ownerName: "Alex", timezone: "UTC", defaultAccount: "owner@example.com",
   calendars: [{ account: "owner@example.com", id: "owner@example.com" }], setupDoneAt: "2026-10-01T00:00:00Z" };
 
-test("travel defaults, virtual exclusion and minute bounds", () => {
-  for (const meal of ["lunch", "dinner", "coffee"] as const) assert.deepEqual(travelFor({ meal }), { beforeMin: 15, afterMin: 15 });
-  assert.deepEqual(travelFor({}), { beforeMin: 0, afterMin: 0 });
-  assert.deepEqual(travelFor({ format: "in_person" }), { beforeMin: 15, afterMin: 15 });
-  for (const format of ["phone", "meet"] as const) assert.deepEqual(travelFor({ format, meal: "lunch", travel: { beforeMin: 45, afterMin: 45, override: true } }), { beforeMin: 0, afterMin: 0 });
-  assert.deepEqual(travelRange("2026-10-05T00:30:00Z", "2026-10-05T01:00:00Z", { travel: { beforeMin: 120, afterMin: 0 } }),
-    { from: "2026-10-04T22:30:00.000Z", to: "2026-10-05T01:00:00.000Z" });
-  for (const value of [-1, 121, 1.5, Infinity, "25", null]) assert.throws(() => travelFor({ travel: { beforeMin: value as number, afterMin: 0 } }), /whole minutes/);
+test("travel requires a model decision and rejects incompatible virtual estimates", () => {
+  for (const input of [{}, {format: "in_person"}, {meal: "lunch"}, {format: "phone"}] as const)
+    assert.throws(() => travelFor(input), /explicit travel/);
+  assert.deepEqual(travelFor({travel: {beforeMin: 27, afterMin: 12}}), {beforeMin: 27, afterMin: 12});
+  assert.throws(() => travelFor({format: "meet", travel: {beforeMin: 45, afterMin: 45}}), /zero/);
+  assert.deepEqual(travelRange("2026-10-05T00:30:00Z", "2026-10-05T01:00:00Z", {travel: {beforeMin: 120, afterMin: 0}}),
+    {from: "2026-10-04T22:30:00.000Z", to: "2026-10-05T01:00:00.000Z"});
+  for (const value of [-1, 121, 1.5, Infinity, "25", null]) assert.throws(() => travelFor({travel: {beforeMin: value as number, afterMin: 0}}), /whole minutes/);
 });
 
 test("base is optional at setup and persists through later config edits", t => {

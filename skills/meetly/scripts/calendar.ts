@@ -1,6 +1,6 @@
 // Owns calendar writes and their ledger commits. A durable intent survives a
 // lost Latch response or a failed ledger write; uncertain creates are never replayed.
-import { checkTravel, travelFor, travelRange, travelNote, type Travel } from "./travel.ts";
+import { checkTravel, checkTravelBase, travelFor, travelRange, travelNote, type Travel } from "./travel.ts";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -179,9 +179,16 @@ export async function calendarAction(id: string, action: CalendarAction, options
         patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null, reoffer: null,
           holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...refs]) }); await cleanup(); return { request: requestById(id) };
       }
+      if (input.action === "offer") checkTravelBase(input.request, loadConfig().travelBase);
+      if (input.action === "format" || input.action === "travel") {
+        if (input.travel === undefined) throw new Error("Supply an explicit travel estimate");
+        const format = input.action === "format" ? input.format : request.format;
+        input.travel = request.travel?.override && !input.travel.override && format !== "meet" && format !== "phone" ? request.travel : input.travel;
+        checkTravelBase({ format, travel: input.travel }, loadConfig().travelBase);
+      }
       if ((input.action === "format" || input.action === "travel") && request.status === "offered") {
         patch({ ...(input.action === "format" ? { format: input.format, location: input.location ?? "" } : {}),
-          travel: request.travel?.override && !input.travel?.override ? request.travel : input.travel });
+          travel: input.travel });
         return { request: requestById(id) };
       }
       if (input.action === "format" || input.action === "travel" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(request.status === "booked" && ((input.action === "book" && wasBooked) || input.action === "offer"))) throw new Error(`request is ${request.status}`);
@@ -205,7 +212,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           ? { start: request.booked!.start, end: request.booked!.end, account: request.booked!.account, holdId: request.eventId }
           : request.status === "booked" ? { start: input.start, end: input.end ?? new Date(Date.parse(input.start) + request.durationMin * 60_000).toISOString(), account: request.booked!.account, holdId: request.eventId }
           : request.offered.find(o => Date.parse(o.start) === Date.parse(input.start)) ?? { start: input.start, end: input.end!, account: config.defaultAccount };
-        if (!slot.end || !(Date.parse(slot.end) > Date.parse(slot.start))) throw new Error("booking needs valid start and end");
+        if (!slot.end || !(Date.parse(slot.end) > Date.parse(slot.start)) || !Number.isInteger((Date.parse(slot.end) - Date.parse(slot.start)) / 60_000)) throw new Error("booking needs valid start and end");
         let verb: Step["verb"] = slot.holdId ? "update" : "create";
         if (slot.holdId) {
           const output = await call(["event", "primary", slot.holdId, "--json"], slot.account);
@@ -217,7 +224,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
           }
         }
         const effective = { ...request, ...(input.action === "format" ? { format: input.format, location: input.location ?? "" } : {}),
-          travel: request.travel?.override && !input.travel?.override ? request.travel : input.travel ?? request.travel };
+          travel: request.travel?.override && !input.travel?.override && (input.action !== "format" || !["meet", "phone"].includes(input.format ?? "")) ? request.travel : input.travel ?? request.travel };
+        checkTravelBase(effective, config.travelBase);
         input.travel = effective.travel;
         const range = travelRange(slot.start, slot.end, effective);
         const minutes = travelFor(effective);
@@ -387,7 +395,7 @@ export async function approveTime(id: string, args: { start?: string; attendees?
   if (!start) throw new Error("Time approval needs an exact start or a pending time approval.");
   const { checkTime } = await import("./slots.ts");
   const { slot } = checkTime({ now: (options.now ?? Date.now)(), config: loadConfig(), busy: [], start,
-    meal: request.meal, durationMin: request.durationMin });
+    travel: request.travel, meal: request.meal, durationMin: request.durationMin });
   try {
     return { ...await calendarAction(id, { action: "book", start: slot.start, end: slot.end,
       attendees: args.attendees, timeApproval: true }, options), approved: true };
@@ -405,6 +413,7 @@ export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, 
   if (args.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
   const config = loadConfig();
   if (config.paused) throw new Error("Scheduling is paused.");
+  checkTravelBase(args, config.travelBase);
   const durationMin = durationFor({ config, meal: args.meal, durationMin: args.meal ? undefined : args.durationMin });
   const input: NewRequest = { ...args, durationMin,
     // Meal defaults govern the actual holds, including their conflict checks.

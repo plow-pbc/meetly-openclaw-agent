@@ -32,7 +32,7 @@ const runGroup = async (context, args) => {
 };
 
 export function registerOwnerGroupTool(api, execute = runGroup) {
-  const required = ["topic", "offered"];
+  const required = ["topic", "offered", "travel"];
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
