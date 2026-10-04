@@ -36,10 +36,36 @@ free there.
 
 ## Offer times
 
+For "next week", run `time.ts next_week --anchor <owner message timestamp>
+--timezone <config.timezone>` and use its returned `from`/`to`; pass named
+weekdays separately as `days`. For owner DM requests, save those bounds in
+`constraints` and pass them as `--from`/`--to` on searches and re-offers.
+For a request started in a group,
+suggested dates/times are `proposed` and only explicit non-relaxable conditions
+are `constraints`. Carry constraints into every re-offer unless the owner changes them.
+
+Pass `--meal lunch|dinner|coffee` to `slots.ts`, including `--at`, and save `meal`.
+The script resolves the meal window and duration. Do not supply `--duration` for
+an initial meal offer: lunch and dinner are 60 minutes; coffee is 30 minutes.
+`calendar.ts offer` ignores a supplied meal duration and sets the holds to the meal
+length. Explicit owner length changes use the saved-duration steer path under
+"Owner request". Persist the search result's `durationMin` with its offered slots,
+rather than computing a duration yourself.
+When the owner changes the duration, update any duration wording in `topic`
+and save it with the replacement offer. Keep `topic` to the meeting purpose
+or meal ("lunch", "budget review"), without "with <guest name>"; `name`
+is stored separately and the calendar title adds it. For example, "30-minute call" becomes
+"60-minute call" when changed to an hour. The saved topic supplies calendar
+titles and the group label in owner notifications.
+
+When the owner replaces saved hard conditions, run
+`ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
+before searching or calling the group tool, keeping any hard conditions they did not change.
+
 1. In the current group, call `meetly_offer_owner_group` with `topic`, `constraints`,
-   `proposed`, `name` as given by the owner in this thread, `format`, `location` and `locale` as known.
+   `proposed`, `meal`, `name` as given by the owner in this thread, `format`, `location` and `locale` as known.
    It resolves the guest and chat, searches within the owner's conditions and
-   holds times itself using the saved or configured duration; never supply `durationMin` or `offered` intervals. On error, stop. Otherwise
+   holds times itself using the saved, meal or configured duration; never supply `durationMin` or `offered` intervals. On error, stop. Otherwise
    apply any explicit owner duration as described below before delivery, then
    continue at step 6 with the final returned offer; if `preferencesUnavailable` is true,
    explain that the preferred times do not work and offer the returned alternatives
@@ -60,7 +86,7 @@ free there.
    locale>`, with the request's `constraints` (the owner's) and, on its
    first offer, its `proposed` times: `--days`, `--after`, `--before`,
    `--from`/`--to`, `--duration`. Slots stay inside the
-   owner's days and window; constraints only narrow them.
+   owner's days and meeting window; constraints only narrow them.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
      If `constraints` block it, tell the owner which one and suggest
@@ -69,10 +95,10 @@ free there.
      accounts. Tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
 4. Save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,
-   `name`, `sourceRowid`, known `chatUid`, `topic`, `location`, optional `durationMin`,
+   `name`, `sourceRowid`, known `chatUid`, `topic`, `location`, `meal` if applicable, optional `durationMin`,
    `constraints` (the owner's conditions), `proposed`, `allowOverlapTitles`, `format`,
    `locale`, and `offered[]` with each slot's `start`/`end`. The writer supplies
-   the configured duration/account and resolves only owner-authorized overlap titles.
+   the meal or configured duration and account and resolves only owner-authorized overlap titles.
    Overlap permission is available only from the owner's DM.
    Do not supply hold ids.
 5. The writer creates the holds and saves the offer under the existing request
@@ -82,6 +108,7 @@ free there.
    the old holds. On failure, stop and tell the owner; do not send an offer.
 6. Deliver the times:
    - An open request that already has a `chatUid`: post the new times there.
+     Ask format/place only when `askDetails` is true.
    - Otherwise, in the owner's DM, run `ledger.ts delivery --id <saved request id>
      --kind start --action begin` exactly once, immediately before sending.
      Success returns `delivery: {state: "reserved", sendNow: true}`: this is
@@ -167,8 +194,8 @@ asked` and match their answer to a request; if it could be more than one,
 ask which and end the turn.
 
 - **Yes:** follow "Offer times" with `origin: inbound`, the request's
-  `name`, `sourceRowid`, `topic`, `format`, `locale` and `proposed`, and
-  `constraints` set to any conditions the owner gave with the yes. Saving
+  `name`, `sourceRowid`, `topic`, `meal`, `format`, `locale` and `proposed`, and
+  preserve the saved `constraints` and merge any conditions the owner gave with the yes. Saving
   the offer turns the request into `offered` under the same id.
 - **No:** run `calendar.ts drop --id <id>`.
   Send nothing to the person.

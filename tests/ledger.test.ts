@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   addRequest, saveRequest, cleanupList, pendingOwnerList, expiredRequests, findByChat, findOpenByHandle, normalizeHandle, sameHandle, updateRequest,
@@ -420,6 +420,35 @@ for (const origin of ["owner", "owner-group", "inbound"] as const) test(`request
   assert.equal(saved.origin, origin);
   assert.equal(saved.askDetails, false);
   assert.equal(saved.chatUid, "cht_MiXeD");
+});
+
+test("topics strip only a trailing reference to the recorded guest", () => {
+  for (const [topic, expected] of [
+    ["lunch with Kai", "lunch"],
+    ["lunch WITH KAI", "lunch"],
+    ["review with Kai about hiring", "review with Kai about hiring"],
+    ["lunch with Kaia", "lunch with Kaia"],
+  ]) {
+    const added = addRequest(empty(), input({ name: "Kai", topic }), T0, "r_1");
+    assert.equal(added.requests[0]!.topic, expected);
+    const updated = updateRequest(added, "r_1", { topic: "budget review with Kai" }, T0);
+    assert.equal(updated.requests[0]!.topic, "budget review");
+  }
+});
+
+test("poll saves unstated meal durations from config and preserves explicit lengths", t => {
+  const home = tmpHome();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeJson(join(home, "config.json"), { setupDoneAt: new Date(T0).toISOString(), durationMin: 45, calendars: [], defaultAccount: "owner@example.com" });
+  for (const [meal, stated, expected] of [["lunch", undefined, 60], ["dinner", undefined, 60], ["coffee", undefined, 30], [undefined, undefined, 45], ["lunch", 90, 90]] as const) {
+    const result = cli("ledger.ts", ["save", "--json", JSON.stringify({ origin: "inbound", status: "asked", handle: `guest${expected}${meal}@example.com`, topic: "meet", meal, durationMin: stated })], { MEETLY_HOME: home });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.json.request.durationMin, expected);
+  }
+  rmSync(join(home, "config.json"));
+  const retry = cli("ledger.ts", ["save", "--json", JSON.stringify({ origin: "inbound", status: "asked", handle: "guest60lunch@example.com", topic: "meet", meal: "lunch" })], { MEETLY_HOME: home });
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(retry.json.request.durationMin, 60);
 });
 
 test("a fresh start reservation tells the caller to send, and a duplicate explicitly forbids sending", () => {

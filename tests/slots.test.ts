@@ -160,6 +160,37 @@ test("the CLI reads busy.ts output and the stored config", () => {
   }
 });
 
+test("owner re-offer uses saved week bounds and ignores only its own holds", () => {
+  const home = tmpHome();
+  const account = CONFIG.defaultAccount;
+  writeJson(join(home, "config.json"), { ...CONFIG, horizonDays: 21 });
+  const offered = [
+    { start: "2026-10-06T11:30:00-03:00", end: "2026-10-06T12:00:00-03:00", holdId: "hold-1", account },
+    { start: "2026-10-06T12:00:00-03:00", end: "2026-10-06T12:30:00-03:00", holdId: "hold-2", account },
+  ];
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
+    origin: "owner", handle: "+15550107812", topic: "lunch", durationMin: 30, offered,
+    constraints: { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-11", after: "11:30", before: "14:00" },
+  }, NOW, "lunch"));
+  const busyFile = join(home, "busy.json");
+  const busy = offered.map(o => ({ start: o.start, end: o.end, id: o.holdId, account }));
+  const args = ["--in", busyFile, "--request", "lunch", "--now", "2026-10-02T20:00:00-03:00", "--duration", "60", "--days", "tue", "--from", "2026-10-01", "--to", "2026-10-20"];
+  const run = (extra: object[] = []) => {
+    writeJson(busyFile, { busy: [...busy, ...extra], degraded: [] });
+    return cli("slots.ts", args, { MEETLY_HOME: home });
+  };
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.json.slots[0].start, offered[0]!.start);
+  assert.equal(result.json.slots[0].end, offered[1]!.end);
+  assert.ok(result.json.slots.every((s: { start: string; end: string }) => s.start.startsWith("2026-10-06") && s.end.slice(11, 16) <= "14:00"));
+  const blocked = run([{ id: "hold-1", account: "another@example.com", start: "2026-10-06T11:30:00-03:00", end: "2026-10-06T14:00:00-03:00" }]);
+  assert.equal(blocked.status, 0, blocked.stderr);
+  assert.deepEqual(blocked.json.slots, []);
+  const unknown = cli("slots.ts", args.map(a => a === "lunch" ? "missing" : a), { MEETLY_HOME: home });
+  assert.notEqual(unknown.status, 0);
+});
+
 test("checkTime: a time the person insists on", () => {
   const check = (start: string, over: Partial<Parameters<typeof checkTime>[0]> = {}) =>
     checkTime({ now: NOW, config: CONFIG, busy: [], start, ...over });
@@ -213,4 +244,107 @@ test("replacement slot search keeps saved and newly resolved overlap authorizati
   assert.equal(blocked.status, 0, blocked.stderr);
   assert.equal(blocked.json.reason, "busy");
   assert.notEqual(cli("slots.ts", args.map(a => a === "r_one" ? "missing" : a), env).status, 0);
+});
+
+test("lunch and dinner override working hours; coffee keeps the owner's window and 30-minute default", () => {
+  const query = q({ config: { ...CONFIG, windowEnd: "11:00" }, meal: "lunch" });
+  assert.equal(findSlots(query).slots[0]!.start, "2026-09-28T11:30:00-03:00");
+  const dinner = { ...query, meal: "dinner" as const, after: "19:00", before: "21:00", days: ["mon"] as const,
+    busy: [{ start: "2026-09-28T19:00:00-03:00", end: "2026-09-28T20:00:00-03:00" }] };
+  const slots = findSlots({ ...dinner, days: [...dinner.days] }).slots;
+  assert.deepEqual(slots.map(s => s.start), ["2026-09-28T20:00:00-03:00", "2026-10-05T19:00:00-03:00", "2026-10-05T19:30:00-03:00"]);
+  assert.equal(checkTime({ ...query, meal: "dinner", start: slots[0]!.start }).outsideHours, false);
+  assert.equal(checkTime({ ...query, meal: "dinner", start: "2026-09-28T21:00:00-03:00" }).outsideHours, true);
+  assert.deepEqual(findSlots({ ...query, meal: "dinner", days: ["sat"] }).slots, []);
+  const coffee = q({ config: { ...CONFIG, durationMin: 45, windowStart: "17:00", windowEnd: "19:00" }, meal: "coffee" });
+  const first = findSlots(coffee).slots[0]!;
+  assert.equal(first.start, "2026-09-28T17:00:00-03:00");
+  assert.equal(Date.parse(first.end) - Date.parse(first.start), 30 * 60_000);
+  assert.equal(checkTime({ ...coffee, start: "2026-09-28T18:30:00-03:00" }).outsideHours, false);
+  assert.equal(checkTime({ ...coffee, start: "2026-09-28T09:00:00-03:00" }).outsideHours, true);
+});
+
+for (const meal of ["lunch", "dinner", "coffee"] as const) {
+  const defaultDuration = meal === "coffee" ? 30 : 60;
+  test(`the CLI defaults ${meal} to ${defaultDuration} minutes for searches and exact times, with explicit duration taking precedence`, () => {
+    const home = tmpHome();
+    writeJson(join(home, "config.json"), { ...CONFIG, durationMin: 45 });
+    const busyFile = join(home, "busy.json");
+    writeJson(busyFile, { busy: [], degraded: [] });
+    const args = ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--meal", meal];
+    const start = meal === "lunch" ? "2026-09-28T11:30:00-03:00" : meal === "dinner" ? "2026-09-28T18:00:00-03:00" : "2026-09-28T10:00:00-03:00";
+    for (const mode of [[], ["--at", start]]) {
+      for (const duration of [undefined, 45]) {
+        const result = cli("slots.ts", [...args, ...mode, ...(duration === undefined ? [] : ["--duration", String(duration)])], { MEETLY_HOME: home });
+        assert.equal(result.status, 0, result.stderr);
+        const slot = mode.length ? result.json.slot : result.json.slots[0];
+        assert.equal(slot.start, start);
+        assert.equal((Date.parse(slot.end) - Date.parse(slot.start)) / 60_000, duration ?? defaultDuration);
+        if (!mode.length) assert.equal(result.json.durationMin, duration ?? defaultDuration);
+      }
+    }
+    writeJson(busyFile, { busy: [{
+      start: new Date(Date.parse(start) + (defaultDuration - 15) * 60_000).toISOString(),
+      end: new Date(Date.parse(start) + 60 * 60_000).toISOString(),
+    }], degraded: [] });
+    const blocked = cli("slots.ts", [...args, "--at", start], { MEETLY_HOME: home });
+    assert.equal(blocked.status, 0, blocked.stderr);
+    assert.equal(blocked.json.reason, "busy");
+  });
+}
+
+test("the CLI accepts coffee and preserves dinner's window and saved duration on saved-request searches", () => {
+  const home = tmpHome();
+  writeJson(join(home, "config.json"), CONFIG);
+  const busyFile = join(home, "busy.json");
+  writeJson(busyFile, { busy: [], degraded: [] });
+  const args = ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--duration", "45"];
+  const first = cli("slots.ts", [...args, "--meal", "dinner"], { MEETLY_HOME: home });
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(first.json.slots[0].start, "2026-09-28T18:00:00-03:00");
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
+    origin: "owner", handle: "+15551234567", topic: "dinner", meal: "dinner", durationMin: 45,
+    offered: first.json.slots.map((s: object) => ({ ...s, account: CONFIG.defaultAccount })),
+  }, NOW, "dinner"));
+  const again = cli("slots.ts", ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--request", "dinner", "--after", "19:00"], { MEETLY_HOME: home });
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(again.json.slots[0].start, "2026-09-28T19:00:00-03:00");
+  assert.equal(again.json.slots[0].end, "2026-09-28T19:45:00-03:00");
+  const checked = cli("slots.ts", ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--request", "dinner", "--at", again.json.slots[0].start], { MEETLY_HOME: home });
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.equal(checked.json.free, true);
+  assert.equal(checked.json.outsideHours, false);
+  assert.equal(checked.json.slot.end, again.json.slots[0].end);
+  const coffee = cli("slots.ts", ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--meal", "coffee", "--after", "17:00"], { MEETLY_HOME: home });
+  assert.equal(coffee.status, 0, coffee.stderr);
+  assert.equal(coffee.json.slots[0].start, "2026-09-28T17:00:00-03:00");
+  assert.equal(coffee.json.slots[0].end, "2026-09-28T17:30:00-03:00");
+});
+
+
+test("owner replaces saved coffee and Tuesday conditions before searching", () => {
+  const home = tmpHome(), env = { MEETLY_HOME: home };
+  writeJson(join(home, "config.json"), CONFIG);
+  const busyFile = join(home, "busy.json");
+  writeJson(busyFile, { busy: [], degraded: [] });
+  const bounds = { from: "2026-09-28", to: "2026-10-02" };
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
+    origin: "owner", handle: "+15551234567", topic: "coffee", meal: "coffee", durationMin: 30,
+    constraints: { ...bounds, days: ["tue"] },
+    offered: [{ start: "2026-09-29T09:00:00-03:00", end: "2026-09-29T09:30:00-03:00", account: CONFIG.defaultAccount }],
+  }, NOW, "coffee"));
+  const args = ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--request", "coffee"];
+  const unchanged = cli("slots.ts", args, env);
+  assert.equal(unchanged.status, 0, unchanged.stderr);
+  assert.equal(unchanged.json.slots[0].start, "2026-09-29T09:00:00-03:00");
+  const blocked = cli("slots.ts", [...args, "--days", "wed"], env);
+  assert.equal(blocked.status, 0, blocked.stderr);
+  assert.deepEqual(blocked.json.slots, []);
+  const updated = cli("ledger.ts", ["update", "--id", "coffee", "--json", JSON.stringify({ constraints: { ...bounds, days: ["wed"] } })], env);
+  assert.equal(updated.status, 0, updated.stderr);
+  const replacement = cli("slots.ts", [...args, "--meal", "lunch", "--duration", "60", "--days", "wed"], env);
+  assert.equal(replacement.status, 0, replacement.stderr);
+  assert.equal(replacement.json.slots[0].start, "2026-09-30T11:30:00-03:00");
+  assert.equal(replacement.json.slots[0].end, "2026-09-30T12:30:00-03:00");
+  assert.ok(replacement.json.slots.every((s: { start: string; end: string }) => s.start.startsWith("2026-09-30") && s.end.slice(11, 16) <= "13:30"));
 });

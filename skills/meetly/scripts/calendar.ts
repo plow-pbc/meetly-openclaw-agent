@@ -7,9 +7,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
-import { holdHours, loadConfig } from "./config.ts";
+import { durationFor, holdHours, loadConfig } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
-import { expiredRequests, findOpenByHandle, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
+import { expiredRequests, findOpenByHandle, requestId, sameCleanup, uniqueCleanup, saveRequest, meetingTopic, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
@@ -153,7 +153,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         input.request.allowOverlap = validated.requests.find(r => r.id === id)!.allowOverlap;
         input.request.name = validated.requests.find(r => r.id === id)!.name;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
-        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"]);
+        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${meetingTopic(input.request)} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"]);
       } else {
         const config = loadConfig();
         if (input.action === "format") updateRequest(ledger(), id, { format: input.format, location: input.location }, now());
@@ -176,7 +176,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         }
         const format = input.action === "format" ? input.format : request.format;
         const location = input.action === "format" ? input.location ?? "" : request.location;
-        add(verb, slot, ["--summary", `${request.topic} with ${request.name ?? request.handle}`, "--send-updates", "all",
+        add(verb, slot, ["--summary", `${meetingTopic(request)} with ${request.name ?? request.handle}`, "--send-updates", "all",
           ...(format === "meet" ? ["--with-meet"] : []),
           ...(format === "phone" ? ["--location=Phone call"] : location !== undefined ? [`--location=${location}`] : []),
           ...(input.action === "book" && input.attendees ? ["--attendees", input.attendees] : [])]);
@@ -306,8 +306,12 @@ export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, 
   if (args.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
   const config = loadConfig();
   if (config.paused) throw new Error("Scheduling is paused.");
-  const input: NewRequest = { ...args, durationMin: args.durationMin ?? config.durationMin,
-    offered: args.offered.map(slot => ({ ...slot, account: slot.account ?? config.defaultAccount })) };
+  const durationMin = durationFor({ config, meal: args.meal, durationMin: args.meal ? undefined : args.durationMin });
+  const input: NewRequest = { ...args, durationMin,
+    // Meal defaults govern the actual holds, including their conflict checks.
+    offered: args.offered.map(slot => ({ ...slot,
+      ...(args.meal ? { end: new Date(Date.parse(slot.start) + durationMin * 60_000).toISOString() } : {}),
+      account: slot.account ?? config.defaultAccount })) };
   if (allowOverlapTitles?.length) {
     const busy = await fetchBusy(config, {
       from: new Date(Math.min(...input.offered.map(o => Date.parse(o.start)))).toISOString(),

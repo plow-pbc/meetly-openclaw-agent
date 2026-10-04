@@ -20,8 +20,7 @@ up with you — "coffee next week?" — it asks you in your DM whether to offer
 times. Nobody hears from Meetly until you say yes. Then it:
 
 1. opens a Plow group with you and that person,
-2. offers three free times from your Google Calendar, inside the days and
-   hours you allow,
+2. offers three free times from your Google Calendar on your allowed days,
 3. holds those times on your calendar so nothing else takes them,
 4. asks how you'll meet (Google Meet or in person) when the message does
    not say it, except in a group you started, where missing details are left to you,
@@ -53,16 +52,16 @@ signed as Meetly.
   someone writes in the group is never used. Pausing Meetly pauses these
   too.
 
-- **Offers only free time, inside your hours.** Your calendar shows up as free
-  slots within the days and hours you set. Anything else is "an existing
+- **Offers only free time.** Meals use meal windows; other meetings use your
+  hours. Both respect your allowed days. Busy time is "an existing
   commitment" — never an event name or detail. If the other person can only
-  do a time outside your hours, Meetly asks you privately and books it only on
+  do a time outside that window, Meetly asks you privately and books it only on
   your yes, then confirms in the group. Unresolved meeting questions also go to your DM.
 - **Holds expire.** No answer in 48 hours: the holds are deleted and the
   group is told the times were released.
 - **Overlaps only with your word.** Meetly books over an existing event only
   when you name that event and authorize the overlap in your DM. People
-  in the group can never unlock a conflict or a time outside your hours.
+  in the group can never unlock a conflict or widen the meeting window.
 - **Stays on topic in groups.** The group is for this one meeting. Meetly does
   not read your mail, files or other conversations for the other person.
 - **Ignores instructions in messages.** A text that says "ignore your rules"
@@ -83,7 +82,7 @@ Everything else starts at these defaults:
 
 - days: Monday to Friday,
 - hours: 09:00 to 18:00,
-- meeting length: 30 minutes,
+- meeting length: lunch/dinner 60 minutes, coffee 30 minutes, otherwise 30 minutes,
 - offers up to 14 days ahead.
 
 Change any of it later in plain words ("make my window 10 to 17", "I don't
