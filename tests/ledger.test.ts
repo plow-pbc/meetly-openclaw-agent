@@ -23,7 +23,9 @@ const patchFixture = (home: string, id: string, patch: Patch) => {
 
 test("handles normalize phones and emails", () => {
   assert.equal(normalizeHandle("+1 (555) 123-4567"), "+15551234567");
-  assert.throws(() => normalizeHandle("(555) 123-4567"), /handle/);
+  for (const handle of ['(555) 123-4567', '5551234567', '+05551234567', '+15551234567junk', '+1234567890123456', 'guest@', 'guest name@example.com', '']) {
+    assert.throws(() => normalizeHandle(handle), /handle/);
+  }
   assert.equal(normalizeHandle(" Ana@Example.COM "), "ana@example.com");
   assert.ok(sameHandle("+1 (555) 123-4567", "+15551234567"));
   assert.ok(!sameHandle("+15551234567", "(555) 123-4567"));
@@ -377,11 +379,6 @@ test("public ledger updates cannot bypass calendar or reminder commits", () => {
 for (const save of [addRequest, saveRequest]) test(`${save.name} persists only canonical phone or email handles`, () => {
   for (const [handle, expected] of [[' +1 (555) 123-4567 ', '+15551234567'], [' Guest@Example.COM ', 'guest@example.com']]) {
     assert.equal(save(empty(), input({ handle }), T0, 'canonical').requests[0]!.handle, expected);
-  }
-  const existing = addRequest(empty(), input(), T0, 'r_1');
-  for (const handle of ['5551234567', '+05551234567', '+15551234567junk', '+1234567890123456', 'guest@', 'guest name@example.com', '']) {
-    assert.throws(() => save(empty(), input({ handle }), T0, 'invalid'), /handle/);
-    assert.throws(() => save(existing, input({ handle, status: 'asked', offered: [] }), T0, 'invalid'), /handle/);
   }
 });
 
