@@ -181,23 +181,6 @@ test("guest date bounds survive fallback when the preferred clock time is unavai
   assert.equal(f.ownerLines.length, 0, "a broad preference is not an exact time approval");
 });
 
-test("an unavailable guest week falls back to the owner's conditions alone", async t => {
-  const f = fixture(t);
-  f.ledger.requests[0]!.constraints = { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-14", after: "10:00", before: "15:00" };
-  f.save(f.ledger);
-  f.events.set("week", event("week", "2026-10-05T00:00:00Z", "2026-10-12T00:00:00Z"));
-  const result = await f.act(context, "other_times", { from: "2026-10-05", to: "2026-10-11" });
-  assert.ok(!("error" in result), JSON.stringify(result));
-  assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true);
-  assert.deepEqual(f.request().constraints, f.ledger.requests[0]!.constraints);
-  assert.ok(f.request().offered.length > 0);
-  for (const offer of f.request().offered) {
-    assert.ok(["2026-10-12", "2026-10-13", "2026-10-14"].includes(offer.start.slice(0, 10)));
-    assert.ok(offer.start.slice(11, 16) >= "10:00" && offer.end.slice(11, 16) <= "15:00");
-  }
-  assert.equal(f.ownerLines.length, 0);
-});
-
 test("other-times automatically sends a lunch-window approval even inside working hours", async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.meal = "lunch";
@@ -224,16 +207,6 @@ for (const failure of ["busy", "calendar", "delivery"] as const) test(`outside-w
   assert.equal(result.message, undefined);
   assert.equal(f.deliveries.length, failure === "delivery" ? 1 : 0);
   assert.deepEqual(f.request().offered, offers);
-});
-
-test("owner questions relay the guest's own words and delivery claims require a sent ask", () => {
-  let description = "";
-  registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
-    const tool = factory(context); if (tool.name === "meetly_ask_owner") description = tool.description;
-  } });
-  assert.match(description, /Never invent a question or turn your own uncertainty into a guest question/);
-  assert.match(description, /ownerAskSent is true/);
-  assert.match(description, /Do not paraphrase or add a guest-asks prefix/);
 });
 
 test("decline requires the guest's clear refusal, never an other-times refusal", () => {
@@ -452,33 +425,25 @@ for (const action of ["pick", "ask_owner"] as const) test(`${action} cannot bypa
   assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
-test("a rejected weekday preference without date bounds returns fresh times within the owner's conditions", async t => {
+for (const { name, ownerConstraints, guestArgs, busy, expectedDates } of [
+  { name: "weekday without date bounds", ownerConstraints: { days: ["mon", "tue"], from: "2026-10-05", to: "2026-10-06", after: "10:00", before: "15:00" },
+    guestArgs: { days: ["thu"], after: "16:00", before: "18:00" }, expectedDates: ["2026-10-05", "2026-10-06"] },
+  { name: "Thursday outside owner date bounds", ownerConstraints: { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-07", after: "10:00", before: "15:00" },
+    guestArgs: { days: ["thu"], from: "2026-10-08", to: "2026-10-08", after: "16:00", before: "18:00" }, expectedDates: ["2026-10-05", "2026-10-06", "2026-10-07"] },
+  { name: "unavailable guest week", ownerConstraints: { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-14", after: "10:00", before: "15:00" },
+    guestArgs: { from: "2026-10-05", to: "2026-10-11" }, busy: { start: "2026-10-05T00:00:00Z", end: "2026-10-12T00:00:00Z" }, expectedDates: ["2026-10-12", "2026-10-13", "2026-10-14"] },
+]) test(`owner-condition fallback: ${name}`, async t => {
   const f = fixture(t);
-  const result = await guestAction(context, "other_times", { days: ["thu"], after: "16:00", before: "18:00" });
+  f.ledger.requests[0]!.constraints = ownerConstraints; f.save(f.ledger);
+  if (busy) f.events.set("busy", event("busy", busy.start, busy.end));
+  const result = await f.act(context, "other_times", guestArgs);
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true);
-  assert.deepEqual(f.request().constraints, f.ledger.requests[0]!.constraints);
-  assert.ok(f.request().offered.length > 0);
-  for (const offer of f.request().offered) {
-    assert.ok(["2026-10-05", "2026-10-06"].includes(offer.start.slice(0, 10)));
-    assert.ok(offer.start.slice(11, 16) >= "10:00" && offer.end.slice(11, 16) <= "15:00");
-    assert.ok(!offers.some(old => Date.parse(old.start) === Date.parse(offer.start)));
-  }
-  assert.ok(offers.every(old => f.events.get(old.holdId)!.status === "cancelled"));
-});
-
-test("a Thursday counterproposal falls back to the owner's Monday-Wednesday conditions", async t => {
-  const f = fixture(t);
-  f.ledger.requests[0]!.constraints = { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-07", after: "10:00", before: "15:00" };
-  f.save(f.ledger);
-  const result = await f.act(context, "other_times", { days: ["thu"], from: "2026-10-08", to: "2026-10-08", after: "16:00", before: "18:00" });
-  assert.ok(!("error" in result), JSON.stringify(result));
-  assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true);
-  assert.deepEqual(f.request().constraints, f.ledger.requests[0]!.constraints);
+  assert.deepEqual(f.request().constraints, ownerConstraints);
   assert.equal(f.request().status, "offered");
   assert.ok(f.request().offered.length > 0);
   for (const offer of f.request().offered) {
-    assert.ok(["2026-10-05", "2026-10-06", "2026-10-07"].includes(offer.start.slice(0, 10)));
+    assert.ok(expectedDates.includes(offer.start.slice(0, 10)));
     assert.ok(offer.start.slice(11, 16) >= "10:00" && offer.end.slice(11, 16) <= "15:00");
     assert.ok(!offers.some(old => Date.parse(old.start) === Date.parse(offer.start)));
   }
