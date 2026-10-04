@@ -27,15 +27,13 @@ tracked tree is blocking. That includes `tests/fixtures/`.
 Subtractive remedies outrank additive ones. Four gates here can be checked
 directly, and they come ahead of anything else:
 
-- **Guests cannot widen what Meetly does.** Every group is trusted
-  (`PLOW_THREAD_TRUST=trusted`), so the boundary between a guest's text and
-  the owner's calendar has two halves. The scripts (`slots.ts`) compute
-  which times are free, busy or outside the owner's hours. The prompt
-  (`prompt/AGENTS.md`, `meetly-group`) decides who may override that: only
-  the owner unlocks a conflict or an out-of-hours time, and event names and
-  details never reach the group (they become "an existing commitment").
-  Review both halves. Block a change that lets a group message pass
-  `--confirm-conflict` or an overlap, or that weakens either half.
+- **Guests cannot widen what Meetly does.** New groups are untrusted
+  (`PLOW_THREAD_TRUST=untrusted`): guests receive only scoped scheduling
+  tools bound to their saved request and exact chat. Scripts enforce the
+  owner's conditions and keep calendar event names and details private.
+  Only the owner may authorize conflicts or out-of-hours times. Review the
+  tool grants, request authorization and calendar checks; block a guest
+  path that widens those grants or supplies its own overlap authorization.
 - **Deterministic work lives in scripts, not the model.** Reading the
   calendar, matching contacts, the ledger state and the poll cursor already
   moved into `skills/meetly/scripts/` (#31, #32). Flag new logic that has a
