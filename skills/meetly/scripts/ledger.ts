@@ -304,7 +304,7 @@ export function recordDelivery(ledger: Ledger, id: string, kind: string, action:
     delete updated[attempt];
     delete updated[completed];
   } else if (action === "begin") {
-    if (kind === "start" && (request.startedAt || request.chatUid)) throw new Error("group start already attempted; only the owner can authorize clearing it");
+    if (kind === "start" && (request.startedAt || request.chatUid)) throw new Error("group start already attempted. Do not send or clear this attempt. Only an explicit owner retry instruction can authorize clearing it.");
     if (request[completed]) throw new Error(`${kind} delivery already completed`);
     updated[attempt] = at;
   } else {
@@ -416,7 +416,14 @@ if (isMain(import.meta.url)) {
       case "delivery": {
         if (!values.id) throw new Error("delivery needs --id X");
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => recordDelivery(l, values.id!, values.kind ?? "", values.action ?? "", now));
-        return { request: ledger.requests.find((r) => r.id === values.id) };
+        const request = ledger.requests.find((r) => r.id === values.id);
+        if (values.kind !== "start") return { request };
+        const delivery = values.action === "begin"
+          ? { state: "reserved", sendNow: true, instruction: "Send the opener now, exactly once, using the channel's start tool. This call reserved the attempt; it did not send anything. Do not begin or clear again, and do not treat the startedAt just returned by this call as an earlier attempt. Record complete only after the send returns success or unknown delivery." }
+          : values.action === "clear"
+            ? { state: "cleared", sendNow: false, instruction: "Start reservation cleared. Run begin once before sending; retry only on the owner's explicit instruction." }
+            : { state: "completed", sendNow: false, instruction: "The send outcome is recorded. Do not send again. Link the returned chat uid if known; unknown delivery must not be retried automatically." };
+        return { request, delivery };
       }
       case "asked":
         return { requests: askedList(readJson<Ledger>(path, EMPTY), values.unnotified) };
