@@ -8,6 +8,7 @@ import { isMain, run } from "./cli.ts";
 import { durationFor, holdHours, loadConfig, reminderLeadMin } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { file } from "./paths.ts";
+import { uniqueEvents, type EventRef } from "./busy.ts";
 import type { Constraints } from "./slots.ts";
 export type { Constraints } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -65,7 +66,8 @@ export type Request = {
   constraints?: Constraints;
   // Times the person proposed; only the first offer uses them.
   proposed?: Constraints;
-  allowOverlap?: string[];
+  allowOverlap?: EventRef[];
+  askDetails?: boolean;
   offered: Offer[];
   reoffer?: { offered: Offer[]; offeredAt: string };
   status: Status;
@@ -284,7 +286,6 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
     if (key in input) throw new Error(`${key} is managed by ledger.ts delivery`);
   }
   if (input.origin !== "inbound" && input.origin !== "owner" && input.origin !== "owner-group") throw new Error(`origin must be inbound, owner or owner-group, got ${input.origin}`);
-  if (input.origin === "owner-group" && !input.chatUid) throw new Error("an owner-group request requires its chat uid");
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
   input = { ...input, topic: meetingTopic(input) };
   if (!Number.isInteger(input.durationMin) || input.durationMin <= 0) throw new Error("durationMin must be a positive whole number");
@@ -326,8 +327,10 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
 
   // Reuse addRequest's validation and timestamp behavior, then apply its new
   // offer to the existing record. An absent chatUid must not erase the link.
-  if (existing.origin === "owner-group" && input.chatUid !== undefined && input.chatUid !== existing.chatUid) throw new Error("an owner-group request cannot move to another chat");
-  input = { ...input, origin: existing.origin === "owner-group" ? existing.origin : input.origin, chatUid: input.chatUid ?? existing.chatUid };
+  input = { ...input, origin: existing.origin, chatUid: input.chatUid ?? existing.chatUid,
+    askDetails: input.askDetails ?? existing.askDetails,
+    allowOverlap: uniqueEvents([...(existing.allowOverlap ?? []), ...(input.allowOverlap ?? [])]) };
+  if (existing.chatUid && input.chatUid !== existing.chatUid) throw new Error("a request cannot move to another chat");
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   const newHolds = new Set(validated.offered.flatMap((offer) => offer.holdId ? [`${offer.account}\0${offer.holdId}`] : []));
   const replacedHolds = existing.offered.flatMap((offer) => offer.holdId && !newHolds.has(`${offer.account}\0${offer.holdId}`)
@@ -380,7 +383,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   const at = new Date(now).toISOString();
   const updated: Request = { ...ledger.requests[index]!, updatedAt: at };
   if (updated.status === "asked" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
-  if (updated.origin === "owner-group" && patch.chatUid !== undefined && patch.chatUid !== updated.chatUid) throw new Error("an owner-group request cannot move to another chat");
+  if (updated.chatUid && patch.chatUid !== undefined && patch.chatUid !== updated.chatUid) throw new Error("a request cannot move to another chat");
   for (const [key, value] of Object.entries(patch)) {
     if (value === null && (NULLABLE as readonly string[]).includes(key)) delete updated[key as (typeof NULLABLE)[number]];
     else if (value !== undefined) (updated as Record<string, unknown>)[key] = value;
@@ -424,7 +427,7 @@ export function recordDelivery(ledger: Ledger, id: string, kind: string, action:
     delete updated[attempt];
     delete updated[completed];
   } else if (action === "begin") {
-    if (request.startedAt || request.chatUid) throw new Error("group start already attempted; only the owner can authorize clearing it");
+    if (request.startedAt || request.chatUid) throw new Error("group start already attempted. Do not send or clear this attempt. Only an explicit owner retry instruction can authorize clearing it.");
     if (request[completed]) throw new Error(`${kind} delivery already completed`);
     updated[attempt] = at;
   } else {
@@ -542,7 +545,14 @@ if (isMain(import.meta.url)) {
       case "delivery": {
         if (!values.id) throw new Error("delivery needs --id X");
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => recordDelivery(l, values.id!, values.kind ?? "", values.action ?? "", now));
-        return { request: ledger.requests.find((r) => r.id === values.id) };
+        const request = ledger.requests.find((r) => r.id === values.id);
+        if (values.kind !== "start") return { request };
+        const delivery = values.action === "begin"
+          ? { state: "reserved", sendNow: true, instruction: "Send the opener now, exactly once, using the channel's start tool. This call reserved the attempt; it did not send anything. Do not begin or clear again, and do not treat the startedAt just returned by this call as an earlier attempt. Record complete only after the send returns success or unknown delivery." }
+          : values.action === "clear"
+            ? { state: "cleared", sendNow: false, instruction: "Start reservation cleared. Run begin once before sending; retry only on the owner's explicit instruction." }
+            : { state: "completed", sendNow: false, instruction: "The send outcome is recorded. Do not send again. Link the returned chat uid if known; unknown delivery must not be retried automatically." };
+        return { request, delivery };
       }
       case "booked":
         return { requests: readJson<Ledger>(path, EMPTY).requests.filter(r => r.status === "booked") };

@@ -5,9 +5,9 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "nod
 import { dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { toBusy } from "./busy.ts";
+import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
-import { holdHours, loadConfig } from "./config.ts";
+import { durationFor, holdHours, loadConfig } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
 import { checkContact, addRequest, requestHolds, sameHandle, expiredRequests, findOpenByHandle, requestId, sameCleanup, uniqueCleanup, saveRequest, meetingTopic, updateRequest, type HoldCleanup, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
@@ -173,11 +173,10 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       const add = (verb: Step["verb"], slot: Offer, args: string[]) => steps.push({ verb, account: slot.account, eventId: slot.holdId, start: slot.start, end: slot.end, args, token: randomUUID() });
       if (input.action === "offer") {
         if (input.request.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
-        if (request.origin === "owner-group") input.request = { ...input.request,
-          allowOverlap: [...new Set([...(request.allowOverlap ?? []), ...(input.request.allowOverlap ?? [])])] };
         // Validate before any external effect; only the final commit replaces the old offer.
         const before = ledger();
         const validated = saveOffer(before, input.request, now(), id);
+        input.request.allowOverlap = validated.requests.find(r => r.id === id)!.allowOverlap;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
         for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${meetingTopic(input.request)} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"]);
       } else {
@@ -245,7 +244,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         if (request.eventId && request.booked) own.push({ holdId: request.eventId, account: request.booked.account });
         const overlaps = busy.busy.filter(b => Date.parse(b.start) < Date.parse(step.end) && Date.parse(b.end) > Date.parse(step.start));
         const allowed = intent.input.action === "offer" ? intent.input.request.allowOverlap : request.allowOverlap;
-        if (overlaps.some(b => !own.some(h => h.holdId === b.id && h.account === b.account) && !allowed?.includes(b.id ?? ""))) {
+        if (overlaps.some(b => !own.some(h => h.holdId === b.id && h.account === b.account) && !allowsOverlap(b, allowed))) {
           if (intent.input.action === "offer") { step.skipped = true; writeJson(journal, intent); continue; }
           intent.failed = true; writeJson(journal, intent);
         } else if (step.verb === "create" && overlaps.length && !step.args.includes("--confirm-conflict")) step.args.push("--confirm-conflict");
@@ -337,12 +336,28 @@ export async function calendarAction(id: string, input: CalendarAction, options:
   });
 }
 
-export async function offerRequest(input: NewRequest, options: CalendarOptions = {}) {
-  if (input.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
+export type OfferInput = Omit<NewRequest, "durationMin" | "offered"> & {
+  durationMin?: number; offered: (Omit<Offer, "account"> & { account?: string })[]; allowOverlapTitles?: string[];
+};
+export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, options: CalendarOptions = {}) {
+  if (args.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
+  const config = loadConfig();
+  if (config.paused) throw new Error("Scheduling is paused.");
+  const input: NewRequest = { ...args, durationMin: durationFor({ config, meal: args.meal, durationMin: args.durationMin }),
+    offered: args.offered.map(slot => ({ ...slot, account: slot.account ?? config.defaultAccount })) };
+  if (allowOverlapTitles?.length) {
+    const busy = await fetchBusy(config, {
+      from: new Date(Math.min(...input.offered.map(o => Date.parse(o.start)))).toISOString(),
+      to: new Date(Math.max(...input.offered.map(o => Date.parse(o.end)))).toISOString(),
+    }, { allowOverlapTitles });
+    if (busy.degraded.length || busy.unknownAfter) throw new Error("calendar coverage incomplete");
+    input.allowOverlap = [...(input.allowOverlap ?? []), ...(busy.allowOverlap ?? [])];
+  }
   let id = "", provisional = false;
   updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
     checkContact(l, input.handle, options.confirmContact);
     const existing = findOpenByHandle(l, input.handle) ?? l.requests.find(r => input.origin === "inbound" && input.sourceRowid !== undefined && r.sourceRowid === input.sourceRowid && ["asked", "offered"].includes(r.status));
+    if (existing && input.chatUid && existing.chatUid !== input.chatUid) throw new Error("request belongs to another conversation");
     id = existing?.id ?? requestId();
     provisional = !existing;
     return existing ? l : saveRequest(l, input, (options.now ?? Date.now)(), id);

@@ -11,8 +11,12 @@ import { status } from "./setup-status.ts";
 import { writeJson } from "./store.ts";
 import { zonedToUtc } from "./time.ts";
 
+export type EventRef = { account: string; id: string };
+export const allowsOverlap = (event: Partial<EventRef>, refs: EventRef[] = []) =>
+  refs.some(ref => !!ref.account && !!ref.id && ref.account === event.account && ref.id === event.id);
+export const uniqueEvents = (refs: EventRef[]) => refs.filter((ref, i) => allowsOverlap(ref, [ref]) && !allowsOverlap(ref, refs.slice(0, i)));
 export type Busy = { start: string; end: string; id?: string; account?: string };
-export type BusyResult = { busy: Busy[]; unknownAfter?: string; degraded: string[]; allowOverlap?: string[] };
+export type BusyResult = { busy: Busy[]; unknownAfter?: string; degraded: string[]; allowOverlap?: EventRef[] };
 
 type Stamp = string | { dateTime?: string; date?: string } | undefined;
 type CalEvent = {
@@ -125,7 +129,7 @@ export async function fetchBusy(
   opts: BridgeOptions & { allowOverlapTitles?: string[] } = {},
 ): Promise<BusyResult> {
   const titles = new Set(opts.allowOverlapTitles?.map(title => title.trim().toLowerCase()).filter(Boolean));
-  const allowOverlap: string[] = [];
+  const allowOverlap: EventRef[] = [];
   const byAccount = new Map<string, string[]>();
   for (const c of config.calendars) byAccount.set(c.account, [...(byAccount.get(c.account) ?? []), c.id]);
   const results: unknown[] = [];
@@ -145,12 +149,12 @@ export async function fetchBusy(
       degraded.push(account);
       continue;
     }
-    allowOverlap.push(...events.filter(e => e.id && !skipped(e) && titles.has(e.summary?.trim().toLowerCase() ?? "")).map(e => e.id!));
+    allowOverlap.push(...events.filter(e => e.id && !skipped(e) && titles.has(e.summary?.trim().toLowerCase() ?? "")).map(e => ({ account, id: e.id! })));
     results.push({ events: events.map((e) => ({ ...e, account })) });
   }
   const out = toBusy(results, { tz: config.timezone, max: FETCH_MAX });
   out.degraded.push(...degraded);
-  if (titles.size) out.allowOverlap = [...new Set(allowOverlap)];
+  if (titles.size) out.allowOverlap = uniqueEvents(allowOverlap);
   return out;
 }
 

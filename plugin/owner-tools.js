@@ -1,4 +1,4 @@
-import { constraints, sendPlowMessage } from "./guest-tools.js";
+import { cleanArgs, constraints, sendPlowMessage } from "./guest-tools.js";
 
 const run = async (context, args, send) => {
   const { answerOwner } = await import("/opt/plow/skills/meetly/scripts/answer-owner.ts");
@@ -19,8 +19,7 @@ export function registerOwnerTools(api, execute = run, outbound) {
       },
     },
     async execute(_id, args) {
-      const cleaned = Object.fromEntries(Object.entries(args ?? {}).filter(([key, value]) => value !== "" || required.includes(key)));
-      const result = await execute(context, cleaned, (to, text) => sendPlowMessage(api, context, to, text, "group", outbound));
+      const result = await execute(context, cleanArgs(args, required), (to, text) => sendPlowMessage(api, context, to, text, "group", outbound));
       return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   }));
@@ -32,13 +31,13 @@ const runGroup = async (context, args) => {
 };
 
 export function registerOwnerGroupTool(api, execute = runGroup) {
-  const required = ["handle", "topic", "offered"];
+  const required = ["topic", "offered"];
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
-    description: "Group-only: never use in the owner's DM. In the owner's DM, follow meetly-group, Owner request: find times, save with calendar.ts offer, then plow_start_thread through the delivery steps. Use this tool only for the owner's scheduling ask in an existing group with exactly one guest and Meetly. Read meetly-group and find free slots first. Records the request with this turn's exact chat uid and creates holds through the calendar writer. Use the guest's participant handle and known name. Suggested dates belong in proposed; constraints contain only explicit must/only conditions. Reply with the returned offer here; never open another thread. If this is your first reply in this group, introduce yourself as \"Meetly, <ownerName>'s scheduling assistant\" in their language with the offer. Ask format/place only when askDetails is true. Owner only.",
+    description: "Group-only: never use in the owner's DM. In the owner's DM, follow meetly-group, Owner request: find times, save with calendar.ts offer, then plow_start_thread through the delivery steps. Use this tool only for the owner's scheduling ask in an existing group with exactly one guest and Meetly. Read meetly-group and find free slots first. Records the request with this turn's exact chat uid and creates holds through the calendar writer. Resolves the sole guest and chat from Plow participants; never supply guest identity or calendar IDs. Suggested dates belong in proposed; constraints contain only explicit must/only conditions. Reply with the returned offer here; never open another thread. If this is your first reply in this group, introduce yourself as \"Meetly, <ownerName>'s scheduling assistant\" in their language with the offer. Ask format/place only when askDetails is true. Owner only.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
-      handle: string, name: string, topic: string, meal: { type: "string", enum: ["lunch", "dinner", "coffee"] }, durationMin: { type: "integer", minimum: 1, description: "Use durationMin from the slot search; when absent, resolves the meal or configured default." },
+      topic: string, meal: { type: "string", enum: ["lunch", "dinner", "coffee"] }, durationMin: { type: "integer", minimum: 1, description: "Use durationMin from the slot search; when absent, resolves the meal or configured default." },
       constraints: { ...constraints, description: "Only explicit non-relaxable owner conditions, such as must or only. Omit for a suggested date." },
       proposed: { ...constraints, description: "Preferred dates/times from the owner; these may be relaxed when busy." }, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
       location: string, locale: string,
@@ -47,8 +46,7 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
         required: ["start", "end"], properties: { start: string, end: string } } },
     } },
     async execute(_id, args) {
-      const cleaned = Object.fromEntries(Object.entries(args ?? {}).filter(([key, value]) => value !== "" || required.includes(key)));
-      const result = await execute(context, cleaned);
+      const result = await execute(context, cleanArgs(args, required));
       return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   }));
