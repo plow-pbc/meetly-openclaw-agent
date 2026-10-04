@@ -10,7 +10,7 @@ import { execFile } from "node:child_process";
 import { registerPipelineHooks } from "./pipeline.js";
 import { guestTurns } from "./guest-turn.js";
 import { registerGuestTools } from "./guest-tools.js";
-import { registerOwnerTools, registerOwnerGroupTool } from "./owner-tools.js";
+import { registerOwnerTools, registerOwnerGroupTool, registerMovableTool } from "./owner-tools.js";
 import { getReplySilencer } from "./reply-silence.js";
 
 export const OWNER_DM_SESSION = "agent:main:main";
@@ -100,6 +100,7 @@ export default {
     registerGuestTools(api);
     registerOwnerTools(api);
     registerOwnerGroupTool(api);
+    registerMovableTool(api);
     api.on("before_prompt_build", async (_event, ctx) => {
       silence.begin(ctx);
       guestTurns.begin(ctx);

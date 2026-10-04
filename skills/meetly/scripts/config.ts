@@ -9,6 +9,7 @@ export { DAYS, type Day };
 export type Calendar = { account: string; id: string };
 
 export type Config = {
+  overlapDecisions?: Record<string, { allowed: boolean; at: string }>;
   travelBase?: string;
   ownerName: string;
   timezone: string;
@@ -209,15 +210,22 @@ export function validateConfig(partial: Partial<Config>): Config {
     calendars: readableCalendars(p.calendars, p.defaultAccount),
     defaultAccount: p.defaultAccount,
   };
+  if (p.overlapDecisions !== undefined) config.overlapDecisions = p.overlapDecisions;
   if (p.travelBase !== undefined) config.travelBase = parseField("travelBase", p.travelBase).travelBase;
   if (p.setupDoneAt !== undefined) config.setupDoneAt = p.setupDoneAt;
   if (p.paused !== undefined) config.paused = p.paused;
   return config;
 }
 
+// Event-title memory is exposed only by the private owner-DM action.
+export function schedulingConfig(config: Config): Config {
+  const { overlapDecisions: _private, ...settings } = config;
+  return settings;
+}
+
 export function loadConfig(): Config {
   const config = readJson<Config | null>(file("config.json"), null);
   if (!config?.setupDoneAt) throw new Error("Meetly is not set up yet");
   // A config saved before readableCalendars may still list `primary`.
-  return { ...config, calendars: readableCalendars(config.calendars, config.defaultAccount) };
+  return { ...schedulingConfig(config), calendars: readableCalendars(config.calendars, config.defaultAccount) };
 }

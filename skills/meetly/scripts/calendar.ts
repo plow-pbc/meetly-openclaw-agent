@@ -412,9 +412,13 @@ export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, 
       ...(args.meal ? { end: new Date(Date.parse(slot.start) + durationMin * 60_000).toISOString() } : {}),
       account: slot.account ?? config.defaultAccount })) };
   if (allowOverlapTitles?.length) {
+    const existing = findOpenByHandle(ledger(), input.handle);
+    const effective = { ...input, format: input.format && input.format !== "unknown" ? input.format : existing?.format,
+      travel: existing?.travel?.override ? existing.travel : input.travel ?? existing?.travel };
+    const ranges = input.offered.map(slot => travelRange(slot.start, slot.end, effective));
     const busy = await fetchBusy(config, {
-      from: new Date(Math.min(...input.offered.map(o => Date.parse(o.start)))).toISOString(),
-      to: new Date(Math.max(...input.offered.map(o => Date.parse(o.end)))).toISOString(),
+      from: new Date(Math.min(...ranges.map(r => Date.parse(r.from)))).toISOString(),
+      to: new Date(Math.max(...ranges.map(r => Date.parse(r.to)))).toISOString(),
     }, { allowOverlapTitles });
     if (busy.degraded.length || busy.unknownAfter) throw new Error("calendar coverage incomplete");
     input.allowOverlap = [...(input.allowOverlap ?? []), ...(busy.allowOverlap ?? [])];
