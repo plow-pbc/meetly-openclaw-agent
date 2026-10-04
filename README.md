@@ -155,10 +155,9 @@ message is skipped.
   pinned by digest: the base's gateway, Plow channel and reporter, plus
   Meetly's prompt, skills and its own entrypoint, `boot/preboot.ts`. That is
   the base's `boot/main.ts` step for step, on the base's compiled modules,
-  with three additions before the config is synced: the model (see
-  [Model](#model)), the setup gate, and a 60 s request timeout on the Mac
-  relay. Without that timeout OpenClaw caps the relay's tool listing at
-  1500 ms, a Mac round trip takes 0.9-1.8 s, and a turn intermittently had no
+  with two additions before the config is synced: the setup gate and a
+  60 s request timeout on the Mac relay. Without that timeout OpenClaw caps
+  the relay's tool listing at 1500 ms, a Mac round trip takes 0.9-1.8 s, and a turn intermittently had no
   Mac tools at all.
 - **Setup gate.** Before each of the owner's DM turns, the `meetly` plugin
   runs `setup-status.ts` and puts its answer at the top of the turn, so setup
@@ -166,8 +165,9 @@ message is skipped.
   `plugins.load`, so the plugin sits in the state volume's global plugin root
   (`/var/lib/plow/extensions/meetly`), copied there from the image on every
   boot. The scheduling plugin is required: installation failure prevents
-  gateway startup. Plugin activation and its config write are required too; only model-route errors are logged and allowed to continue. The owner's name comes from their Plow
-  profile and the time zone from their Mac through Latch; setup asks only what neither can answer.
+  gateway startup. Plugin activation and its config write are required too.
+  The owner's name comes from their Plow profile and the time zone from
+  their Mac through Latch; setup asks only what neither can answer.
 - **Schedule.** One OpenClaw scheduler job (`openclaw cron`), `meetly-poll`:
   an isolated agent turn every five minutes with no automatic delivery,
   registered by `register-crons.ts` when setup finishes. It lives in the state
@@ -203,36 +203,9 @@ message is skipped.
 
 ## Model
 
-Every install runs on Plow's GPT-6 Luna. A one-click install has nothing to
-configure and never leaves it. The base's own `plow` provider lists only the
-base's models and is rewritten every boot, so Meetly declares Luna on a
-provider of its own, `plow-luna`: the same Plow endpoint and credential
-reference, in the part of the config the base leaves alone.
-
-The owner of one install can move all of its inference (chat and the
-five-minute poll) to their own OpenAI account. In a login shell on the agent
-(`docker compose exec agent bash -l`, or SSH on the VM):
-
-```sh
-plow-llm openai
-```
-
-It signs in with a device code, checks that the account offers
-`gpt-6-luna` and leaves a marker in the state volume. Restart the agent to
-apply it. The sign-in and the marker live in the state volume, so rebuilds
-and image updates keep them. `plow-llm plow` moves back, and
-`plow-llm status` shows what the next boot will choose.
-
-Plow's Luna stays configured as the fallback: a spent quota or an expired
-sign-in answers from Plow instead of failing. `AGENT_PROVIDER` (`plow`,
-`openai`, `openrouter`) and `AGENT_MODEL` choose a provider from the
-environment instead and outrank the marker; OpenAI then takes
-`OPENAI_API_KEY` or the sign-in, and OpenRouter `OPENROUTER_API_KEY`.
-
-The model is the image's on every boot, so an edit to it in the dashboard
-lasts until the next restart. The sign-in is a real credential for your
-account, kept in the state volume where the agent's own tools can read it.
-Meetly reads your messages, so use it on an install only you talk to.
+Meetly uses the base image's default model and fallback: GLM 5.2 with
+Sonnet 5 as the fallback. Meetly does not override the model configuration.
+Existing model settings in the state volume are left unchanged.
 
 ## Known limitations
 
@@ -253,8 +226,8 @@ Meetly reads your messages, so use it on an install only you talk to.
   the agent does in setup, in the scheduled check and in a meeting group.
 - `skills/meetly/scripts/` — the TypeScript CLIs behind them.
 - `boot/` — the entrypoint (`preboot.ts`, the base's boot plus Meetly's
-  additions), the model (`llm.ts`), the setup gate install (`gate.ts`), the
-  Mac relay timeout (`mcp.ts`) and the `plow-llm` command.
+  additions), the setup gate install (`gate.ts`) and the Mac relay timeout
+  (`mcp.ts`).
 - `plugin/` — the setup gate: an OpenClaw plugin that runs `setup-status.ts`
   before each of the owner's DM turns and hands the model the answer.
 - `tests/` — `node --test` suites; `tests/fixtures/base-AGENTS.md` is the

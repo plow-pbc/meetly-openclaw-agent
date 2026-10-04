@@ -12,11 +12,9 @@ ENV AGENT_ID=meetly \
 COPY prompt/AGENTS.md /opt/plow/prompt/AGENTS.md
 COPY skills/ /opt/plow/skills/
 
-# Meetly's entrypoint: the base's boot step for step, plus the model (Plow's
-# Luna by default, the owner's own OpenAI account after `plow-llm openai`),
-# the setup gate plugin and the Mac relay's request timeout.
+# Meetly's entrypoint: the base's boot step for step, plus the setup gate
+# plugin and the Mac relay's request timeout.
 COPY boot/ /opt/meetly/boot/
 COPY plugin/ /opt/meetly/plugin/
-COPY boot/plow-llm.sh /usr/local/bin/plow-llm
 
 CMD ["node", "/opt/meetly/boot/preboot.ts"]
