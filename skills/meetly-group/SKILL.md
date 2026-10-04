@@ -145,7 +145,7 @@ Pass `locale` with every save: the other person's language tag, the same one
 used for `slots.ts --locale`.
 
 An answer that arrives before booking is recorded with
-`ledger.ts update --id <id> --json '{"format":"<format>","location":"<place>"}'`
+`calendar.ts format --id <id> --json '{"format":"<format>","location":"<place>"}'`
 (drop `location` when there is none). A later answer replaces an earlier
 one. Never ask about the format twice in a row: once in the opener, and once
 after booking if the pick did not answer it.

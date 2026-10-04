@@ -365,7 +365,8 @@ test("public ledger updates cannot bypass calendar or reminder commits", () => {
   const home = tmpHome(), env = { MEETLY_HOME: home };
   const saved = cli("ledger.ts", ["add", "--json", JSON.stringify(input())], env).json.request;
   for (const [key, value] of Object.entries({ status: "booked", eventId: "other", offered: [offer], holdCleanup: [],
-    booked: { start: offer.start, end: offer.end, account: offer.account }, meetUrl: null, reminder: null, calendarRevision: "other" })) {
+    booked: { start: offer.start, end: offer.end, account: offer.account }, meetUrl: null, reminder: null, calendarRevision: "other",
+    format: "meet", location: "Library" })) {
     const result = cli("ledger.ts", ["update", "--id", saved.id, "--json", JSON.stringify({ [key]: value })], env);
     assert.equal(result.status, 1, key);
     assert.match(result.stderr, /managed by/);

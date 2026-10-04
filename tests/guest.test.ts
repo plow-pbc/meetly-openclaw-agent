@@ -9,7 +9,7 @@ import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from
 import { addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
-import { tmpHome } from "./helpers.ts";
+import { calendarEvent as event, fakeCalendar, cli, tmpHome } from "./helpers.ts";
 
 const now = Date.parse("2026-10-02T08:00:00Z");
 const context = { messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "chat-one", requesterSenderId: "+15551234567" };
@@ -21,8 +21,6 @@ const actions: [GuestAction, GuestArgs][] = [
   ["view", {}], ["pick", { start: offers[0]!.start }], ["other_times", { after: "11:00" }],
   ["format", { format: "meet" }], ["ask_owner", { start: "2026-10-05T20:00" }], ["decline", {}],
 ];
-type Event = { id: string; summary: string; status: string; start: { dateTime: string }; end: { dateTime: string }; hangoutLink?: string; location?: string; extendedProperties?: { private: { meetlyOperation: string } } };
-const event = (id: string, start: string, end: string): Event => ({ id, summary: "PRIVATE CALENDAR TITLE", status: "confirmed", start: { dateTime: start }, end: { dateTime: end } });
 
 function fixture(t: TestContext) {
   const home = tmpHome();
@@ -42,50 +40,25 @@ function fixture(t: TestContext) {
   const save = (value: Ledger) => writeJson(join(home, "ledger.json"), value);
   save(ledger);
   const read = () => readJson<Ledger>(join(home, "ledger.json"), { requests: [] });
-  const events = new Map(offers.map(o => [o.holdId!, event(o.holdId!, o.start, o.end)]));
+  const { events, command } = fakeCalendar(offers.map(o => event(o.holdId!, o.start, o.end)));
   const commands: string[][] = [];
   const fail = new Set<string>();
   const lost = new Set<string>();
   const hooks: { before?: (argv: string[]) => Promise<void> } = {};
-  let nextId = 0;
   t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
     const call = JSON.parse(String(init.body));
     assert.equal(call.params.name, "plow_run_command");
     const argv: string[] = call.params.arguments.argv;
     commands.push(argv);
     await hooks.before?.(argv);
-    const flag = (name: string) => argv.find(a => a.startsWith(`${name}=`))?.slice(name.length + 1) ?? argv[argv.indexOf(name) + 1];
     let output: string;
     let exit_code = 0;
-    const conflict = argv[2] === "create" && !argv.includes("--confirm-conflict") && [...events.values()].some(e =>
-      e.status !== "cancelled" && Date.parse(e.start.dateTime) < Date.parse(flag("--to")!) && Date.parse(e.end.dateTime) > Date.parse(flag("--from")!));
-    if (conflict || fail.has(argv[2]!) || fail.has(argv[4]!)) { output = "PRIVATE BACKEND ERROR owner@example.com"; exit_code = 1; }
+    if (fail.has(argv[2]!) || fail.has(argv[4]!)) { output = "PRIVATE BACKEND ERROR owner@example.com"; exit_code = 1; }
     else if (argv[0] === "/bin/sh") output = "S|0\nR|1|Guest||\nP|1|+15551234567||\nE|1|guest@example.net||";
     else {
-      assert.deepEqual(argv.slice(0, 2), ["plow-gog", "calendar"]);
-      switch (argv[2]) {
-        case "events": {
-          const from = Date.parse(flag("--from")!); const to = Date.parse(flag("--to")!);
-          output = JSON.stringify({ events: [...events.values()].filter(e => Date.parse(e.start.dateTime) < to && Date.parse(e.end.dateTime) > from) });
-          break;
-        }
-        case "event": output = JSON.stringify({ event: events.get(argv[4]!) }); break;
-        case "delete": {
-          const e = events.get(argv[4]!); if (e) e.status = "cancelled";
-          output = "deleted"; break;
-        }
-        case "create": case "update": {
-          const id = argv[2] === "create" ? `new-${++nextId}` : argv[4]!;
-          const e = events.get(id) ?? event(id, flag("--from")!, flag("--to")!);
-          if (argv.includes("--from")) e.start.dateTime = flag("--from")!;
-          if (argv.includes("--to")) e.end.dateTime = flag("--to")!;
-          if (argv.includes("--with-meet")) e.hangoutLink = "https://meet.google.com/abc-defg-hij";
-          if (argv.some(a => a.startsWith("--location="))) e.location = flag("--location");
-          if (argv.includes("--private-prop")) e.extendedProperties = { private: { meetlyOperation: flag("--private-prop")!.split("=")[1]! } };
-          e.status = "confirmed"; events.set(id, e); output = JSON.stringify({ event: e }); break;
-        }
-        default: throw new Error(`unexpected command ${JSON.stringify(argv)}`);
-      }
+      const result = await command({ argv });
+      output = result.output ?? result.error!;
+      if (result.error) exit_code = 1;
     }
     if (lost.has(argv[2]!)) return new Response("", { status: 503 });
     return Response.json({ result: { content: [{ type: "text", text: JSON.stringify({ exit_code, output }) }] } });
@@ -424,9 +397,13 @@ test('an offered format change waits for a concurrent booking and cannot change 
   };
   const booking = guestAction(context, 'pick', { start: offers[0]!.start });
   await waiting;
+  const direct = ['format', 'location'].map(key => cli('ledger.ts', ['update', '--id', 'request-one', '--json',
+    JSON.stringify({ [key]: key === 'format' ? 'meet' : 'Library' })], { MEETLY_HOME: f.home }));
   const changing = guestAction(context, 'format', { format: 'meet' });
   release();
   assert.ok(!('error' in await booking));
+  for (const result of direct) { assert.equal(result.status, 1); assert.match(result.stderr, /managed by/); }
+  assert.equal(f.request().location, undefined);
   assert.ok('error' in await changing);
   assert.equal(f.request().format, 'unknown');
   assert.equal(f.request().meetUrl, undefined);

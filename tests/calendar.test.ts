@@ -8,7 +8,7 @@ import { addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { macOutcome, type MacCommand, type MacOutcome } from "../skills/meetly/scripts/mac.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
-import { cli, tmpHome } from "./helpers.ts";
+import { calendarEvent, fakeCalendar, cli, tmpHome } from "./helpers.ts";
 
 const start = "2026-10-05T10:00:00Z", end = "2026-10-05T10:30:00Z", account = "owner@example.com";
 const now = Date.parse("2026-10-03T08:00:00Z");
@@ -20,29 +20,24 @@ function fixture(t: TestContext) {
   const input = { origin: "owner" as const, handle: "+15551234567", name: "Guest", topic: "Lunch", durationMin: 30, offered };
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, input, now - 72 * 3_600_000, "r_one"));
   writeJson(join(home, "config.json"), { ...DEFAULTS, defaultAccount: account, timezone: "UTC", ownerName: "Alex", setupDoneAt: new Date(now).toISOString(), calendars: [{account, id: account}] });
-  const events = new Map<string, any>(offered.map(o => [o.holdId, { id: o.holdId, status: "confirmed", start: { dateTime: o.start }, end: { dateTime: o.end } }]));
-  const calls: string[][] = [];
+  const { events, calls, command } = fakeCalendar(offered.map(o => calendarEvent(o.holdId, o.start, o.end)));
   const read = () => readJson<Ledger>(join(home, "ledger.json"), { requests: [] }).requests[0]!;
-  let counter = 0;
-  const command = async ({ argv }: MacCommand): Promise<MacOutcome> => {
-    calls.push(argv);
-    const flag = (name: string) => argv[argv.indexOf(name) + 1]!;
-    const verb = argv[2];
-    if (verb === "events") {
-      const token = argv.includes("--private-prop-filter") ? flag("--private-prop-filter").split("=")[1] : undefined;
-      return { output: JSON.stringify({ events: [...events.values()].filter(e => !token || e.extendedProperties?.private?.meetlyOperation === token) }) };
-    }
-    if (verb === "event") return { output: JSON.stringify({ event: events.get(argv[4]!) }) };
-    if (verb === "delete") { events.get(argv[4]!)!.status = "cancelled"; return { output: "deleted" }; }
-    const id = verb === "update" ? argv[4]! : `new-${++counter}`;
-    const event = { id, status: "confirmed", start: { dateTime: flag("--from") }, end: { dateTime: flag("--to") },
-      extendedProperties: { private: { meetlyOperation: flag("--private-prop").split("=")[1] } },
-      ...(argv.includes("--with-meet") ? { hangoutLink: "https://meet.google.com/abc-defg-hij" } : {}) };
-    events.set(id, event);
-    return { output: JSON.stringify({ event }) };
-  };
   return { home, input, offer: { ...input, offered: offered.map(({ holdId, ...slot }) => slot) }, read, calls, events, command, options: { command, now: () => now } satisfies CalendarOptions };
 }
+
+test("the format CLI saves offered booking inputs before the calendar writer uses them", async t => {
+  const f = fixture(t);
+  const changed = cli("calendar.ts", ["format", "--id", "r_one", "--json", JSON.stringify({ format: "meet", location: "Library" })], { MEETLY_HOME: f.home });
+  assert.equal(changed.status, 0, changed.stderr);
+  assert.equal(changed.json.request.status, "offered");
+  assert.equal(changed.json.request.format, "meet");
+  assert.equal(changed.json.request.location, "Library");
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const event = f.events.get(f.read().eventId!)!;
+  assert.equal(f.read().meetUrl, "https://meet.google.com/abc-defg-hij");
+  assert.equal(event.hangoutLink, f.read().meetUrl);
+  assert.equal(event.location, f.read().location);
+});
 
 test("booking commits the event before deleting other holds; expiry cannot delete a just-booked event", async t => {
   const f = fixture(t);
@@ -60,8 +55,8 @@ test("booking commits the event before deleting other holds; expiry cannot delet
   release();
   await book;
   assert.equal((await expire).request.status, "booked");
-  assert.equal(f.events.get("hold-one").status, "confirmed");
-  assert.equal(f.events.get("hold-two").status, "cancelled");
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+  assert.equal(f.events.get("hold-two")!.status, "cancelled");
 });
 
 test("expiry wins before a later booking and leaves no bookable stale holds", async t => {
@@ -84,7 +79,7 @@ test("a ledger commit failure after the calendar update resumes without repeatin
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
   await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /simulated commit failure/);
   assert.equal(f.read().status, "offered");
-  assert.ok(f.events.get("hold-one").extendedProperties.private.meetlyOperation);
+  assert.ok(f.events.get("hold-one")!.extendedProperties!.private.meetlyOperation);
   fail = false;
   await calendarAction("r_one", { action: "resume" }, f.options);
   assert.equal(f.read().status, "booked");
@@ -97,9 +92,9 @@ test("failed replacement preserves old holds and offer and cleans only the new h
   const command = async (cmd: MacCommand) => cmd.argv[2] === "create" && ++creates === 2 ? { error: "conflict" } : f.command(cmd);
   await assert.rejects(calendarAction("r_one", { action: "offer", request: f.offer }, { ...f.options, command }), /previous offer retained/);
   assert.deepEqual(f.read().offered, before);
-  assert.equal(f.events.get("hold-one").status, "confirmed");
-  assert.equal(f.events.get("hold-two").status, "confirmed");
-  assert.equal(f.events.get("new-1").status, "cancelled");
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+  assert.equal(f.events.get("hold-two")!.status, "confirmed");
+  assert.equal(f.events.get("new-1")!.status, "cancelled");
   assert.deepEqual(f.read().holdCleanup, []);
 });
 
@@ -140,7 +135,7 @@ test("an unresolved create times out, releases the request and deletes a late ev
   await assert.rejects(calendarAction("r_one", { action: "resume" }, options), /previous offer retained/);
   assert.deepEqual(pendingCalendarWrites(), []);
   assert.deepEqual(f.read().offered, f.input.offered);
-  assert.equal(f.events.get("new-1").status, "cancelled");
+  assert.equal(f.events.get("new-1")!.status, "cancelled");
   const token = saved.argv[saved.argv.indexOf("--private-prop") + 1]!.split("=")[1];
   assert.deepEqual(f.read().holdCleanup, [{ token, account, start: f.offer.offered[1]!.start, end: f.offer.offered[1]!.end }]);
   await calendarAction("r_one", { action: "cleanup" }, f.options);
@@ -148,8 +143,8 @@ test("an unresolved create times out, releases the request and deletes a late ev
   await calendarAction("r_one", { action: "book", start }, f.options);
   await f.command(saved);
   await calendarAction("r_one", { action: "cleanup" }, f.options);
-  assert.equal(f.events.get("new-2").status, "cancelled");
-  assert.equal(f.events.get("hold-one").status, "confirmed");
+  assert.equal(f.events.get("new-2")!.status, "cancelled");
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
   assert.deepEqual(f.read().holdCleanup, []);
   assert.equal(creates, 2);
 });
@@ -165,18 +160,18 @@ for (const conflicting of [[0], [1], [0, 1]]) {
     if (conflicting.length === f.offer.offered.length) {
       await assert.rejects(offer, /previous offer retained/);
       assert.deepEqual(f.read().offered, f.input.offered);
-      assert.equal(f.events.get("hold-one").status, "confirmed");
-      assert.equal(f.events.get("hold-two").status, "confirmed");
+      assert.equal(f.events.get("hold-one")!.status, "confirmed");
+      assert.equal(f.events.get("hold-two")!.status, "confirmed");
     } else {
       const result = await offer;
       assert.deepEqual(result.request.offered, [{ ...f.offer.offered[1 - conflicting[0]!]!, holdId: "new-1" }]);
-      assert.equal(f.events.get("new-1").status, "confirmed");
-      assert.equal(f.events.get("hold-one").status, "cancelled");
-      assert.equal(f.events.get("hold-two").status, "cancelled");
+      assert.equal(f.events.get("new-1")!.status, "confirmed");
+      assert.equal(f.events.get("hold-one")!.status, "cancelled");
+      assert.equal(f.events.get("hold-two")!.status, "cancelled");
     }
     assert.equal(f.calls.filter(c => c[2] === "create").length, 2 - conflicting.length);
     assert.deepEqual(pendingCalendarWrites(), []);
-    for (const index of conflicting) assert.equal(f.events.get(`busy-${index}`).status, "confirmed");
+    for (const index of conflicting) assert.equal(f.events.get(`busy-${index}`)!.status, "confirmed");
   });
 }
 
@@ -210,7 +205,7 @@ for (const refused of [[0], [1], [0, 1]]) for (const pending of [false, true]) {
     } else {
       const result = await offer;
       assert.deepEqual(result.request.offered, [{ ...f.offer.offered[1 - refused[0]!]!, holdId: "new-1" }]);
-      assert.equal(f.events.get("new-1").status, "confirmed");
+      assert.equal(f.events.get("new-1")!.status, "confirmed");
       assert.deepEqual(result.request.holdCleanup, []);
     }
     assert.equal(writes.length, 2, "attempt each candidate once, including after a refusal");
@@ -265,7 +260,7 @@ test("a delayed Latch approval resumes its handle without sending the update aga
   await assert.rejects(calendarAction("r_one", { action: "book", start }, { ...f.options, command, poll }), /unresolved/);
   await assert.rejects(calendarAction("r_one", { action: "resume" }, { ...f.options, command, poll }), /unresolved/);
   assert.equal(f.calls.filter(c => c[2] === "event").length, 1, "only the pre-write read is allowed while approval is pending");
-  assert.equal(f.events.get("hold-one").status, "confirmed");
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
   ready = true;
   await calendarAction("r_one", { action: "resume" }, { ...f.options, command, poll });
   assert.equal(f.read().status, "booked");
