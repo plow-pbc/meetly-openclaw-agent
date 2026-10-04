@@ -61,18 +61,18 @@ export function gateContext(stdout) {
     "Meetly setup check, already run for this turn (setup-status.ts): SETUP_NEEDED. Setup is not finished.",
     "Do not run setup-status.ts again this turn, and ignore any earlier setup question in the chat: this is the current state.",
     "Your reply, in the owner's language:",
-    `- If you have not introduced yourself in this conversation yet, open with one line: you are Meetly, their AI scheduling assistant, who books their meetings from their calendar and reaches people for them${defaults}.`,
+    `- If you have not introduced yourself in this conversation yet, open with one line: use your conversation name, then say you are their AI scheduling assistant, who books their meetings from their calendar and reaches people for them${defaults}.`,
     ...(name ? [`- In that line, say you will refer to them as ${name} when you talk to other people, and that they can change it.`] : []),
     ...latch,
     ...(asking
       ? [
+        `- First check whether the owner's latest message answers ${status.next}. A bare name is a complete answer to ownerName; it does not need a "call me" prefix. If answered, save it with record-setup.ts (see meetly-setup) before replying, then continue from the returned next field. Do not ask the answered question again.`,
         "- If the owner asked for something else, such as reaching someone, say you will do it as soon as this is answered.",
-        `- Then ask this question, translated into the owner's language, and end the turn: ${status.question}`,
-        `If the owner's message answers the ${status.next} question, record it first with record-setup.ts (see meetly-setup) and carry on from the status it returns.`,
+        `- Only if the latest message does not answer ${status.next}, ask this question, translated into the owner's language, and end the turn: ${status.question}`,
       ]
       : [
         ...(status.next === "calendars"
-          ? ["- Do not ask which calendars to use: read them from the Mac and record every calendar with selected: true, as meetly-setup says."]
+          ? ["- Do not ask which calendars to use: read them from the Mac and record every calendar with selected: true except read-only holiday subscriptions, as meetly-setup says."]
           : []),
         "- Then run record-setup.ts --done, and carry out what the owner asked in this same turn.",
         "- If the owner asked for nothing yet, add one short line: tell me who to meet.",

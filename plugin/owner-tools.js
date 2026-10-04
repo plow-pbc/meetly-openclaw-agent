@@ -35,12 +35,13 @@ const runGroup = async (context, args) => {
 };
 
 export function registerOwnerGroupTool(api, execute = runGroup) {
-  const required = ["topic", "durationMin"];
+  const required = ["topic", "durationMin", "introduction"];
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
-    description: "Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group. For this/next week supply week, not computed dates. For earliest available starts supply asap:true. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals, guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread; participants determine identity. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless the owner requests a change. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Reply here using the returned askDetails flag. Owner only.",
+    description: "Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group. For this/next week supply week, not computed dates. For earliest available starts supply asap:true. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals, guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread; participants determine identity. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless the owner requests a change. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Reply here using the returned askDetails flag. If this is your first reply in this group, introduce yourself as \"<agentName>, <ownerName>'s scheduling assistant\" in their language with the offer. An earlier introduction-only reply already counts; after that, give just the offer without introducing yourself again. Owner only.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
+      introduction: { type: "string", enum: ["needed", "already_introduced"], description: "Read prior assistant messages. An earlier introduction-only reply counts; choose needed only when no introduction has been given here." },
       week: { type: "string", enum: ["this", "next"] },
       asap: { type: "boolean" },
       durationMin: { type: "integer", minimum: 1, description: "Your chosen meeting duration in minutes, recorded on the request." },
@@ -49,8 +50,17 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
       location: string, locale: string,
     } },
     async execute(_id, args) {
-      const result = await execute(context, cleanArgs(args, required));
-      return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      const { introduction, ...request } = cleanArgs(args, required);
+      if (!["needed", "already_introduced"].includes(introduction)) {
+        return { isError: true, content: [{ type: "text", text: "Choose introduction: needed or already_introduced from this conversation's prior replies before offering times." }] };
+      }
+      const result = await execute(context, request);
+      return { isError: "error" in result, content: [
+        { type: "text", text: JSON.stringify(result) },
+        ...(!result.error && result.offered?.length ? [{ type: "text", text: introduction === "already_introduced"
+          ? "Do not introduce yourself or repeat your role. You already introduced yourself in this conversation. Reply only with the scheduling offer and selection question."
+          : "Introduce yourself once as the owner's scheduling assistant, then present the offer and selection question." }] : []),
+      ], details: result };
     },
   }));
 }
