@@ -8,6 +8,7 @@ import { file } from "./paths.ts";
 import { checkTime, findSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
 import { DAYS, localIso } from "./time.ts";
+import { view } from "./request-view.ts";
 
 export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
@@ -31,19 +32,6 @@ function patch(request: Request, change: Patch): Request {
     return updateRequest(l, request.id, change, Date.now());
   })
     .requests.find(r => r.id === request.id)!;
-}
-
-export function view(request: Request, config: Config) {
-  const format = localeFormatter(request.locale ?? "en-US", config.timezone);
-  const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });
-  return {
-    status: request.status, origin: request.origin, ownerName: config.ownerName, timezone: config.timezone,
-    topic: request.topic, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
-    offered: request.status === "offered" ? request.offered.map(time) : [],
-    ...(request.booked ? { booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
-    ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
-    ...(request.holdCleanup?.length ? { cleanupPending: true } : {}),
-  };
 }
 
 const holds = (request: Request): HoldRef[] => request.offered.flatMap(o => o.holdId ? [{ holdId: o.holdId, account: o.account }] : []);

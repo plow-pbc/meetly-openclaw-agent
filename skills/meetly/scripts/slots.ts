@@ -251,7 +251,7 @@ if (isMain(import.meta.url)) {
       Object.assign(q, narrowed);
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
-      q.allowOverlap = request.allowOverlap;
+      q.allowOverlap = [...new Set([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])])];
       q.busy = q.busy.filter(b => !request.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
     }
     return { ...findSlots(q), degraded };

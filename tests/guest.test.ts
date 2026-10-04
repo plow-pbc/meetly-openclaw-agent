@@ -340,7 +340,7 @@ test("format before and after booking updates the event and records only the bac
 });
 
 for (const status of ["booked", "dropped", "expired"] as const) test(`${status} stays this chat's request; guest cannot rebook or cancel it`, async t => {
-  const f = fixture(t); f.ledger.requests[0]!.status = status; f.save(f.ledger);
+  const f = fixture(t); f.ledger.requests[0]!.status = status; f.ledger.requests[0]!.format = "phone"; f.save(f.ledger);
   for (const [action, args] of actions.filter(([a]) => a !== "format")) {
     const result = await f.act(context, action, args);
     assert.equal((result as { status: string }).status, status);
@@ -684,6 +684,9 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
   assert.equal(tool.parameters.properties.offered.items.properties.account, undefined);
   assert.ok(!tool.parameters.properties.offered.items.required.includes("account"));
   assert.ok(!tool.parameters.required.includes("durationMin"));
+  assert.deepEqual(tool.parameters.properties.constraints.properties.days.items.enum, ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+  assert.equal(tool.parameters.properties.constraints.properties.after.description, "Earliest time, HH:MM.");
+  assert.equal(tool.parameters.properties.proposed, tool.parameters.properties.constraints);
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "other-group" }, "view"));
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "cht_mixed" }, "view"));
   assert.ok(!("error" in await guestAction({ ...context, nativeChannelId: "cht_MiXeD" }, "view")));
@@ -694,6 +697,7 @@ test("the owner-group tool refuses guests, DMs and requests already linked elsew
   const args = { ...f.ledger.requests[0]!, offered: offers.map(({ holdId, ...slot }) => slot) };
   const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
   for (const invalid of [{ ...ctx, senderIsOwner: false }, { ...ctx, sessionKey: "agent:main:main" },
+    { ...ctx, requesterSenderId: undefined }, { ...ctx, messageChannel: "webchat" },
     { ...ctx, nativeChannelId: undefined }, { ...ctx, agentAccountId: "email" }, { ...ctx, nativeChannelId: "elsewhere" }]) {
     assert.ok("error" in await offerOwnerGroup(invalid, args));
   }
@@ -734,4 +738,32 @@ test("owner-group conflict authorization resolves only named events and stays pr
   assert.equal(tool.parameters.properties.allowOverlap, undefined);
   assert.equal(tool.parameters.properties.allowOverlapTitles.items.type, "string");
   assert.doesNotMatch(JSON.stringify(result), /private-|Weekly Claw|Weekly Claw extra|allowOverlap|owner@example.com/);
+  f.hooks.before = undefined;
+  f.events.set("private-new", { ...event("private-new", offers[0]!.start, offers[0]!.end), summary: "New commitment" });
+  const replacement = await tool.execute("replace", { handle: context.requesterSenderId, topic: "Lunch", allowOverlapTitles: ["New commitment"],
+    offered: [{ start: offers[0]!.start, end: offers[0]!.end }] });
+  assert.equal(replacement.isError, false, JSON.stringify(replacement));
+  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1", "private-new"]);
+  assert.equal(f.commands.filter(c => c[2] === "create").length, 2);
+  assert.doesNotMatch(JSON.stringify(replacement), /private-|Weekly Claw|New commitment|allowOverlap|owner@example.com/);
+});
+
+for (const [origin, format, location, expected] of [
+  ["owner-group", "unknown", undefined, false], ["owner-group", "in_person", undefined, false],
+  ["owner", "unknown", undefined, true], ["inbound", "in_person", "  ", true],
+  ["owner", "meet", undefined, false], ["owner", "phone", undefined, false], ["owner", "in_person", "Library", false],
+] as const) test(`request view reserves details once: ${origin}, ${format}, ${location}`, async t => {
+  const f = fixture(t);
+  Object.assign(f.ledger.requests[0]!, { origin, format, location }); f.save(f.ledger);
+  const first = origin === "inbound"
+    ? cli("request-view.ts", ["--id", "request-one"], { MEETLY_HOME: f.home }).json
+    : await guestAction(context, "view") as { askDetails: boolean };
+  assert.equal(first.askDetails, expected);
+  assert.equal(!!f.request().detailsAskedAt, expected);
+  const reloaded = await import(new URL(`../skills/meetly/scripts/guest.ts?details=${origin}-${format}-${location}`, import.meta.url).href);
+  assert.equal((await reloaded.guestAction(context, "view")).askDetails, false);
+  assert.ok(!("error" in await guestAction(context, "other_times", { after: "11:00" })));
+  assert.equal((await guestAction(context, "view") as { askDetails: boolean }).askDetails, false);
+  assert.ok(!("error" in await guestAction(context, "pick", { start: f.request().offered[0]!.start })));
+  assert.equal((await guestAction(context, "view") as { askDetails: boolean }).askDetails, false);
 });

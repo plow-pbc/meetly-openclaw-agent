@@ -147,6 +147,8 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       const add = (verb: Step["verb"], slot: Offer, args: string[]) => steps.push({ verb, account: slot.account, eventId: slot.holdId, start: slot.start, end: slot.end, args, token: randomUUID() });
       if (input.action === "offer") {
         if (input.request.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
+        if (request.origin === "owner-group") input.request = { ...input.request,
+          allowOverlap: [...new Set([...(request.allowOverlap ?? []), ...(input.request.allowOverlap ?? [])])] };
         // Validate before any external effect; only the final commit replaces the old offer.
         const before = ledger();
         const validated = saveRequest(before, input.request, now(), id);

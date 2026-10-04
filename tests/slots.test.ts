@@ -5,6 +5,7 @@ import { writeFileSync } from "node:fs";
 import type { Config } from "../skills/meetly/scripts/config.ts";
 import { checkTime, findSlots, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
 import { writeJson } from "../skills/meetly/scripts/store.ts";
+import { addRequest } from "../skills/meetly/scripts/ledger.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
 const CONFIG: Config = {
@@ -179,4 +180,20 @@ test("checkTime: a time the person insists on", () => {
   assert.equal(check("2026-10-03T10:00:00-03:00", { locale: "en-US" }).slot.label, "Sat, 10/3, 10:00 AM");
   assert.equal(check("2026-10-03T10:00").slot.start, "2026-10-03T10:00:00-03:00");
   assert.throws(() => check("someday"), /not a time/);
+});
+
+test("replacement slot search keeps saved and newly resolved overlap authorizations private", () => {
+  const home = tmpHome(), env = { MEETLY_HOME: home };
+  writeJson(join(home, "config.json"), CONFIG);
+  const start = "2026-09-28T10:00:00-03:00", end = "2026-09-28T10:30:00-03:00";
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
+    origin: "owner-group", chatUid: "group", handle: "+15551234567", topic: "Lunch", durationMin: 30,
+    allowOverlap: ["saved"], offered: [{ start, end, holdId: "own-hold", account: "jean@example.com" }],
+  }, Date.parse(start), "r_one"));
+  const busyFile = join(home, "busy.json");
+  writeJson(busyFile, { busy: ["saved", "new", "own-hold"].map(id => ({ id, start, end, account: "jean@example.com" })), allowOverlap: ["new"] });
+  const result = cli("slots.ts", ["--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--after", "10:00", "--count", "1"], env);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.json.slots[0].start, start);
+  assert.doesNotMatch(result.stdout, /saved|new|own-hold|allowOverlap/);
 });

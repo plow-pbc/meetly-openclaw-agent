@@ -173,16 +173,16 @@ test("calendar mutations are owned by the writer, never assembled in skills", ()
 const groupSkill = () => flat(readFileSync(join(SKILLS, "meetly-group", "SKILL.md"), "utf8"));
 const pollSkill = () => flat(readFileSync(join(SKILLS, "meetly-poll", "SKILL.md"), "utf8"));
 
-test("the format is read only from explicit words, and ambiguous ones are asked", () => {
+test("format comes from explicit words and questions follow the request view", () => {
   const group = groupSkill();
   assert.ok(group.includes("## Meeting format"));
   assert.ok(group.includes("It counts only when the words say it"));
   assert.ok(group.includes("Anything else is `unknown`, including \"call\", \"ligação\""));
   assert.ok(group.includes("\"coffee\" or \"lunch\" with no place"));
   assert.ok(group.includes("Never guess from the topic"));
-  assert.ok(group.includes("when `format` is `unknown`, the same opener also asks how they would like to meet"));
-  assert.ok(group.includes("Always in that one message, never a second one"));
-  assert.ok(group.includes("Never ask about the format twice in a row"));
+  assert.ok(group.includes("Ask format/place only when `askDetails` is true"));
+  assert.ok(flat(prompt).includes("Ask format/place only when `askDetails` is true"));
+  assert.ok(group.includes("`request-view.ts --id <id>`"));
   assert.ok(pollSkill().includes("the format if their words say it"));
 });
 
@@ -272,8 +272,9 @@ test("meeting confirmations stay in the group while pending questions route priv
   assert.ok(group.includes("The group confirmation also notifies the owner"));
   const ownerConfirms = group.slice(group.indexOf("## Owner confirms"), group.indexOf("## Owner in the group"));
   const groupConfirms = group.slice(group.indexOf("## Owner in the group"), group.indexOf("## Holds"));
-  assert.match(ownerConfirms, /If `origin` is not `owner-group` and the format is still `unknown`, ask it in the group, once/);
-  assert.match(groupConfirms, /For `unknown` \(or `in_person` with no place\), ask how or where to meet once only if `origin` is not `owner-group`/);
+  for (const section of [ownerConfirms, groupConfirms]) {
+    assert.ok(section.includes("Ask format/place only when `askDetails` is true"));
+  }
   assert.ok(group.includes("clears that question only after the send succeeds"));
   assert.ok(group.includes("Never send the answer separately"));
   assert.ok(flat(prompt).includes("asks go privately through `meetly_ask_owner`"));

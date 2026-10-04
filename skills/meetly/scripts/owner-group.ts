@@ -1,16 +1,15 @@
 import { offerRequest, type CalendarOptions } from "./calendar.ts";
 import { fetchBusy } from "./busy.ts";
 import { loadConfig } from "./config.ts";
-import { view } from "./guest.ts";
+import { view } from "./request-view.ts";
 import type { NewRequest } from "./ledger.ts";
+import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type Context = { messageChannel?: string; agentAccountId?: string; senderIsOwner?: boolean; requesterSenderId?: string;
-  sessionKey?: string; nativeChannelId?: string };
-export type GroupRequest = Pick<NewRequest, "handle" | "name" | "topic" | "constraints" | "proposed" | "format" | "location" | "locale"> & { allowOverlapTitles?: string[]; durationMin?: number; offered: { start: string; end: string }[] };
+type GroupRequest = Pick<NewRequest, "handle" | "name" | "topic" | "constraints" | "proposed" | "format" | "location" | "locale"> & { allowOverlapTitles?: string[]; durationMin?: number; offered: { start: string; end: string }[] };
 
-export async function offerOwnerGroup(ctx: Context, args: GroupRequest, options: CalendarOptions = {}): Promise<object> {
-  if (ctx.messageChannel !== "plow" || ctx.agentAccountId !== "chat" || ctx.senderIsOwner !== true
-    || !ctx.requesterSenderId || !ctx.sessionKey?.includes(":plow:group:") || !ctx.nativeChannelId) {
+export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, options: CalendarOptions = {}): Promise<object> {
+  const chat = resolveOwnerChat(ctx);
+  if (!chat || !ctx.sessionKey?.includes(":plow:group:")) {
     return { error: "Only the owner's own Plow group turn can start this request." };
   }
   try {
@@ -26,10 +25,10 @@ export async function offerOwnerGroup(ctx: Context, args: GroupRequest, options:
     }
     const { request } = await offerRequest({ handle, name, topic, durationMin: durationMin ?? config.durationMin, constraints, proposed, format, location, locale, ...(allowOverlap ? { allowOverlap } : {}),
       offered: offered.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),
-      origin: "owner-group", chatUid: ctx.nativeChannelId }, {
+      origin: "owner-group", chatUid: chat }, {
       ...options,
       validate(request) {
-        if (request.chatUid !== ctx.nativeChannelId || request.origin !== "owner-group") throw new Error("This person already has a request outside this owner-started group.");
+        if (request.chatUid !== chat || request.origin !== "owner-group") throw new Error("This person already has a request outside this owner-started group.");
         options.validate?.(request);
       },
     });

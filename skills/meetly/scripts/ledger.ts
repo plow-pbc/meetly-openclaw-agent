@@ -74,6 +74,8 @@ export type Request = {
   notifiedAt?: string;
   startedAt?: string;
   startCompletedAt?: string;
+  // Reserved before returning a details question, including uncertain delivery.
+  detailsAskedAt?: string;
   offeredAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -83,7 +85,7 @@ export type Ledger = { requests: Request[] };
 
 export type NewRequest = Omit<Request,
   "id" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
-  | "notifyAttemptedAt" | "notifiedAt" | "startedAt" | "startCompletedAt"
+  | "notifyAttemptedAt" | "notifiedAt" | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
   "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale">> & {
@@ -184,6 +186,7 @@ function checkOffers(offered: unknown): Offer[] {
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
   input = { ...input, handle: normalizeHandle(input.handle) };
   if ("calendarRevision" in input) throw new Error("calendarRevision is managed by calendar.ts");
+  if ("detailsAskedAt" in input) throw new Error("detailsAskedAt is managed by request-view.ts");
   for (const key of ["notifyAttemptedAt", "notifiedAt", "startedAt", "startCompletedAt"]) {
     if (key in input) throw new Error(`${key} is managed by ledger.ts delivery`);
   }

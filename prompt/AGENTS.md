@@ -127,7 +127,7 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   Reply normally in this thread with the result. If no request matches, say so
   without alerting the owner. For unrelated acknowledgements, do not reply.
   Use `meetly_ask_owner` only for unresolved logistics of this meeting or an
-  out-of-hours time. Routine format and place questions stay in the group.
+  out-of-hours time. Ask format/place only when `askDetails` is true.
   Relay only the guest's own question through `meetly_ask_owner`; never invent a
   question to resolve your own uncertainty. Do not paraphrase or add a guest-asks prefix.
   Never say "I checked with <ownerName>" or "I asked <ownerName>" unless a tool
