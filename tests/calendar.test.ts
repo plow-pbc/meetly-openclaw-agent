@@ -425,3 +425,135 @@ test("an offline preflight after a hold was created keeps the journal for recove
   assert.deepEqual(pendingCalendarWrites(), []);
   assert.equal(f.calls.filter(c => c[2] === "create").length, 2);
 });
+
+
+for (const collision of [false, true]) test(`overlap approval applies only to its account (collision=${collision})`, async t => {
+  const f = fixture(t);
+  const configFile = join(f.home, "config.json");
+  const config = readJson<any>(configFile, {});
+  if (collision) config.calendars.push({ account: "other@example.com", id: "primary" });
+  writeJson(configFile, config);
+  const command = async (cmd: MacCommand) => cmd.argv[2] === "events"
+    ? { output: JSON.stringify({ events: [calendarEvent("same-id", start, end)] }) } : f.command(cmd);
+  const action = offerRequest({ ...f.offer, offered: f.offer.offered.slice(0, 1),
+    allowOverlap: [{ account, id: "same-id" }] }, { ...f.options, command });
+  if (collision) {
+    await assert.rejects(action);
+    assert.equal(f.calls.filter(c => c[2] === "create").length, 0);
+  } else {
+    await action;
+    assert.equal(f.calls.filter(c => c[2] === "create").length, 1);
+  }
+});
+
+for (const key of ["allowOverlap", "allowOverlapTitles"]) test(`raw offer rejects ${key} before any ledger mutation`, t => {
+  const f = fixture(t), before = f.read();
+  const result = cli("calendar.ts", ["offer", "--json", JSON.stringify({ ...f.offer, [key]: [] })], { MEETLY_HOME: f.home });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /owner.*DM/i);
+  assert.deepEqual(f.read(), before);
+});
+
+test("raw duration patches cannot race a calendar booking", t => {
+  const f = fixture(t), before = f.read();
+  const result = cli("ledger.ts", ["update", "--id", "r_one", "--json", '{"durationMin":60,"topic":"Hour"}'], { MEETLY_HOME: f.home });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /managed by calendar/);
+  assert.deepEqual(f.read(), before);
+});
+
+for (const bookFirst of [true, false]) test(`duration replacement serializes with booking (book first: ${bookFirst})`, async t => {
+  const f = fixture(t);
+  const replacement = { action: "duration" as const, durationMin: 60, topic: "Hour",
+    offered: [{ start, end: "2026-10-05T11:00:00Z" }] };
+  let entered!: () => void, release!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] === (bookFirst ? "update" : "create")) { entered(); await gate; }
+    return f.command(cmd);
+  };
+  const first = calendarAction("r_one", bookFirst ? { action: "book", start } : replacement, { ...f.options, command });
+  await waiting;
+  const second = calendarAction("r_one", bookFirst ? replacement : { action: "book", start }, f.options);
+  const checked = bookFirst ? assert.rejects(second, /request is booked/) : second;
+  assert.equal(f.read().durationMin, 30);
+  assert.equal(f.read().topic, "Lunch");
+  assert.deepEqual(f.read().offered, f.input.offered);
+  release();
+  await first;
+  await checked;
+  assert.equal(f.read().durationMin, bookFirst ? 30 : 60);
+  assert.equal(f.read().topic, bookFirst ? "Lunch" : "Hour");
+  assert.equal(Date.parse(f.read().booked!.end) - Date.parse(f.read().booked!.start), f.read().durationMin * 60_000);
+  assert.equal(f.events.get("hold-two")!.status, "cancelled");
+});
+
+test("failed duration replacement retains the old duration, topic and holds", async t => {
+  const f = fixture(t), before = f.read();
+  await assert.rejects(calendarAction("r_one", { action: "duration", durationMin: 60, topic: "Hour",
+    offered: [{ start, end: "2026-10-05T11:00:00Z" }] }, { ...f.options,
+    command: async cmd => cmd.argv[2] === "create" ? { error: "refused" } : f.command(cmd) }), /previous offer retained/);
+  assert.equal(f.read().durationMin, before.durationMin);
+  assert.equal(f.read().topic, before.topic);
+  assert.deepEqual(f.read().offered, before.offered);
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+});
+
+test("raw ledger mutations cannot bypass DM overlap authorization", t => {
+  const f = fixture(t), before = f.read();
+  for (const action of ["add", "save", "update"]) {
+    const args = action === "update" ? {} : { ...f.offer, handle: "+15557654321" };
+    const result = cli("ledger.ts", [action, "--id", "r_one", "--json",
+      JSON.stringify({ ...args, allowOverlap: [{ account, id: "busy" }] })], { MEETLY_HOME: f.home });
+    assert.equal(result.status, 1, action);
+    assert.match(result.stderr, /owner DM|managed by calendar/);
+    assert.deepEqual(f.read(), before);
+  }
+});
+
+for (const durationMin of [15, 60]) test(`offer rejects intervals that differ from request duration ${durationMin}`, async t => {
+  const f = fixture(t), before = f.read();
+  await assert.rejects(offerRequest({ ...f.offer, durationMin }, f.options), /interval.*duration/i);
+  assert.deepEqual(f.read(), before);
+  assert.deepEqual(f.calls, []);
+});
+
+test("an unsaved offer without duration must ask the model to set it", async t => {
+  const f = fixture(t);
+  writeJson(join(f.home, "ledger.json"), { requests: [] });
+  const { durationMin, ...offer } = f.offer;
+  await assert.rejects(offerRequest(offer, f.options), /set.*durationMin/i);
+  assert.deepEqual(readJson(join(f.home, "ledger.json"), {}), { requests: [] });
+  assert.deepEqual(f.calls, []);
+});
+
+test("an offer uses saved duration rather than the configured duration", async t => {
+  const f = fixture(t), { durationMin, ...offer } = f.offer;
+  const saved = f.read();
+  saved.durationMin = 45;
+  writeJson(join(f.home, "ledger.json"), { requests: [saved] });
+  const { request } = await offerRequest({ ...offer, offered: [{ start, end: "2026-10-05T10:45:00Z" }] }, f.options);
+  assert.equal(request.durationMin, 45);
+});
+
+test("an offer waiting for the lock cannot overwrite a newer saved duration", async t => {
+  const f = fixture(t), { durationMin, ...offer } = f.offer;
+  let entered!: () => void, release!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] === "create") { entered(); await gate; }
+    return f.command(cmd);
+  };
+  const change = calendarAction("r_one", { action: "duration", durationMin: 60, topic: "Hour",
+    offered: [{ start, end: "2026-10-05T11:00:00Z" }] }, { ...f.options, command });
+  await waiting;
+  const stale = assert.rejects(offerRequest(offer, f.options), /duration changed/);
+  release();
+  await change;
+  await stale;
+  assert.equal(f.read().durationMin, 60);
+  assert.equal(f.read().offered[0]!.end, "2026-10-05T11:00:00Z");
+  assert.equal(f.calls.filter(cmd => cmd[2] === "create").length, 1);
+});

@@ -9,7 +9,8 @@ export type Participant = {
   relationship?: string;
   role?: string;
   display_name?: string | null;
-  line?: { uid?: string };
+  provider_key?: string;
+  line?: { uid?: string; display_name?: string };
 };
 export type Chat = { uid: string; status?: string; participants?: Participant[] };
 export type Identity = { line?: { uid?: string }; chats?: Chat[] };

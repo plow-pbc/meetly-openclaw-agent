@@ -1,4 +1,4 @@
-import { sendPlowMessage } from "./guest-tools.js";
+import { cleanArgs, constraints, sendPlowMessage } from "./guest-tools.js";
 
 const run = async (context, args, send) => {
   const { answerOwner } = await import("/opt/plow/skills/meetly/scripts/answer-owner.ts");
@@ -19,8 +19,66 @@ export function registerOwnerTools(api, execute = run, outbound) {
       },
     },
     async execute(_id, args) {
-      const cleaned = Object.fromEntries(Object.entries(args ?? {}).filter(([key, value]) => value !== "" || required.includes(key)));
-      const result = await execute(context, cleaned, (to, text) => sendPlowMessage(api, context, to, text, "group", outbound));
+      const result = await execute(context, cleanArgs(args, required), (to, text) => sendPlowMessage(api, context, to, text, "group", outbound));
+      return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  }));
+}
+
+const runGroup = async (context, args) => {
+  const { offerOwnerGroup } = await import("/opt/plow/skills/meetly/scripts/owner-group.ts");
+  return offerOwnerGroup(context, args);
+};
+
+export function registerOwnerGroupTool(api, execute = runGroup) {
+  const required = ["topic", "durationMin"];
+  const string = { type: "string" };
+  api.registerTool(context => ({
+    name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
+    description: "Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals, guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread; participants determine identity. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless you decide to change it. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Reply here using the returned askDetails flag. Owner only.",
+    parameters: { type: "object", additionalProperties: false, required, properties: {
+      durationMin: { type: "integer", minimum: 1, description: "Your chosen meeting duration in minutes, recorded on the request." },
+      topic: string, name: { type: "string", description: "Guest name explicitly given by the owner in this thread, if known." },
+      constraints, proposed: constraints, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
+      location: string, locale: string,
+    } },
+    async execute(_id, args) {
+      const result = await execute(context, cleanArgs(args, required));
+      return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  }));
+}
+
+const runDm = async args => {
+  const { offerRequest } = await import("/opt/plow/skills/meetly/scripts/calendar.ts");
+  return offerRequest(args);
+};
+
+export function registerOwnerDmTool(api, execute = runDm) {
+  const required = ["origin", "handle", "topic", "offered"];
+  const string = { type: "string" };
+  api.registerTool(context => ({
+    name: "meetly_offer_owner_dm", label: "Offer owner-authorized times",
+    description: "Offer times from the owner's main Plow DM. Only pass allowOverlapTitles for events the owner explicitly authorized overlapping in this DM. Resolves titles internally and holds the supplied times through the calendar writer. Read meetly-group. Never call from a group. Save the request with your chosen durationMin first; this tool uses only that saved duration and rejects mismatched intervals.",
+    parameters: { type: "object", additionalProperties: false, required, properties: {
+      origin: { type: "string", enum: ["owner", "inbound", "owner-group"] }, handle: string, topic: string,
+      name: string, sourceRowid: { type: "integer" }, chatUid: string,
+      constraints, proposed: constraints, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
+      location: string, locale: string, allowOverlapTitles: { type: "array", items: string },
+      offered: { type: "array", minItems: 1, items: { type: "object", additionalProperties: false,
+        required: ["start", "end"], properties: { start: string, end: string } } },
+    } },
+    async execute(_id, args) {
+      let result;
+      if (context.messageChannel !== "plow" || context.agentAccountId !== "chat" || context.senderIsOwner !== true ||
+        !context.requesterSenderId || context.sessionKey !== "agent:main:main") {
+        result = { error: "Only the owner's main Plow DM can authorize an overlap offer." };
+      } else if ("durationMin" in (args ?? {})) {
+        result = { error: "Set durationMin on the saved request, not on meetly_offer_owner_dm." };
+      } else {
+        try { result = await execute(cleanArgs(args, required)); }
+        catch (error) { result = { error: error instanceof Error ? error.message : "The offer could not be completed. Check the request before trying again." }; }
+      }
       return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   }));

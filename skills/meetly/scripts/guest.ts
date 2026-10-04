@@ -1,13 +1,14 @@
 // Scheduling actions scoped to the sender and conversation supplied by OpenClaw.
-import { fetchBusy, type BusyResult } from "./busy.ts";
-import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
+import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
+import { loadConfig, parseTime, type Config } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
 import { findByChat, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
-import { checkTime, findSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
+import { checkTime, findPreferredSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
 import { DAYS, localIso } from "./time.ts";
+import { view } from "./request-view.ts";
 
 export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
@@ -33,19 +34,6 @@ function patch(request: Request, change: Patch): Request {
     .requests.find(r => r.id === request.id)!;
 }
 
-function view(request: Request, config: Config) {
-  const format = localeFormatter(request.locale ?? "en-US", config.timezone);
-  const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });
-  return {
-    status: request.status, ownerName: config.ownerName, timezone: config.timezone,
-    topic: request.topic, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
-    offered: request.status === "offered" ? request.offered.map(time) : [],
-    ...(request.booked ? { booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
-    ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
-    ...(request.holdCleanup?.length ? { cleanupPending: true } : {}),
-  };
-}
-
 const holds = (request: Request): HoldRef[] => request.offered.flatMap(o => o.holdId ? [{ holdId: o.holdId, account: o.account }] : []);
 // Recheck the guest's authorized snapshot inside the writer lock. A concurrent
 // booking or replacement must not turn a guest pick into an owner-style move.
@@ -62,16 +50,6 @@ async function busyFor(request: Request, config: Config, from: string, to: strin
   const result = await fetchBusy(config, { from, to });
   if (result.degraded.length) throw new Error("calendar unavailable");
   return { ...result, busy: result.busy.filter(b => !holds(request).some(h => h.holdId === b.id && h.account === b.account)) };
-}
-
-function intersection(owner: Constraints = {}, guest: Constraints = {}): Constraints {
-  return {
-    days: owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
-    after: [owner.after, guest.after].filter(Boolean).sort().at(-1),
-    before: [owner.before, guest.before].filter(Boolean).sort()[0],
-    from: [owner.from, guest.from].filter(Boolean).sort().at(-1),
-    to: [owner.to, guest.to].filter(Boolean).sort()[0],
-  };
 }
 
 function preferences(args: GuestArgs): Constraints {
@@ -93,7 +71,7 @@ async function check(request: Request, config: Config, start: string) {
   const { slot } = checkTime({ ...query, busy: [] });
   const busy = await busyFor(request, config, slot.start, slot.end);
   const checked = checkTime({ ...query, ...busy });
-  const overlap = busy.busy.some(b => b.id && request.allowOverlap?.includes(b.id)
+  const overlap = busy.busy.some(b => allowsOverlap(b, request.allowOverlap)
     && Date.parse(b.start) < Date.parse(slot.end) && Date.parse(b.end) > Date.parse(slot.start));
   return { ...checked, overlap };
 }
@@ -123,12 +101,9 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   const now = Date.now();
   const busy = await busyFor(request, config, localIso(now, config.timezone), localIso(now + (config.horizonDays + 1) * 86_400_000, config.timezone));
-  const narrowed = intersection(request.constraints, preferred);
-  const query: SlotQuery = { ...busy, ...narrowed, days: narrowed.days as Day[] | undefined, now, config,
+  const query: SlotQuery = { ...busy, ...request.constraints, now, config,
     durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
-  let { slots } = exact ? { slots: [exact] } : findSlots(query);
-  const preferencesUnavailable = slots.length === 0;
-  if (preferencesUnavailable) slots = findSlots({ ...query, ...intersection(request.constraints), days: request.constraints?.days as Day[] | undefined }).slots;
+  const { slots, preferencesUnavailable } = exact ? { slots: [exact], preferencesUnavailable: false } : findPreferredSlots(query, preferred);
   if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
   const { origin, handle, name, sourceRowid, chatUid, topic, location, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {

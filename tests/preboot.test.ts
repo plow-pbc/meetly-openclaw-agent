@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-for (const failure of ["plugin", "model", "config"]) test(`boot requires plugin activation and tolerates only model failure (${failure})`, t => {
+for (const failure of ["plugin", "model", "config", "fresh"]) test(`boot requires plugin activation and tolerates only model failure (${failure})`, t => {
   const marker = `${failure.toUpperCase()}_FAILED`;
   const dir = mkdtempSync(join(tmpdir(), "meetly-boot-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -43,11 +43,11 @@ for (const failure of ["plugin", "model", "config"]) test(`boot requires plugin 
     });
   `);
   writeFileSync(join(dir, "prompt.md"), "fixture");
-  writeFileSync(join(dir, "openclaw.json"), "{}");
+  if (failure !== "fresh") writeFileSync(join(dir, "openclaw.json"), "{}");
   const result = spawnSync(process.execPath, ["--import", hook, new URL(preboot).pathname], {
     env: { ...process.env, PLOW_API_BASE: "http://fixture.invalid" }, encoding: "utf8", timeout: 1_000,
   });
-  assert.match(result.stderr, new RegExp(marker));
+  if (failure !== "fresh") assert.match(result.stderr, new RegExp(marker));
   if (failure === "plugin") {
     assert.doesNotMatch(result.stdout, /GATEWAY_STARTED/);
     assert.equal(result.status, 1);
@@ -56,9 +56,11 @@ for (const failure of ["plugin", "model", "config"]) test(`boot requires plugin 
     assert.match(result.stderr, /plow-boot: parked/);
     assert.equal((result.error as NodeJS.ErrnoException)?.code, "ETIMEDOUT");
   } else {
-    assert.deepEqual(JSON.parse(readFileSync(join(dir, "openclaw.json"), "utf8")).plugins?.entries?.meetly,
+    const config = JSON.parse(readFileSync(join(dir, "openclaw.json"), "utf8"));
+    if (failure === "fresh") assert.ok(config.tools.alsoAllow.includes("meetly_offer_owner_dm"), "owner DM overlap tool must survive the messaging profile allowlist");
+    assert.deepEqual(config.plugins?.entries?.meetly,
       { enabled: true, hooks: { allowConversationAccess: true } });
-    assert.match(result.stderr, /llm config left as it was/);
+    if (failure === "model") assert.match(result.stderr, /llm config left as it was/);
     assert.match(result.stdout, /GATEWAY_STARTED/);
     assert.equal(result.status, 0);
   }
