@@ -17,9 +17,9 @@ function fixture(t: TestContext, chatUid?: string) {
   process.env.MEETLY_HOME = home;
   t.after(() => { if (old === undefined) delete process.env.MEETLY_HOME; else process.env.MEETLY_HOME = old; fs.rmSync(home, { recursive: true, force: true }); });
   const offered = [{ start, end, account, holdId: "hold-one" }, { start: "2026-10-06T10:00:00Z", end: "2026-10-06T10:30:00Z", account, holdId: "hold-two" }];
-  const input = { origin: "owner" as const, handle: "+15551234567", name: "Guest", chatUid, topic: "Lunch", durationMin: 30, offered };
+  const input = { travel: { beforeMin: 0, afterMin: 0 }, origin: "owner" as const, handle: "+15551234567", name: "Guest", chatUid, topic: "Lunch", durationMin: 30, offered };
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, input, now - 72 * 3_600_000, "r_one"));
-  writeJson(join(home, "config.json"), { ...DEFAULTS, defaultAccount: account, timezone: "UTC", ownerName: "Alex", setupDoneAt: new Date(now).toISOString(), calendars: [{account, id: account}] });
+  writeJson(join(home, "config.json"), { ...DEFAULTS, travelBase: "Office", defaultAccount: account, timezone: "UTC", ownerName: "Alex", setupDoneAt: new Date(now).toISOString(), calendars: [{account, id: account}] });
   const { events, calls, command } = fakeCalendar(offered.map(o => calendarEvent(o.holdId, o.start, o.end)));
   const read = () => readJson<Ledger>(join(home, "ledger.json"), { requests: [] }).requests[0]!;
   return { home, input, offer: { ...input, offered: offered.map(({ holdId, ...slot }) => slot) }, read, calls, events, command, options: { command, now: () => now } satisfies CalendarOptions };
@@ -27,12 +27,12 @@ function fixture(t: TestContext, chatUid?: string) {
 
 for (const status of ["offered", "booked"] as const) for (const location of [undefined, "Cafe"]) test(`a ${status} format change ${location === undefined ? "clears an omitted" : "keeps an explicit"} location`, async t => {
   const f = fixture(t);
-  await calendarAction("r_one", { action: "format", format: "in_person", location: "Library" }, f.options);
+  await calendarAction("r_one", { action: "format", format: "in_person", travel: { beforeMin: 15, afterMin: 15 }, location: "Library" }, f.options);
   if (status === "booked") await calendarAction("r_one", { action: "book", start }, f.options);
   if (status === "offered") {
-    const changed = cli("calendar.ts", ["format", "--id", "r_one", "--json", JSON.stringify({ format: "meet", location })], { MEETLY_HOME: f.home });
+    const changed = cli("calendar.ts", ["format", "--id", "r_one", "--json", JSON.stringify({ format: "meet", travel: { beforeMin: 0, afterMin: 0 }, location })], { MEETLY_HOME: f.home });
     assert.equal(changed.status, 0, changed.stderr);
-  } else await calendarAction("r_one", { action: "format", format: "meet", location }, f.options);
+  } else await calendarAction("r_one", { action: "format", format: "meet", travel: { beforeMin: 0, afterMin: 0 }, location }, f.options);
   assert.equal(f.read().status, status);
   assert.equal(f.read().format, "meet");
   assert.equal(f.read().location, location ?? "");
@@ -533,7 +533,7 @@ test("format changes retain a live reoffer; cancel releases it and notifies only
   await calendarAction("r_one", { action: "book", start }, f.options);
   await calendarAction("r_one", { action: "offer", request: f.offer }, f.options);
   const replacement = f.read().reoffer;
-  await calendarAction("r_one", { action: "format", format: "meet" }, f.options);
+  await calendarAction("r_one", { action: "format", format: "meet", travel: { beforeMin: 0, afterMin: 0 } }, f.options);
   assert.deepEqual(f.read().reoffer, replacement);
   assert.equal(f.events.get("new-1")!.status, "confirmed");
   assert.equal(f.events.get("new-2")!.status, "confirmed");
@@ -614,7 +614,7 @@ test(`a ${meal} offer ignores model duration in both the ledger and calendar hol
 test("a meal offer checks conflicts for its full default duration", async t => {
   const f = fixture(t);
   f.events.set("later-conflict", calendarEvent("later-conflict", "2026-10-05T10:45:00Z", "2026-10-05T11:00:00Z"));
-  await assert.rejects(offerRequest({ ...f.offer, meal: "lunch", durationMin: 30,
+  await assert.rejects(offerRequest({ ...f.offer, meal: "lunch", travel: { beforeMin: 15, afterMin: 15 }, durationMin: 30,
     offered: [{ start, end }],
   }, f.options));
   assert.equal(f.calls.some(c => c[2] === "create"), false);
@@ -732,15 +732,16 @@ for (const side of ["before", "after"] as const) test(`offers and picks recheck 
   assert.equal(f.read().offered[0]!.start, f.offer.offered[1]!.start);
 });
 
-test("unknown-place meals default to fifteen minutes; a named place resizes, virtual removes travel", async t => {
+test("model estimates unknown-place meals at fifteen minutes; a named place resizes, virtual removes travel", async t => {
   const f = fixture(t);
-  await calendarAction("r_one", { action: "offer", request: { ...f.offer, meal: "lunch" } }, f.options);
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, meal: "lunch", travel: { beforeMin: 15, afterMin: 15 } } }, f.options);
   await calendarAction("r_one", { action: "book", start }, f.options);
   assert.equal(f.events.get(f.read().travelEvents![0]!.holdId)!.start.dateTime, "2026-10-05T09:45:00.000Z");
   await calendarAction("r_one", { action: "format", format: "in_person", location: "Tartine", travel }, f.options);
   assert.equal(f.events.get(f.read().travelEvents![0]!.holdId)!.start.dateTime, "2026-10-05T09:35:00.000Z");
   const children = f.read().travelEvents!;
-  await calendarAction("r_one", { action: "format", format: "meet" }, f.options);
+  await calendarAction("r_one", { action: "travel", travel: { beforeMin: 45, afterMin: 45, override: true } }, f.options);
+  await calendarAction("r_one", { action: "format", format: "meet", travel: { beforeMin: 0, afterMin: 0 } }, f.options);
   assert.deepEqual(f.read().travelEvents, []);
   assert.ok(children.every(c => f.events.get(c.holdId)!.status === "cancelled"));
   assert.equal(f.read().status, "booked");
@@ -818,6 +819,25 @@ test("travel commit failure resumes without recreating children; replacement exp
   assert.deepEqual(f.read().travelEvents, children);
   assert.equal(f.read().status, "booked");
   assert.ok(children.every(c => f.events.get(c.holdId)!.status === "confirmed"));
+});
+
+
+test("travel preparation rejects a missing owner base before writes", async t => {
+  const f = fixture(t);
+  const cfg = readJson<any>(join(f.home, "config.json"), {});
+  delete cfg.travelBase;
+  writeJson(join(f.home, "config.json"), cfg);
+  await assert.rejects(calendarAction("r_one", {action: "offer", request: {...f.offer, format: "in_person", travel}}, f.options), /owner.*base/i);
+  assert.equal(f.calls.length, 0);
+});
+
+test("resizing a booking records duration and a later move retains it", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", {action: "book", start}, f.options);
+  await calendarAction("r_one", {action: "book", start, end: "2026-10-05T10:45:00Z"}, f.options);
+  assert.equal(f.read().durationMin, 45);
+  await calendarAction("r_one", {action: "book", start: "2026-10-07T10:00:00Z"}, f.options);
+  assert.equal(Date.parse(f.read().booked!.end) - Date.parse(f.read().booked!.start), 45 * 60_000);
 });
 
 for (const [from, to] of [["09:30", "09:50"], ["09:30", "11:00"]]) test(`title-based overlap authorization includes travel (${from}–${to}) and never changes the blocker`, async t => {

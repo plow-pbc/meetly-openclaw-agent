@@ -28,7 +28,7 @@ function fixture(t: TestContext) {
   const path = join(home, "ledger.json");
   let ledger: Ledger = { requests: [] };
   for (const name of ["mia", "lev"]) {
-    ledger = addRequest(ledger, { origin: "owner", name, handle: `${name}@example.com`, topic: "Call", chatUid: `group-${name}`,
+    ledger = addRequest(ledger, { travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", name, handle: `${name}@example.com`, topic: "Call", chatUid: `group-${name}`,
       durationMin: 30, offered: [{ start: "2026-10-05T10:00:00Z", end: "2026-10-05T10:30:00Z", account: "owner@example.com" }] }, Date.now(), name);
     ledger = updateRequest(ledger, name, { pendingOwner: { question: "Should I bring the budget numbers?", askedAt: args.askedAt } }, Date.now());
   }

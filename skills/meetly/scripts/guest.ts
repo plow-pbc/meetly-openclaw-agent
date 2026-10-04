@@ -1,5 +1,5 @@
 // Scheduling actions scoped to the sender and conversation supplied by OpenClaw.
-import { checkTravel, travelNote, travelRange, type Travel } from "./travel.ts";
+import { checkTravel, TravelBaseRequired, travelNote, travelRange, type Travel } from "./travel.ts";
 import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
@@ -133,7 +133,7 @@ async function pick(request: Request, config: Config, start: string, attendees?:
   if (attendees !== undefined && (!Array.isArray(attendees) || (attendees.length > 0 && (request.channel !== "email" || request.status === "booked"
     || attendees.some(email => typeof email !== "string" || !/^[^\s@,]+@[^\s@,]+$/.test(email)))))) return { error: "Additional invitees need email addresses on an unbooked email request." };
   const requested = checkTime({ now: Date.now(), config, busy: [], start,
-    meal: request.meal, durationMin: request.durationMin }).slot.start;
+    travel: { beforeMin: 0, afterMin: 0 }, meal: request.meal, durationMin: request.durationMin }).slot.start;
   const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(requested));
   if (!offer) return { error: "Choose one of the currently offered start times." };
   // Only a replacement held before this run can represent the guest's choice.
@@ -142,7 +142,8 @@ async function pick(request: Request, config: Config, start: string, attendees?:
     return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
   }
   const checked = await check({ ...request, travel: request.travel?.override ? request.travel : travel ?? request.travel }, config, offer.start);
-  if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available. Ask for other times." };
+  if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available.", code: "TIME_UNAVAILABLE",
+    recovery: { action: "other_times", tool: "meetly_other_times", retry: false } };
   if (request.status === "booked") {
     const result = await write(request, { action: "book", start: offer.start, end: offer.end, travel });
     request = result.request;
@@ -157,6 +158,7 @@ async function pick(request: Request, config: Config, start: string, attendees?:
 }
 
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
+  const travel = request.travel?.override ? request.travel : args.travel ?? request.travel;
   let start = args.start;
   if (start !== undefined && typeof start !== "string") {
     try {
@@ -178,7 +180,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     || args.days?.length === 1 && args.days[0] === wallParts(Date.parse(request.booked!.start), config.timezone).weekday);
   let exact: Slot | undefined;
   if (start) {
-    const checked = await check(request, config, start);
+    const checked = await check({ ...request, travel }, config, start);
     requestedBookedDate = checked.slot.start.slice(0, 10) === bookedDate;
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) {
       return { error: "That weekday was ruled out. Choose a different day." };
@@ -195,7 +197,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   // Keep the date exclusion in every fallback, before selecting the limited offer.
   const excludeDates = bookedDate && !requestedBookedDate ? [bookedDate] : [];
   const query: SlotQuery = { ...busy, ...narrowed, excludeDates, days: narrowed.days as Day[] | undefined, now, config,
-    travel: request.travel, format: request.format, meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
+    travel, format: request.format, meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
   let { slots } = exact ? { slots: [exact] } : findSlots(query);
   const preferencesUnavailable = slots.length === 0;
   if (preferencesUnavailable) {
@@ -205,8 +207,11 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     }
     if (!slots.length) slots = findSlots(fallback).slots;
   }
-  if (!slots.length) return { error: "No new times are available within the owner's conditions. The current offer is unchanged." };
-  const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale, travel } = request;
+  if (!slots.length) return { error: "No new times are available within the owner's conditions. The current offer is unchanged.",
+    code: "NO_ALTERNATIVES", conditions: request.constraints ?? {},
+    recovery: { action: "ask_owner", tool: "meetly_ask_owner", retry: false,
+      question: "No alternative times fit the meeting conditions. May we look on another day or widen the time window?" } };
+  const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {
     channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale, travel,
     offered: slots.map(slot => ({ start: slot.start, end: slot.end, account: config.defaultAccount })),
@@ -301,6 +306,9 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt, args.travel);
     return { error: "Unknown scheduling action." };
   } catch (error) {
+    if (error instanceof TravelBaseRequired) return { error: "The owner needs to provide travel information privately before scheduling can continue.",
+      code: "TRAVEL_BASE_REQUIRED", recovery: { action: "ask_owner", tool: "meetly_ask_owner", retry: false,
+        question: "What home or office base should I use to estimate travel? Please reply in your private DM." } };
     if (error instanceof WeekdayDateRequired) return { error: error.message, code: "DATE_REQUIRED",
       recovery: { action: "ask_date", retry: false } };
     const message = error instanceof Error ? error.message : "";

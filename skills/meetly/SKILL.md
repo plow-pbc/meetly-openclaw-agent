@@ -32,7 +32,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | `calendar.ts` | `offer [--id X] [--confirm-contact] --json '<request with slots, no hold ids>'` | `{request}`: hold offers atomically; `--id` selects a booked reoffer. Failure retains prior offers or drops a new request with cleanup |
 | | `book --id X [--confirm-contact] --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book/move with optional `travel`; returns `ownerTravelNote` for the DM |
 | | `travel --id X --json '{"travel":{"beforeMin":45,"afterMin":45,"override":true}}'` | Save override; resize booked travel. |
-| | `format --id X --json '{"format":"meet", "location":"<optional place>"}'` | save format/location and optional `travel`; resize booked children under the lock |
+| | `format --id X --json '{"format":"meet", "travel":{"beforeMin":0,"afterMin":0}, "location":"<optional place>"}'` | save format/location and required explicit `travel`; resize booked children under the lock |
 | | `resume-pending` | `{results:[{id, request?, error?}]}`: resume all pending writes, continuing past individual failures |
 | | `pending` | `{ids}`: pending durable calendar writes |
 | | `drop\|expire\|cancel\|cleanup\|resume --id X` | `{request, skipped?}`: close offers, cancel bookings, retry cleanup or reconcile writes |
@@ -73,8 +73,9 @@ Notes:
 - A booked request may have `reoffer: {offered, offeredAt}`. Expiry releases only
   those replacement holds; the original event remains until a move or cancellation.
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
-  `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-group`.
-- `travelBase` is an optional config field saved through `record-setup.ts`.
+  `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-confirm`.
+- `travelBase` is optional during setup and required before in-person offers; save through `record-setup.ts`.
+- Supply explicit `travel` on new searches/offers and format changes, including zero for virtual meetings. Saved requests can reuse their estimate.
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.
   `meetUrl` only ever holds `https://meet.google.com/xxx-xxxx-xxx`, only on
   a `meet`; the ledger refuses anything else.

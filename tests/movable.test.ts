@@ -89,7 +89,7 @@ test("zero or two blockers do not become flexible candidates; the after-travel e
   }
   f.set({ events: [event("after", "2026-10-05T13:10:00Z", "2026-10-05T13:20:00Z")] });
   assert.equal((await movableAction(owner, inspect, f.options)).candidates!.length, 1);
-  assert.deepEqual(await movableAction(owner, { ...inspect, format: "meet" }, f.options), { candidates: [] });
+  assert.deepEqual(await movableAction(owner, { ...inspect, format: "meet", travel: { beforeMin: 0, afterMin: 0 } }, f.options), { candidates: [] });
 });
 
 test("incomplete calendars fail closed rather than suggesting a sole blocker", async t => {
