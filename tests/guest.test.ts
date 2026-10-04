@@ -47,7 +47,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const ledger = addRequest({ requests: [] }, {
     origin: "owner", handle: context.requesterSenderId, chatUid: context.nativeChannelId, name: "Guest", topic: "Lunch",
     durationMin: 30, constraints: { days: ["mon", "tue"], after: "10:00", before: "15:00", from: "2026-10-05", to: "2026-10-06" },
-    allowOverlap: [{ account: "owner@example.com", id: "approved" }], offered: offers, format: "unknown", locale: "en-US",
+    allowOverlap: [{ account: "owner@example.com", id: "approved" }], offered: offers.map(o => ({ ...o })), format: "unknown", locale: "en-US",
   }, now, "request-one");
   const save = (value: Ledger) => writeJson(join(home, "ledger.json"), value);
   save(ledger);
@@ -121,8 +121,8 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     session: { resolveStorePath: () => "/sessions", updateLastRoute: async (args: Record<string, any>) => { routes.push(args); } },
   } }, registerTool(factory: (ctx: GuestContext) => { name: string; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
     const tool = factory(context); tools.set(tool.name, tool);
-  } }, guestAction, outbound);
-  const act = (ctx: GuestContext, action: GuestAction, args: GuestArgs = {}) => guestAction(ctx, action, args, sendOwner);
+  } }, (ctx, action, args, send) => guestAction({ ...ctx, turnStartedAt: now + 1 }, action, args, send), outbound);
+  const act = (ctx: GuestContext, action: GuestAction, args: GuestArgs = {}) => guestAction({ turnStartedAt: now + 1, ...ctx }, action, args, sendOwner);
   return { home, read, save, ledger, participants, events, commands, fail, lost, hooks, tools, act, ownerLines, deliveries, routes, delivery, request: () => read().requests[0]! };
 }
 
@@ -1199,4 +1199,62 @@ test("an ambiguous weekday asks for a date without reading calendars or asking t
   assert.deepEqual(f.read(), before);
   assert.equal(f.commands.length, 0);
   assert.equal(f.ownerLines.length, 0);
+});
+
+for (const turnStartedAt of [undefined, now - 1, now]) test(`a booked guest cannot pick a replacement created in this turn (${turnStartedAt})`, async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  await f.act(context, "other_times", { start: offers[1]!.start });
+  const before = f.read();
+  const commands = f.commands.length;
+  const result = await guestAction({ ...context, turnStartedAt } as GuestContext, "pick", {
+    start: offers[1]!.start, turnStartedAt: now + 1,
+  } as GuestArgs);
+  assert.ok("error" in result, JSON.stringify(result));
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.commands.length, commands, "reject before any calendar operation");
+  assert.equal(f.ownerLines.length, 0);
+});
+
+test("runtime hooks keep a replacement unpickable through a prompt rebuild, then allow the next guest turn", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  const hooks: Record<string, (event: any, ctx: any) => any> = {};
+  plugin.register({ registerTool() {}, on(name: string, fn: typeof hooks[string]) { hooks[name] = fn; }, logger: { info() {} } });
+  const ctx = { ...context, sessionKey: "agent:main:plow:group:chat-one" };
+  const turn = { channel: "plow", accountId: "chat", sessionKey: ctx.sessionKey, runId: "replacement-turn" };
+  const tools = new Map<string, { execute: (id: string, args: object) => Promise<any> }>();
+  const register = () => registerGuestTools({ registerTool(factory: (ctx: object) => any) {
+    const tool = factory(ctx); tools.set(tool.name, tool);
+  } }, (bound, action, args) => guestAction(bound, action, args, async text => { f.ownerLines.push(text); }));
+  register();
+  t.mock.method(Date, "now", () => now - 1);
+  await hooks.before_prompt_build!({}, turn);
+  t.mock.method(Date, "now", () => now);
+  const offered = await tools.get("meetly_other_times")!.execute("offer", { start: offers[1]!.start });
+  assert.equal(offered.isError, false);
+  assert.equal(Date.parse(offered.details.offered[0].start), Date.parse(offers[1]!.start));
+  const before = f.read();
+  const commands = f.commands.length;
+  const pick = async (id: string) => {
+    hooks.before_tool_call!({ toolName: "meetly_pick_time" }, { ...turn, toolCallId: id });
+    return tools.get("meetly_pick_time")!.execute(id, { start: offers[1]!.start, turnStartedAt: now + 1000 });
+  };
+  assert.equal((await pick("same-run")).isError, true);
+  t.mock.method(Date, "now", () => now + 1);
+  await hooks.before_prompt_build!({}, turn);
+  register();
+  assert.equal((await pick("rebuilt-prompt")).isError, true);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.commands.length, commands);
+  assert.equal(f.ownerLines.length, 0);
+  hooks.agent_end!({}, turn);
+  turn.runId = "guest-choice-turn";
+  await hooks.before_prompt_build!({}, turn);
+  const moved = await pick("later-choice");
+  assert.equal(moved.isError, false, JSON.stringify(moved));
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse(offers[1]!.start));
+  assert.equal(f.ownerLines.length, 1);
+  hooks.agent_end!({}, turn);
+  t.diagnostic(`Same-run pick blocked; booking stayed at ${before.requests[0]!.booked!.start}. Next-turn choice moved it to ${f.request().booked!.start}.`);
 });

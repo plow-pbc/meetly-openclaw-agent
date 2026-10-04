@@ -10,7 +10,7 @@ import { readJson, updateJson } from "./store.ts";
 import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
 
-export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
+export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
 export type GuestArgs = Constraints & { excludedDays?: string[]; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string };
 type SendOwner = (text: string) => Promise<void>;
@@ -91,9 +91,14 @@ async function notifyOwner(request: Request, config: Config, change: "moved" | "
   }
 }
 
-async function pick(request: Request, config: Config, start: string, sendOwner?: SendOwner) {
+async function pick(request: Request, config: Config, start: string, sendOwner?: SendOwner, turnStartedAt?: number) {
   const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(start));
   if (!offer) return { error: "Choose one of the currently offered start times." };
+  // Only a replacement held before this run can represent the guest's choice.
+  if (request.status === "booked" && !(Number.isFinite(turnStartedAt)
+    && Date.parse(request.reoffer!.offeredAt) < turnStartedAt!)) {
+    return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
+  }
   const checked = await check(request, config, offer.start);
   if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available. Ask for other times." };
   if (request.status === "booked") {
@@ -228,7 +233,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
-    return await pick(request, config, args.start, sendOwner);
+    return await pick(request, config, args.start, sendOwner, ctx.turnStartedAt);
   } catch (error) {
     if (error instanceof WeekdayDateRequired) return { error: error.message };
     // Backend output can contain private event details, contact data, and accounts.
