@@ -150,7 +150,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
     if (action === "decline") {
       request = (await write(request, { action: "drop" })).request;
-      return view(request, config);
+      return { ...view(request, config), message: "I've cancelled this scheduling request." };
     }
     if (action === "other_times") return await otherTimes(request, config, args);
     if (!args.start) return { error: "Provide a start time." };

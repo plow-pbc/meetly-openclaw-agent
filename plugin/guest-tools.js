@@ -13,7 +13,7 @@ const definitions = [
     format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] }, location: text("Meeting place or guest-supplied external link, when applicable."),
   }, ["format"])],
   ["meetly_ask_owner", "ask_owner", "Check a time outside the owner's hours and record a pending approval. Ask the owner in this thread using the returned time label, then wait. This never books; only the owner's own turn can approve.", object({ start }, ["start"])],
-  ["meetly_decline", "decline", "Only use when the guest clearly declines the meeting. A refusal from meetly_other_times is not a guest decline; keep the request open. Decline this open request, release its holds and clear pending approval. Confirm once in this thread so the owner hears too. A booked meeting can only be cancelled by the owner.", object()],
+  ["meetly_decline", "decline", "Only use when the guest clearly declines the meeting. A refusal from meetly_other_times is not a guest decline; keep the request open. Decline this open request, release its holds and clear pending approval. Confirm once in this thread so the owner hears too. This tool sends no DM; never claim you notified or let the owner know privately unless a separate DM was confirmed sent. A booked meeting can only be cancelled by the owner.", object()],
 ];
 
 const run = async (context, action, args) => {
