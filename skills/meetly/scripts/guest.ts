@@ -186,9 +186,10 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
       request = (await write(request, { action: "format", ...change })).request;
       return view(request, config);
     }
-    if (action === "ask_owner" && (request.status === "offered" || (request.status === "booked" && typeof args.question === "string" && args.question.trim()))) {
-      const result = await askOwner(request, config, args, sendOwner);
-      return typeof args.question === "string" && args.question.trim() ? { ...result, silent: true } : result;
+    if (action === "ask_owner" && ["offered", "booked"].includes(request.status)) {
+      if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
+      const result = await askOwner(request, config, { question: args.question }, sendOwner);
+      return { ...result, silent: true };
     }
     if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
     if (action === "decline") {
