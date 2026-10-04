@@ -38,6 +38,13 @@ test("without a name from Plow the gate does not invent one", () => {
   assert.match(asking, /and end the turn: What name should I use\?/);
 });
 
+test("setup records a bare name answer before considering another question", () => {
+  const context = gateContext(status({ status: "SETUP_NEEDED", next: "ownerName", question: "What name should I use?", draft: {}, defaults: DEFAULTS }))!;
+  assert.ok(context.indexOf("record-setup.ts") < context.indexOf("end the turn"), "saving the current answer takes precedence over asking again");
+  assert.match(context, /bare name.*complete answer/i);
+  assert.match(context, /Only if.*does not answer/);
+});
+
 test("once the name and zone are known the gate does not ask: it reads the calendars, finishes and does the owner's request", () => {
   const context = gateContext(status({ status: "SETUP_NEEDED", next: "calendars", question: "Which of your calendars should count as busy?", draft: { ownerName: "Ana" }, defaults: { ...DEFAULTS, durationMin: 45 }, mac: { connected: true } }))!;
   assert.doesNotMatch(context, /and end the turn: Which of your calendars/);

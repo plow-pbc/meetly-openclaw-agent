@@ -285,6 +285,21 @@ for (const args of [
   assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
+test("booking in person carries the no-more-details instruction after the opener question", async t => {
+  const f = fixture(t);
+  const first = await f.tools.get("meetly_view_request")!.execute("view", {});
+  assert.equal(JSON.parse(first.content[0]!.text).askDetails, true);
+  assert.doesNotMatch(first.content.slice(1).map(c => c.text).join("\n"), /do not ask how or where/i);
+  await f.tools.get("meetly_set_format")!.execute("format", { format: "in_person" });
+  const booked = await f.tools.get("meetly_pick_time")!.execute("pick", { start: offers[0]!.start });
+  const details = JSON.parse(booked.content[0]!.text);
+  assert.equal(details.askDetails, false);
+  assert.equal(details.status, "booked");
+  assert.equal(details.format, "in_person");
+  assert.ok(!details.location);
+  assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /do not ask how or where to meet.*missing/i);
+});
+
 test("blank optional preferences through the guest tool still produce fresh held times", async t => {
   const f = fixture(t);
   const result = await f.tools.get("meetly_other_times")!.execute("call", {

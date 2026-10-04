@@ -67,9 +67,9 @@ export function gateContext(stdout) {
     ...latch,
     ...(asking
       ? [
+        `- First check whether the owner's latest message answers ${status.next}. A bare name is a complete answer to ownerName; it does not need a "call me" prefix. If answered, save it with record-setup.ts (see meetly-setup) before replying, then continue from the returned next field. Do not ask the answered question again.`,
         "- If the owner asked for something else, such as reaching someone, say you will do it as soon as this is answered.",
-        `- Then ask this question, translated into the owner's language, and end the turn: ${status.question}`,
-        `If the owner's message answers the ${status.next} question, record it first with record-setup.ts (see meetly-setup) and carry on from the status it returns.`,
+        `- Only if the latest message does not answer ${status.next}, ask this question, translated into the owner's language, and end the turn: ${status.question}`,
       ]
       : [
         ...(status.next === "calendars"

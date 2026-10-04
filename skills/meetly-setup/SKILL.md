@@ -22,11 +22,13 @@ never hold the owner's request waiting for them.
    phone-number fallback; when
    `draft.ownerName` is set, that line also says the name you will use for
    them with other people and that they can change it.
-2. When `next` is `ownerName` or `timezone`, ask that one question, translated
-   into the owner's language, then end the turn. A question asked earlier in
-   the chat is not the current one: always use what the gate or
-   `setup-status.ts` returns now. If the owner asked for something else, such
-   as reaching someone, say you will do it as soon as it is answered.
+2. When `next` is `ownerName` or `timezone`, first check the owner's latest
+   message for its answer. A bare name is a complete answer to `ownerName`;
+   no "call me" prefix is needed. Record an answer using step 4 before replying,
+   then continue from the returned next field. Only when the message does not
+   answer the current question, ask it translated into the owner's language and end the turn.
+   Use the gate's current `next`, not an earlier unanswered question. If the
+   owner asked for something else, say you will do it once setup is complete.
 3. When `next` is `calendars` and the Mac is connected, do not ask. Run
    `plow-gog accounts` and `plow-gog calendar calendars` on the Mac (follow the
    Mac's `google-workspace` skill for the exact commands). Record every
