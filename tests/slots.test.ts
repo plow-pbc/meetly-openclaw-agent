@@ -312,3 +312,31 @@ test("the CLI accepts coffee and preserves dinner's window and saved duration on
   assert.equal(coffee.json.slots[0].start, "2026-09-28T17:00:00-03:00");
   assert.equal(coffee.json.slots[0].end, "2026-09-28T17:30:00-03:00");
 });
+
+
+test("owner replaces saved coffee and Tuesday conditions before searching", () => {
+  const home = tmpHome(), env = { MEETLY_HOME: home };
+  writeJson(join(home, "config.json"), CONFIG);
+  const busyFile = join(home, "busy.json");
+  writeJson(busyFile, { busy: [], degraded: [] });
+  const bounds = { from: "2026-09-28", to: "2026-10-02" };
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
+    origin: "owner", handle: "+15551234567", topic: "coffee", meal: "coffee", durationMin: 30,
+    constraints: { ...bounds, days: ["tue"] },
+    offered: [{ start: "2026-09-29T09:00:00-03:00", end: "2026-09-29T09:30:00-03:00", account: CONFIG.defaultAccount }],
+  }, NOW, "coffee"));
+  const args = ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--request", "coffee"];
+  const unchanged = cli("slots.ts", args, env);
+  assert.equal(unchanged.status, 0, unchanged.stderr);
+  assert.equal(unchanged.json.slots[0].start, "2026-09-29T09:00:00-03:00");
+  const blocked = cli("slots.ts", [...args, "--days", "wed"], env);
+  assert.equal(blocked.status, 0, blocked.stderr);
+  assert.deepEqual(blocked.json.slots, []);
+  const updated = cli("ledger.ts", ["update", "--id", "coffee", "--json", JSON.stringify({ constraints: { ...bounds, days: ["wed"] } })], env);
+  assert.equal(updated.status, 0, updated.stderr);
+  const replacement = cli("slots.ts", [...args, "--meal", "lunch", "--duration", "60", "--days", "wed"], env);
+  assert.equal(replacement.status, 0, replacement.stderr);
+  assert.equal(replacement.json.slots[0].start, "2026-09-30T11:30:00-03:00");
+  assert.equal(replacement.json.slots[0].end, "2026-09-30T12:30:00-03:00");
+  assert.ok(replacement.json.slots.every((s: { start: string; end: string }) => s.start.startsWith("2026-09-30") && s.end.slice(11, 16) <= "13:30"));
+});

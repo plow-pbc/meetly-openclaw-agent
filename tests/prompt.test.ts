@@ -247,6 +247,10 @@ test("the owner's conditions hold for every offer of a request; the person's pro
   assert.ok(group.includes("with the request's `constraints` (the owner's) and, on its first offer, its `proposed` times"));
   assert.ok(group.includes("run again without them, keeping `constraints`, and say those times don't work"));
   assert.ok(group.includes("`constraints` (the owner's conditions)"));
+  const update = group.indexOf('`ledger.ts update --id <id> --json \'{"constraints":<replacement conditions>}\'`');
+  assert.ok(group.includes("When the owner replaces saved hard conditions"));
+  assert.ok(update >= 0 && update < group.indexOf("Run `slots.ts --in"));
+  assert.ok(group.includes("keeping any hard conditions they did not change"));
   assert.ok(!group.includes("for `origin: owner`"));
   assert.ok(pollSkill().includes("`proposed` for any times they proposed"));
 });

@@ -263,7 +263,7 @@ if (isMain(import.meta.url)) {
       if (!request || request.status !== "offered") throw new Error("--request needs an offered request");
       const narrowed = intersectConstraints(request.constraints, q);
       Object.assign(q, narrowed);
-      q.meal = request.meal;
+      q.meal ??= request.meal;
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
       q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);

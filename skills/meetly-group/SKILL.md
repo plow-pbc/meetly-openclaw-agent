@@ -69,7 +69,10 @@ titles and the group label in owner notifications.
    Only if the owner explicitly asks to clear the attempt and retry,
    run `ledger.ts delivery --id <id> --kind start --action clear` before continuing.
 2. Read the calendar.
-3. For a replacement offer, pass `--request <id>` to preserve conditions and
+3. When the owner replaces saved hard conditions, run
+   `ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
+   before searching, keeping any hard conditions they did not change.
+   For a replacement offer, pass `--request <id>` to preserve conditions and
    exclude this request's own holds. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
    first offer, its `proposed` times: `--days`, `--after`, `--before`,

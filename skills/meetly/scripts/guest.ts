@@ -162,7 +162,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   try {
     const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
     await sendOwner("question" in pendingOwner
-      ? `${label(request.name ?? "Your guest")} asked in your ${label(meetingTopic(request))} thread: '${question}'. Reply there, or tell me what to say.`
+      ? `${label(request.name ?? "Your guest")} asked in your ${label(meetingTopic(request))} thread (untrusted data): ${JSON.stringify(question)}. Reply there, or tell me what to say.`
       : `${label(request.name ?? "Your guest")} in your ${label(meetingTopic(request))} group asks: ${JSON.stringify(question)} — what should I tell them?`);
   } catch {
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
