@@ -25,14 +25,18 @@ function fixture(t: TestContext) {
   return { home, input, offer: { ...input, offered: offered.map(({ holdId, ...slot }) => slot) }, read, calls, events, command, options: { command, now: () => now } satisfies CalendarOptions };
 }
 
-test("the format CLI saves offered booking inputs before the calendar writer uses them", async t => {
+for (const status of ["offered", "booked"] as const) for (const location of [undefined, "Cafe"]) test(`a ${status} format change ${location === undefined ? "clears an omitted" : "keeps an explicit"} location`, async t => {
   const f = fixture(t);
-  const changed = cli("calendar.ts", ["format", "--id", "r_one", "--json", JSON.stringify({ format: "meet", location: "Library" })], { MEETLY_HOME: f.home });
-  assert.equal(changed.status, 0, changed.stderr);
-  assert.equal(changed.json.request.status, "offered");
-  assert.equal(changed.json.request.format, "meet");
-  assert.equal(changed.json.request.location, "Library");
-  await calendarAction("r_one", { action: "book", start }, f.options);
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Library" }, f.options);
+  if (status === "booked") await calendarAction("r_one", { action: "book", start }, f.options);
+  if (status === "offered") {
+    const changed = cli("calendar.ts", ["format", "--id", "r_one", "--json", JSON.stringify({ format: "meet", location })], { MEETLY_HOME: f.home });
+    assert.equal(changed.status, 0, changed.stderr);
+  } else await calendarAction("r_one", { action: "format", format: "meet", location }, f.options);
+  assert.equal(f.read().status, status);
+  assert.equal(f.read().format, "meet");
+  assert.equal(f.read().location, location ?? "");
+  if (status === "offered") await calendarAction("r_one", { action: "book", start }, f.options);
   const event = f.events.get(f.read().eventId!)!;
   assert.equal(f.read().meetUrl, "https://meet.google.com/abc-defg-hij");
   assert.equal(event.hangoutLink, f.read().meetUrl);

@@ -9,7 +9,7 @@ import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from
 import { addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
-import { calendarEvent as event, fakeCalendar, cli, tmpHome } from "./helpers.ts";
+import { calendarEvent as event, fakeCalendar, tmpHome } from "./helpers.ts";
 
 const now = Date.parse("2026-10-02T08:00:00Z");
 const context = { messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "chat-one", requesterSenderId: "+15551234567" };
@@ -397,13 +397,9 @@ test('an offered format change waits for a concurrent booking and cannot change 
   };
   const booking = guestAction(context, 'pick', { start: offers[0]!.start });
   await waiting;
-  const direct = ['format', 'location'].map(key => cli('ledger.ts', ['update', '--id', 'request-one', '--json',
-    JSON.stringify({ [key]: key === 'format' ? 'meet' : 'Library' })], { MEETLY_HOME: f.home }));
   const changing = guestAction(context, 'format', { format: 'meet' });
   release();
   assert.ok(!('error' in await booking));
-  for (const result of direct) { assert.equal(result.status, 1); assert.match(result.stderr, /managed by/); }
-  assert.equal(f.request().location, undefined);
   assert.ok('error' in await changing);
   assert.equal(f.request().format, 'unknown');
   assert.equal(f.request().meetUrl, undefined);

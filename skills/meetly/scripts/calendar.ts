@@ -139,7 +139,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
           holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...refs]) }); await cleanup(); return { request: requestById(id) };
       }
       if (input.action === "format" && request.status === "offered") {
-        patch({ format: input.format, location: input.location });
+        patch({ format: input.format, location: input.location ?? "" });
         return { request: requestById(id) };
       }
       if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked") throw new Error(`request is ${request.status}`);
@@ -170,7 +170,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
           }
         }
         const format = input.action === "format" ? input.format : request.format;
-        const location = input.action === "format" ? input.location ?? request.location : request.location;
+        const location = input.action === "format" ? input.location ?? "" : request.location;
         add(verb, slot, ["--summary", `${request.topic} with ${request.name ?? request.handle}`, "--send-updates", "all",
           ...(format === "meet" ? ["--with-meet"] : []),
           ...(format === "phone" ? ["--location=Phone call"] : location !== undefined ? [`--location=${location}`] : []),
@@ -276,7 +276,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const offered = completed.steps.filter(s => !s.skipped).map(s => { const e = parseEvent(s.output!); return { start: e.start, end: e.end, holdId: e.id, account: s.account }; });
         next = saveRequest(l, { ...completed.input.request, offered }, now(), id);
       } else {
-        if (completed.input.action === "format") l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location }, now());
+        if (completed.input.action === "format") l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location ?? "" }, now());
         const step = completed.steps[0]!;
         next = recordBooking(l, id, parseEvent(step.output!), step.account, now()).ledger;
       }
