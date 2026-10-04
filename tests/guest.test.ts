@@ -134,6 +134,8 @@ for (const [action, args] of actions) test(`${action} refuses an unlinked offer 
 test("other-times files a free outside-window approval without replacing holds", async t => {
   const args = { start: "2026-10-05T20:00" };
   const f = fixture(t);
+  f.ledger.requests[0]!.constraints!.before = "21:00";
+  f.save(f.ledger);
   const tool = f.tools.get("meetly_other_times")!;
   const result = JSON.parse((await tool.execute("ask", args)).content[0]!.text);
   assert.equal(result.ownerAskSent, true);
@@ -292,6 +294,8 @@ test("decline drops the open request, clears approval, deletes holds and queues 
 
 test("an outside-hours refusal can proceed to owner approval without dropping or booking the request", async t => {
   const f = fixture(t);
+  f.ledger.requests[0]!.constraints!.before = "21:00";
+  f.save(f.ledger);
   for (const date of ["2026-10-05", "2026-10-06"]) f.events.set(date, event(date, `${date}T09:00:00Z`, `${date}T18:00:00Z`));
   const refused = await guestAction(context, "other_times", { after: "20:00" });
   assert.ok("error" in refused);
@@ -546,6 +550,8 @@ test("ask-owner sends a capped human question to the fixed owner DM and mirrors 
 
 test("questions and time approvals share one slot, including concurrent asks", async t => {
   const f = fixture(t);
+  f.ledger.requests[0]!.constraints!.before = "21:00";
+  f.save(f.ledger);
   const ask = f.tools.get("meetly_ask_owner")!;
   const times = f.tools.get("meetly_other_times")!;
   const results = await Promise.all([times.execute("one", { start: "2026-10-05T20:00" }), ask.execute("two", { question: "Which project?" })]);
@@ -615,13 +621,15 @@ for (const constraints of [
   { from: "2026-10-12" },
   { to: "2026-10-07" },
   { days: [] },
-]) test(`out-of-hours approval cannot bypass owner day/date conditions: ${JSON.stringify(constraints)}`, async t => {
+  { after: "20:15" },
+  { before: "20:15" },
+]) test(`out-of-hours approval cannot bypass owner conditions: ${JSON.stringify(constraints)}`, async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.constraints = constraints;
   f.save(f.ledger);
   const before = f.read();
   const result = await f.act(context, "other_times", { start: "2026-10-08T20:00:00Z" });
-  assert.match(JSON.stringify(result), /day.*outside.*owner.*conditions/i);
+  assert.match(JSON.stringify(result), /time.*outside.*owner.*conditions/i);
   assert.deepEqual(f.read(), before);
   assert.equal(f.ownerLines.length, 0);
   assert.equal(f.deliveries.length, 0);

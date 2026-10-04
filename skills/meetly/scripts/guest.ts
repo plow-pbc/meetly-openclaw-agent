@@ -155,9 +155,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     pendingOwner = { question, askedAt };
   } else {
     const checked = await check(request, config, args.start!);
-    const { days, from, to } = request.constraints ?? {};
-    if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, { days, from, to })) {
-      return { error: "That day is outside the owner's conditions. Choose another day from the current offer." };
+    if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) {
+      return { error: "That time is outside the owner's conditions. Choose another time from the current offer." };
     }
     if (!checked.free) return { error: "That time is not available. Offer the current times or ask for other times." };
     if (!checked.outsideHours) return { error: "That time is within working hours. Ask for other times to get an offer." };
