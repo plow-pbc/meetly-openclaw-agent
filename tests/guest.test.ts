@@ -25,7 +25,7 @@ const actions: [GuestAction, GuestArgs][] = [
   ["format", { format: "meet" }], ["ask_owner", { start: "2026-10-05T20:00" }], ["decline", {}],
 ];
 
-function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+15551234567||\nE|1|guest@example.net||") {
+function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+15551234567||\nE|1|guest@example.net||", timezone = "UTC") {
   const home = tmpHome();
   const previousHome = process.env.MEETLY_HOME;
   const previousToken = process.env.PLOW_MCP_BRIDGE_TOKEN;
@@ -40,7 +40,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   process.env.MEETLY_HOME = home;
   process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture";
   t.mock.method(Date, "now", () => now);
-  const config = { ...DEFAULTS, ownerName: "Alex", timezone: "UTC", defaultAccount: "owner@example.com",
+  const config = { ...DEFAULTS, ownerName: "Alex", timezone, defaultAccount: "owner@example.com",
     calendars: [{ account: "owner@example.com", id: "owner@example.com" }], setupDoneAt: new Date(now).toISOString() };
   writeJson(join(home, "config.json"), config);
   const ledger = addRequest({ requests: [] }, {
@@ -1034,4 +1034,49 @@ test("a pending time approval suppresses detail questions without consuming the 
   const result = await guestAction(context, "view");
   assert.equal("askDetails" in result && result.askDetails, false);
   assert.equal(f.request().detailsAskedAt, undefined);
+});
+
+for (const [requested, expectedDate] of [[{ weekday: "tue", time: "16:00" }, "13"], ["2026-10-06T16:00:00-07:00", "06"]] as const)
+for (const toolName of ["meetly_other_times", "meetly_ask_owner"]) test(`${toolName} resolves Tuesday at 4pm without rewriting explicit dates: ${JSON.stringify(requested)}`, async t => {
+  const f = fixture(t, undefined, "America/Los_Angeles");
+  const request = f.ledger.requests[0]!;
+  request.meal = "lunch"; request.durationMin = 60;
+  request.constraints = { from: "2026-10-12", to: "2026-10-18" };
+  request.offered = [12, 15].map(day => ({ start: `2026-10-${day}T11:30:00-07:00`, end: `2026-10-${day}T12:30:00-07:00`, holdId: `offer-${day}`, account: "owner@example.com" }));
+  f.save(f.ledger); f.events.clear();
+  for (const offer of request.offered) f.events.set(offer.holdId!, event(offer.holdId!, offer.start, offer.end));
+  const result = await f.tools.get(toolName)!.execute("weekday", { start: requested });
+  const details = JSON.parse(result.content[0]!.text);
+  assert.equal(details.ownerAskSent, true, JSON.stringify(details));
+  assert.equal(details.askDetails, false);
+  assert.deepEqual(f.request().pendingOwner, { start: `2026-10-${expectedDate}T16:00:00-07:00`, end: `2026-10-${expectedDate}T17:00:00-07:00`, askedAt: new Date(now).toISOString() });
+  assert.ok(f.ownerLines[0]!.includes(`Tue, 10/${Number(expectedDate)}, 04:00 PM`));
+  assert.deepEqual(f.request().offered, request.offered);
+  t.diagnostic(`Owner approval: ${f.ownerLines[0]}`);
+});
+
+test("an undated weekday preference searches the offered week instead of the current week", async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.constraints = { from: "2026-10-01", to: "2026-10-16" };
+  request.offered = [12, 15].map(day => ({ start: `2026-10-${day}T10:00:00Z`, end: `2026-10-${day}T10:30:00Z`, holdId: `offer-${day}`, account: "owner@example.com" }));
+  f.save(f.ledger); f.events.clear();
+  for (const offer of request.offered) f.events.set(offer.holdId!, event(offer.holdId!, offer.start, offer.end));
+  const result = await f.act(context, "other_times", { days: ["tue"], after: "16:00" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.ok(f.request().offered.every(offer => offer.start.startsWith("2026-10-13")), JSON.stringify(f.request().offered));
+});
+
+test("an ambiguous weekday asks for a date without reading calendars or asking the owner", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = {};
+  f.ledger.requests[0]!.offered[1]!.start = "2026-10-12T10:00:00Z";
+  f.ledger.requests[0]!.offered[1]!.end = "2026-10-12T10:30:00Z";
+  f.save(f.ledger);
+  const before = f.read();
+  const result = await f.tools.get("meetly_other_times")!.execute("weekday", { start: { weekday: "tue", time: "16:00" } });
+  assert.match(JSON.parse(result.content[0]!.text).error, /Provide a calendar date/);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.commands.length, 0);
+  assert.equal(f.ownerLines.length, 0);
 });

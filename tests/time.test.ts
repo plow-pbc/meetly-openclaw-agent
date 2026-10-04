@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addDays, DAYS, localIso, offsetMs, wallParts, zonedToUtc } from "../skills/meetly/scripts/time.ts";
+import { addDays, DAYS, resolveWeekday, WeekdayDateRequired, localIso, offsetMs, wallParts, zonedToUtc } from "../skills/meetly/scripts/time.ts";
 
 test("DAYS is in week order starting Monday", () => {
   assert.deepEqual(DAYS, ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
@@ -60,4 +60,27 @@ test("next_week requires an unambiguous source timestamp", async () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /anchor timestamp with a timezone offset/);
   }
+});
+
+test("bare weekdays resolve in the offer's local calendar weeks across timezone, DST and year boundaries", () => {
+  for (const [offered, timezone, weekday, expected] of [
+    [["2026-10-15T11:30:00-07:00", "2026-10-12T11:30:00-07:00"], "America/Los_Angeles", "tue", "2026-10-13T16:00:00-07:00"],
+    [["2026-10-15T11:30:00-07:00"], "America/Los_Angeles", "tue", "2026-10-13T16:00:00-07:00"],
+    [["2026-10-12T00:30:00Z"], "America/Los_Angeles", "tue", "2026-10-06T16:00:00-07:00"],
+    [["2026-10-30T11:30:00-07:00"], "America/Los_Angeles", "sun", "2026-11-01T16:00:00-08:00"],
+    [["2026-12-31T11:30:00Z", "2027-01-01T11:30:00Z"], "UTC", "fri", "2027-01-01T16:00:00+00:00"],
+  ] as const) {
+    assert.equal(resolveWeekday({ weekday, time: "16:00" }, offered.map(start => ({ start })), timezone), expected);
+  }
+});
+
+test("weekday resolution requires one date in the bounded offer window and a real clock time", () => {
+  const offered = [{ start: "2026-10-12T11:30:00Z" }, { start: "2026-10-19T11:30:00Z" }];
+  const requested = { weekday: "tue", time: "16:00" } as const;
+  assert.throws(() => resolveWeekday(requested, [], "UTC"), WeekdayDateRequired);
+  assert.throws(() => resolveWeekday(requested, offered, "UTC"), WeekdayDateRequired);
+  assert.throws(() => resolveWeekday(requested, offered, "UTC", { from: "2026-10-14", to: "2026-10-18" }), WeekdayDateRequired);
+  assert.equal(resolveWeekday(requested, offered, "UTC", { from: "2026-10-14", to: "2026-10-25" }), "2026-10-20T16:00:00+00:00");
+  assert.throws(() => resolveWeekday({ weekday: "tue", time: "25:00" }, offered, "UTC"), /Invalid weekday or clock time/);
+  assert.throws(() => resolveWeekday({ weekday: "sun", time: "02:30" }, [{ start: "2026-03-06T11:30:00-08:00" }], "America/Los_Angeles"), /does not exist/);
 });
