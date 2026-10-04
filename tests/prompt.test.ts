@@ -304,3 +304,15 @@ test("trust changes remain an explicit owner action and failed group opening is 
   assert.ok(group.includes("If `plow_start_thread` definitely fails, tell the owner what it said and stop"));
   assert.doesNotMatch(group, /guest turns are reply-only|full guest tools are needed|on a guest's turn|## Outside the owner's hours/);
 });
+
+
+test("owner group identity comes from participants even when the owner names the line", () => {
+  const group = groupSkill();
+  assert.ok(group.includes('`participants`'));
+  assert.ok(group.includes('`type: "member"` and `role` other than `"owner"`'));
+  assert.ok(group.includes("Never infer the guest's name from the owner's message"));
+  assert.ok(group.includes('"Tia I have you on a thread with Alder, my scheduling agent!"'));
+  assert.ok(group.includes('"Hi Tia"'));
+  assert.ok(group.includes('"Hi!"'));
+  assert.ok(group.includes('never "Hi Alder"'));
+});

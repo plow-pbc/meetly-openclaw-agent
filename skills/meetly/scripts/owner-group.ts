@@ -2,10 +2,11 @@ import { offerRequest, type CalendarOptions } from "./calendar.ts";
 import { fetchBusy } from "./busy.ts";
 import { loadConfig } from "./config.ts";
 import { view } from "./request-view.ts";
-import type { NewRequest } from "./ledger.ts";
+import { normalizeHandle, sameHandle, type NewRequest } from "./ledger.ts";
+import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<NewRequest, "handle" | "name" | "topic" | "constraints" | "proposed" | "format" | "location" | "locale"> & { allowOverlapTitles?: string[]; durationMin?: number; offered: { start: string; end: string }[] };
+type GroupRequest = Pick<NewRequest, "topic" | "constraints" | "proposed" | "format" | "location" | "locale"> & { allowOverlapTitles?: string[]; durationMin?: number; offered: { start: string; end: string }[] };
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, options: CalendarOptions = {}): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -15,7 +16,24 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
   try {
     const config = loadConfig();
     if (config.paused) return { error: "Scheduling is paused." };
-    const { handle, name, topic, durationMin, constraints, proposed, format, location, locale, offered } = args;
+    const api = plowApi();
+    const response = await api.fetch(`${api.base}/v1/chats/${encodeURIComponent(chat)}`, {
+      headers: api.headers, redirect: "error", signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error("Chat participants unavailable");
+    const current = await response.json() as Chat;
+    const participants = current.participants ?? [];
+    const guests = participants.filter(p => p.type === "member" && p.role !== "owner");
+    if (current.uid !== chat || current.status !== "active" || participants.length !== 3 || guests.length !== 1 ||
+      !participants.some(p => p.type === "member" && p.role === "owner") ||
+      !participants.some(p => p.type === "agent" && p.relationship === "self")) {
+      throw new Error("Expected the owner, one guest and this agent in the current chat");
+    }
+    const guest = guests[0]!;
+    const handle = normalizeHandle(guest.provider_key ?? "");
+    const displayName = guest.display_name?.trim();
+    const name = displayName && displayName !== "unnamed member" && !sameHandle(displayName, handle) ? displayName : undefined;
+    const { topic, durationMin, constraints, proposed, format, location, locale, offered } = args;
     let allowOverlap: string[] | undefined;
     if (args.allowOverlapTitles?.length) {
       const starts = offered.map(slot => Date.parse(slot.start)), ends = offered.map(slot => Date.parse(slot.end));

@@ -61,12 +61,12 @@ free there.
      accounts. Tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
 4. For a new or replacement owner-group request, call `meetly_offer_owner_group`
-   with the fields below except `origin`, `chatUid`, `account` and `allowOverlap`;
+   with the fields below except `handle`, `name`, `origin`, `chatUid`, `account` and `allowOverlap`;
    pass `allowOverlapTitles` with only the event names the owner explicitly
    authorized. The tool resolves matching event ids internally and merges them
    with saved authorizations before creating replacement holds.
-   Omit `durationMin` unless explicitly specified. It resolves the configured
-   duration and calendar account internally, records the exact runtime chat uid
+   Omit `durationMin` unless explicitly specified. It resolves the guest's handle and name from the current chat's participants,
+   and the configured duration and calendar account internally, records the exact runtime chat uid
    and returns only group-safe offer fields. Otherwise run `calendar.ts offer --json '<request>'` with `origin`, `handle` (the
    resolved phone), `name`, `sourceRowid`, `chatUid` if already known, `topic`,
    `location`, `durationMin`, `constraints` (the owner's conditions), `proposed`,
@@ -238,15 +238,25 @@ booked or closed ones. For a pending question or time approval, follow
 
 If no request matches and the group is exactly the owner, one other member
 and Meetly, the owner's scheduling ask is a request for that member. Use
-the member's handle and known name from the conversation,
-the owner's words for topic and conditions, and thread context for format and
-place. Omit duration unless the owner specifies it; the tool uses the configured default. Preferred dates/times go
+the turn's `participants`: select the one participant with `type: "member"`
+and `role` other than `"owner"`. Use that participant's `handle` and `name`
+for the request and any greeting. Exclude every `type: "agent"` participant,
+including Meetly's line regardless of its display name. Never infer the guest's
+name from the owner's message. If the participant name is absent, `unnamed member`,
+or just a handle, omit `name` and greet without a name. If there is not exactly
+one guest with a handle, do not create a request or guess an identity.
+Use the owner's words for topic and conditions, and thread context for format
+and place. Omit duration unless the owner specifies it; the tool uses the configured default. Preferred dates/times go
 in `proposed`; explicit non-relaxable conditions go in `constraints`. Follow
 "Offer times" from step 2, using `meetly_offer_owner_group` to record and hold
 this request. Reply here, never open a new thread or DM the owner. An existing
 request for this person elsewhere must not be moved here.
 
-Without an owner scheduling ask, a friendly introduction is enough. Never
+Without an owner scheduling ask, a friendly introduction is enough, using the
+same participant identity rule. For "Tia I have you on a thread with Alder, my scheduling agent!",
+with guest participant Tia and agent line Alder, greet "Hi Tia" (or "Hi!" if
+the guest's participant name is unknown), never "Hi Alder". A later scheduling
+ask in that group still uses Tia's participant handle and name. Never
 ask the guest to identify a request or show internal confusion. Larger groups
 are out of scope. A booked or closed request is not a no-match.
 

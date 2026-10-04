@@ -3,6 +3,7 @@ import { test, type TestContext } from "node:test";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { registerGuestTools } from "../plugin/guest-tools.js";
+import type { Participant } from "../skills/meetly/scripts/owner-chat.ts";
 import { offerOwnerGroup } from "../skills/meetly/scripts/owner-group.ts";
 import { registerOwnerGroupTool } from "../plugin/owner-tools.js";
 import plugin from "../plugin/index.js";
@@ -28,6 +29,14 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const home = tmpHome();
   const previousHome = process.env.MEETLY_HOME;
   const previousToken = process.env.PLOW_MCP_BRIDGE_TOKEN;
+  const previousBase = process.env.PLOW_API_BASE, previousAgentToken = process.env.PLOW_AGENT_TOKEN;
+  process.env.PLOW_API_BASE = "https://api.plow.test";
+  process.env.PLOW_AGENT_TOKEN = "fixture";
+  const participants: Participant[] = [
+    { type: "agent", relationship: "self", line: { display_name: "Alder" } },
+    { type: "member", role: "owner", display_name: "Alex", provider_key: "+15557654321" },
+    { type: "member", role: "member", display_name: "Guest", provider_key: context.requesterSenderId },
+  ];
   process.env.MEETLY_HOME = home;
   process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture";
   t.mock.method(Date, "now", () => now);
@@ -48,6 +57,11 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const lost = new Set<string>();
   const hooks: { before?: (argv: string[]) => Promise<void> } = {};
   t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    if (String(_url).startsWith("https://api.plow.test/v1/chats/")) {
+      assert.equal(init.redirect, "error");
+      assert.equal((init.headers as Record<string, string>).Authorization, "Bearer fixture");
+      return Response.json({ uid: decodeURIComponent(String(_url).split("/").at(-1)!), status: "active", participants });
+    }
     const call = JSON.parse(String(init.body));
     assert.equal(call.params.name, "plow_run_command");
     const argv: string[] = call.params.arguments.argv;
@@ -77,6 +91,8 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   t.after(() => {
     if (previousHome === undefined) delete process.env.MEETLY_HOME; else process.env.MEETLY_HOME = previousHome;
     if (previousToken === undefined) delete process.env.PLOW_MCP_BRIDGE_TOKEN; else process.env.PLOW_MCP_BRIDGE_TOKEN = previousToken;
+    if (previousBase === undefined) delete process.env.PLOW_API_BASE; else process.env.PLOW_API_BASE = previousBase;
+    if (previousAgentToken === undefined) delete process.env.PLOW_AGENT_TOKEN; else process.env.PLOW_AGENT_TOKEN = previousAgentToken;
     rmSync(home, { recursive: true, force: true });
   });
   const ownerLines: string[] = [];
@@ -106,7 +122,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     const tool = factory(context); tools.set(tool.name, tool);
   } }, guestAction, outbound);
   const act = (ctx: GuestContext, action: GuestAction, args: GuestArgs = {}) => guestAction(ctx, action, args, sendOwner);
-  return { home, read, save, ledger, events, commands, fail, lost, hooks, tools, act, ownerLines, deliveries, routes, delivery, request: () => read().requests[0]! };
+  return { home, read, save, ledger, participants, events, commands, fail, lost, hooks, tools, act, ownerLines, deliveries, routes, delivery, request: () => read().requests[0]! };
 }
 
 for (const [action, args] of actions) test(`${action} refuses missing or mismatched runtime sender/chat and ignores identity arguments`, async t => {
@@ -670,6 +686,8 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
     sessionKey: "agent:main:plow:group:cht_mixed", nativeChannelId: "cht_MiXeD" };
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory(ctx); } }, offerOwnerGroup);
   assert.equal(tool.parameters.properties.chatUid, undefined);
+  assert.equal(tool.parameters.properties.handle, undefined);
+  assert.equal(tool.parameters.properties.name, undefined);
   const args = { handle: context.requesterSenderId, topic: "Planning", name: "", format: "", location: "", locale: "", durationMin: "", offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
   const result = await tool.execute("offer", args);
   assert.equal(result.isError, false, JSON.stringify(result));
@@ -766,4 +784,63 @@ for (const [origin, format, location, expected] of [
   assert.equal((await guestAction(context, "view") as { askDetails: boolean }).askDetails, false);
   assert.ok(!("error" in await guestAction(context, "pick", { start: f.request().offered[0]!.start })));
   assert.equal((await guestAction(context, "view") as { askDetails: boolean }).askDetails, false);
+});
+
+
+test("owner group offers ignore a parsed line name and use the actual guest participant", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  f.events.clear();
+  f.participants[2]!.display_name = "Tia";
+  const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
+  const args = { handle: "+15557654321", name: "Alder", topic: "Lunch",
+    offered: offers.map(({ start, end }) => ({ start, end })) };
+  const result = await offerOwnerGroup(ctx, args);
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().handle, context.requesterSenderId);
+  assert.equal(f.request().name, "Tia");
+  const creates = f.commands.filter(argv => argv[2] === "create");
+  assert.equal(creates.length, offers.length);
+  assert.ok(creates.every(argv => argv[argv.indexOf("--summary") + 1] === "Hold: Lunch with Tia"));
+});
+
+for (const name of ["", "unnamed member", "+15551234567"]) {
+  test(`owner group offers omit an unknown participant name (${name})`, async t => {
+    const f = fixture(t);
+    f.save({ requests: [] });
+    f.events.clear();
+    f.participants[2]!.display_name = name;
+    const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+      { topic: "Lunch", offered: offers });
+    assert.ok(!("error" in result), JSON.stringify(result));
+    assert.equal(f.request().name, undefined);
+  });
+}
+
+test("owner group offers refuse missing or ambiguous guest participants before calendar writes", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
+  f.events.clear();
+  const args = { handle: context.requesterSenderId, name: "Alder", topic: "Lunch", offered: offers };
+  f.participants.push({ ...f.participants[2]!, provider_key: "+15550108502" });
+  assert.ok("error" in await offerOwnerGroup(ctx, args));
+  f.participants.pop();
+  f.participants[2]!.provider_key = "";
+  assert.ok("error" in await offerOwnerGroup(ctx, args));
+  assert.deepEqual(f.read().requests, []);
+  assert.deepEqual(f.commands, []);
+});
+
+
+test("owner group participant lookup failure stops before creating holds", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  t.mock.method(globalThis, "fetch", async () => new Response("PRIVATE API ERROR", { status: 503 }));
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Lunch", offered: offers });
+  assert.ok("error" in result);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
+  assert.deepEqual(f.read().requests, []);
+  assert.deepEqual(f.commands, []);
 });
