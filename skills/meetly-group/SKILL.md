@@ -158,7 +158,9 @@ start a new request only after the owner makes a scheduling request.
 Extract the topic, proposed times, hard conditions, explicit duration, format,
 place and owner-authorized overlap titles. Reuse an open request and its chat.
 Follow "Offer times" with `origin: owner` in the DM or the group entry tool here.
-Check an explicitly preferred start with `slots.ts --at`, duration and travel.
+Check an explicitly preferred start with `slots.ts --in <busy file> --at <ISO>
+--duration <minutes> --format <format> --travel <JSON>`. Do not combine `--at`
+with date/day/window filters, `--near` or `--count`; those are search options.
 For a busy preferred time or few free options in the owner's main DM, read
 `meetly-travel`, "Flexible blockers", before searching nearest times or offering.
 The inspection and fresh owner answer come first. In groups, or after no flexible
