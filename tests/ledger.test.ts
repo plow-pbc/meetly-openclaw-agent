@@ -533,3 +533,21 @@ test("duration steering accepts only positive whole minutes on open requests", (
   }
   assert.equal(updateRequest(ledger, "request", { durationMin: 60 }, T0).requests[0]!.durationMin, 60);
 });
+
+for (const command of ["add", "save", "update"]) test(`public ledger ${command} refuses calendar-owned overlap grants`, t => {
+  const home = tmpHome(), env = { MEETLY_HOME: home };
+  const saved = cli("ledger.ts", ["add", "--json", JSON.stringify(input())], env).json.request;
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const before = readFileSync(join(home, "ledger.json"), "utf8");
+  for (const allowOverlap of [[{ account: offer.account, id: "private-event" }], []]) {
+    const payload = command === "update" ? { allowOverlap } : { ...input(), allowOverlap };
+    const path = join(home, "write.json");
+    writeFileSync(path, JSON.stringify(payload));
+    for (const args of [["--json", JSON.stringify(payload)], ["--json-file", path]]) {
+      const result = cli("ledger.ts", [command, "--id", saved.id, ...args], env);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /allowOverlap is managed by calendar.ts/);
+      assert.equal(readFileSync(join(home, "ledger.json"), "utf8"), before);
+    }
+  }
+});

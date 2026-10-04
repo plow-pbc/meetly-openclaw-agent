@@ -392,6 +392,7 @@ function jsonArg(values: { json?: string; "json-file"?: string }): any {
   if (text === undefined) throw new Error("pass --json '<object>' or --json-file F");
   const value = JSON.parse(text);
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("the JSON must be an object");
+  if ("allowOverlap" in value) throw new Error("allowOverlap is managed by calendar.ts; use the owner's offer flow");
   return value;
 }
 

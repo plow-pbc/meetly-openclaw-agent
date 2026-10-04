@@ -834,13 +834,19 @@ test("owner DM offers still resolve named overlap permission", async t => {
   f.events.clear();
   for (const [i, slot] of offers.entries()) f.events.set(`private-approved-${i}`, { ...event(`private-approved-${i}`, slot.start, slot.end), summary: "Weekly Claw" });
   f.events.set("private-unapproved", { ...event("private-unapproved", offers[1]!.start, offers[1]!.end), summary: "Weekly Claw extra" });
-  const { request } = await offerRequest({ origin: "owner", handle: context.requesterSenderId, topic: "Lunch",
+  const { request } = await offerRequest({ origin: "owner", handle: context.requesterSenderId, chatUid: context.nativeChannelId, topic: "Lunch",
     allowOverlapTitles: ["Weekly Claw"], offered: offers.map(({ start, end }) => ({ start, end })) });
   assert.deepEqual(request.allowOverlap, ["private-approved-0", "private-approved-1"].map(id => ({ account: "owner@example.com", id })));
   assert.deepEqual(request.offered.map(o => o.start), [offers[0]!.start]);
   const creates = f.commands.filter(c => c[2] === "create");
   assert.equal(creates.length, 1);
   assert.ok(creates[0]!.includes("--confirm-conflict"));
+  assert.equal(f.request().status, "offered");
+  assert.equal(f.request().booked, undefined);
+  assert.ok(creates[0]![creates[0]!.indexOf("--summary") + 1]!.startsWith("Hold:"));
+  const chosen = await f.act(context, "pick", { start: request.offered[0]!.start });
+  assert.equal("status" in chosen && chosen.status, "booked");
+  assert.equal("overlappedWithOwnerApproval" in chosen && chosen.overlappedWithOwnerApproval, true);
 });
 
 test("owner-group binds a same-handle unlinked asked request and the guest can book", async t => {
@@ -1223,6 +1229,31 @@ test(`an owner-excluded Thursday returns fresh allowed holds in the same result:
   t.diagnostic(JSON.stringify(details));
 });
 
+test("owner DM named overlaps stay private in owner-group and guest tool outputs", async t => {
+  const f = fixture(t);
+  const privateTitle = "Private medical consultation";
+  f.events.set("approved", { ...event("approved", "2026-10-05T10:00:00Z", "2026-10-05T15:00:00Z"), summary: privateTitle });
+  const { request } = await offerRequest({ ...f.request(), status: "offered", allowOverlapTitles: [privateTitle],
+    offered: offers.map(({ start, end }) => ({ start, end })) });
+  assert.deepEqual(request.allowOverlap, [{ account: "owner@example.com", id: "approved" }]);
+
+  let ownerTool: any;
+  registerOwnerGroupTool({ registerTool(factory: any) {
+    ownerTool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" });
+  } }, offerOwnerGroup);
+  const outputs = [await ownerTool.execute("offer", { topic: "Lunch" })];
+  outputs.push(await f.tools.get("meetly_view_request")!.execute("view", {}));
+  outputs.push(await f.tools.get("meetly_other_times")!.execute("other", { start: "2026-10-05T11:15:00Z" }));
+  outputs.push(await f.tools.get("meetly_pick_time")!.execute("pick", { start: f.request().offered[0]!.start }));
+  for (const output of outputs) {
+    const details = JSON.parse(output.content[0].text);
+    assert.equal(details.error, undefined, JSON.stringify(details));
+    assert.doesNotMatch(JSON.stringify(output), /Private medical consultation|PRIVATE CALENDAR TITLE|approved|allowOverlap|owner@example.com/);
+  }
+  assert.equal(JSON.parse(outputs.at(-1).content[0].text).overlappedWithOwnerApproval, true);
+  assert.equal(f.request().status, "booked");
+  t.diagnostic(JSON.stringify(outputs.map(o => JSON.parse(o.content[0].text))));
+});
 
 
 function useUtcHost(t: TestContext) {

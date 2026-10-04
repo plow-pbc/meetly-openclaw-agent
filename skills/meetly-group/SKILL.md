@@ -32,6 +32,18 @@ known meeting chat uid as its target.
 
 Run `busy.ts --fetch`. Only in the owner's DM, for events they explicitly allowed overlapping, add
 `--allow-overlap-title <owner-supplied event name>` for each name. Matching `{account, id}` references stay in the busy file; slot search uses them without exposing them.
+Overlap permission does not authorize sharing the event title in the group. Keep
+private titles in the owner's DM; group offers and confirmations give only meeting times.
+Overlap permission alone is not a time selection. "Noon is fine, it can overlap my
+other event" grants permission to offer noon, not to book it. In the owner's DM,
+resolve the named permission through this reader, re-offer and hold times with
+`calendar.ts offer`, then let the guest choose. Never write `allowOverlap` with the
+ledger CLI. Only an explicit booking instruction such as "book noon" selects it
+on the owner's behalf.
+For an overlap re-offer, use `slots.ts --near <owner-authorized start> --request <id>`
+with the fresh busy file and its resolved overlap permissions. Offer the returned
+slots in order, including the authorized time when available and the nearest
+alternatives, while keeping the request's hard conditions.
 The reader checks every calendar in the config on the Mac itself and writes `/var/lib/plow/meetly/tmp/busy.json`; it prints only
 `{file, busy, degraded, unknownAfter?}`. Never run `plow-gog calendar events`
 yourself or copy a calendar listing into a file. An account in `degraded`
@@ -241,6 +253,9 @@ Missing details do not block scheduling.
 
 ## Book the event
 
+On an owner turn, run `calendar.ts book` only when the owner explicitly selects a time
+to book, including yes to a pending request for that exact time. Permission to overlap
+an event only authorizes an offer; follow "Offer times" and wait for the guest's choice.
 For an existing request, use its saved chat and conditions.
 Run `calendar.ts book --id <request id> --json '{"start":"<slot.start>"}'`.
 For an owner-approved time outside the offer, also pass `end` from `slots.ts`.
@@ -285,15 +300,26 @@ disclose private information.
   repeat delivery or calendar work without that authorization. If the time is
   already booked, relay the confirmed booking result without booking it again.
 
-- **Yes:**
-  1. Read the calendar and re-check with `slots.ts --at <pendingOwner.start> --request <id>`.
-  2. If it is still free, pass its start and end to the writer, following
-     "Book the event". It records the booking and retains `pendingOwner` for answer delivery.
-  3. The writer releases the request's other holds.
-  4. Confirm once with `meetly_answer_owner` for both the owner and guest.
-     Ask format/place only when `askDetails` is true, in that confirmation.
-  5. If it is no longer free, explain in the group, and offer new
-     times through `meetly_answer_owner`.
+- **Yes to a time:** this approves the time only if free, never an overlap.
+  This also applies when no pending approval exists (for example, the guest's
+  busy time was declined before the owner said yes). Find the saved request and
+  run `calendar.ts approve-time --id <id> --json '{"start":"<approved start>"}'`;
+  omit `start` only when using the matching saved `pendingOwner.start`.
+  The writer uses the saved duration, checks the calendar, and ignores overlap
+  permissions for this booking. Never read conflict titles to invent permission,
+  supply `allowOverlapTitles`, or turn a busy result into an overlap re-offer.
+  - If `approved: true`, confirm the returned booking once with `meetly_answer_owner`
+    when a pending approval exists. Otherwise deliver the confirmed booking once
+    to the saved group. Ask format/place only when `askDetails` is true.
+  - If `code: TIME_APPROVAL_BUSY`, tell the owner in their DM that the time is busy.
+    Read fresh busy time and run `slots.ts --near <near> --request <id> --no-overlap`
+    to find the nearest free alternatives within the saved conditions. Hold the
+    returned times with `calendar.ts offer`, then offer them in the group, using
+    `meetly_answer_owner` for a pending approval. Say only "an existing commitment"
+    to guests; no event titles or owner-only coordination. If there are no slots,
+    tell the owner and leave the current offer intact.
+  Only an explicit owner instruction naming an overlap follows the separate
+  "Read the calendar" overlap path; a yes to a time must never enter that path.
 - **No:** use `meetly_answer_owner` to tell the group that time doesn't work
   for the owner, and offer the current times or new ones.
 

@@ -214,6 +214,7 @@ if (isMain(import.meta.url)) {
         from: { type: "string" },
         to: { type: "string" },
         "allow-overlap": { type: "string", multiple: true },
+        "no-overlap": { type: "boolean", default: false },
         exclude: { type: "string", multiple: true },
         count: { type: "string" },
         at: { type: "string" },
@@ -268,6 +269,7 @@ if (isMain(import.meta.url)) {
       q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);
       q.busy = q.busy.filter(b => !request.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
     }
+    if (values["no-overlap"]) q.allowOverlap = [];
     if (values.at !== undefined) {
       for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
