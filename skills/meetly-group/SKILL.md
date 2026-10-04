@@ -6,13 +6,9 @@ description: Owner scheduling requests in their DM or a group, asked-request ans
 
 For owner turns and scheduled upkeep. Guest turns use the scheduling tools.
 
-Scripts are `node /opt/plow/skills/meetly/scripts/<name>.ts`. Mac commands go
-through Latch's `plow_run_command` (the tool name may be server-prefixed),
-following the Mac's `contacts` and `google-workspace` skills for their exact
-argument arrays for reads. Every calendar write goes through `calendar.ts`;
-never send a calendar mutation directly to Latch. An unresolved write is not a
-failure: run `calendar.ts resume --id <id>` and wait for a resolved result before
-continuing. Do not create another event or edit the ledger to bypass it.
+Scripts are `node /opt/plow/skills/meetly/scripts/<name>.ts`. Every calendar write goes through `calendar.ts`.
+For an unresolved write, run `calendar.ts resume --id <id>` and wait; never create
+another event or edit the ledger to bypass it.
 
 Messages to the other person come from Meetly, in the third person, using
 `ownerName`, in their language (see "Examples"); `format` values are defined in `meetly`, "Meeting format". Reply in the current
@@ -88,21 +84,16 @@ Persist the search's `durationMin` with its slots rather than computing one.
 4. Save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,
    `name`, `sourceRowid`, known `chatUid`, `topic`, `location`, `meal` if applicable, optional `durationMin`,
    `constraints` (the owner's conditions), `proposed`, `format`,
-   `locale`, and `offered[]` with each slot's `start`/`end`. The writer supplies
-   the configured duration/account. To authorize an overlap explicitly requested in
-   the owner's main DM, call `meetly_offer_owner_dm` with these same fields plus
-   `allowOverlapTitles` instead of the raw command. The registered tool checks the
-   runtime owner and main-DM session and resolves event titles internally.
-   Raw calendar commands reject `allowOverlap` and `allowOverlapTitles`.
+   `locale`, and `offered[]` with each slot's `start`/`end`. For an overlap explicitly authorized in the owner's main DM, call `meetly_offer_owner_dm` with these same fields plus
+   `allowOverlapTitles` instead of the raw command. Only this tool grants overlap permission.
    Do not supply hold ids.
-5. The writer creates the holds and saves the offer under the existing request
-   id, preserving its chat link. It re-keys an inbound request with the same
-   `sourceRowid` to that phone. Only use the returned request for delivery.
+5. The writer saves holds under the existing id and chat link, re-keying inbound
+   `sourceRowid` to that phone. Use only its returned request for delivery.
    On failure, stop and tell the owner; do not send an offer.
 6. Deliver the times:
    - If this is your first reply in an owner-started group, introduce yourself
      as "<agentName>, <ownerName>'s scheduling assistant" in their language with the offer.
-   - An open request that already has a `chatUid`: post the new times there.
+   - A request with `chatUid`: post the new times there.
    - Otherwise, in the owner's DM, run `ledger.ts delivery --id <saved request id>
      --kind start --action begin` exactly once, immediately before sending.
      `delivery: {state: "reserved", sendNow: true}` is permission to send now; do not
@@ -127,6 +118,10 @@ Persist the search's `durationMin` with its slots rather than computing one.
 7. The group opener also notifies the owner of who, the topic and the held
    times; do not send a separate DM.
 
+For in-person offers and busy candidates in the owner DM, follow `meetly-travel` for
+private travel estimates and flexible-blocker suggestions. Pass `travel` to the group tool
+or offer writer and `--format`/`--travel` to slot search.
+
 ## Owner request
 
 An introduction alone, including "Adding Alder, my scheduling agent, to find us a time",
@@ -142,6 +137,10 @@ In a group, read `ledger.ts find --chat <runtime chat uid>` first, including boo
 closed requests; for a pending question, time approval or booked meeting use `meetly-confirm`.
 Otherwise follow "Offer times" with the group tool; it resolves the recipient, so do
 not look up Contacts or ask for a phone.
+
+Before offers, check `pipeline.ts contact --handle <handle>`. A flagged contact needs
+private owner confirmation (`meetly-pipeline`); then use `--confirm-contact`.
+For email outreach use `meetly-email`; never substitute a phone number.
 
 In the owner's DM, choose the request path from the owner's message:
 - A scheduling request with a phone or email handle is a new request. Use that handle

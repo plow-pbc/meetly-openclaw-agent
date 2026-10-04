@@ -6,11 +6,11 @@ import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { findPreferredSlots } from "./slots.ts";
 import { view } from "./request-view.ts";
-import { findOpenByHandle, intersectConstraints, normalizeHandle, sameHandle, type Ledger, type Constraints } from "./ledger.ts";
+import { checkContact, ContactConfirmationRequired, findOpenByHandle, intersectConstraints, normalizeHandle, sameHandle, type Ledger, type Constraints } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name">;
+type GroupRequest = Pick<OfferInput, "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name">;
 
 // Tool callers may fill unused optional fields with empty values.
 function conditions(value?: Constraints): Constraints | undefined {
@@ -46,7 +46,9 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
       if (contact.found) name = contact.name?.trim() || undefined;
     }
     name = args.name?.trim() || name;
-    const existing = findOpenByHandle(readJson<Ledger>(file("ledger.json"), { requests: [] }), handle);
+    const ledger = readJson<Ledger>(file("ledger.json"), { requests: [] });
+    checkContact(ledger, handle);
+    const existing = findOpenByHandle(ledger, handle);
     if (existing && existing.chatUid !== chat && !(existing.status === "asked" && existing.chatUid === undefined)) {
       throw new Error("request belongs to another conversation");
     }
@@ -62,12 +64,13 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
     const busy = await fetchBusy(config, { from: new Date(now).toISOString(), to: new Date(now + (config.horizonDays + 1) * 86_400_000).toISOString() });
     if (busy.degraded.length) throw new Error("calendar unavailable");
     busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
-    const query = { ...busy, ...constraints, now, config, meal, durationMin, locale, allowOverlap: existing?.allowOverlap };
+    const travel = existing?.travel?.override ? existing.travel : args.travel ?? existing?.travel;
+    const query = { travel, format: format ?? existing?.format, ...busy, ...constraints, now, config, meal, durationMin, locale, allowOverlap: existing?.allowOverlap };
     const near = proposed?.from && proposed.from === proposed.to
       ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
     const { slots, preferencesUnavailable } = findPreferredSlots(query, proposed, [{ ...query, near }]);
     if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
-    const input = { handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
+    const input = { travel, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
       offered: slots.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),
       origin: "owner-group" as const, chatUid: chat, askDetails: false };
     // Existing requests use the saved duration, including explicit owner steering.
@@ -75,7 +78,8 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
       ? await calendarAction(existing.id, { action: "offer", request: input })
       : await offerRequest(input);
     return { ...view(request, config), preferencesUnavailable };
-  } catch {
+  } catch (error) {
+    if (error instanceof ContactConfirmationRequired) return { error: error.message, doNotContact: true };
     return { error: "The scheduling action could not be completed. Check the request before trying again." };
   }
 }

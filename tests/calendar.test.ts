@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { approveTime, calendarAction, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
-import { addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
+import { setDoNotContact, addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { macOutcome, type MacCommand, type MacOutcome } from "../skills/meetly/scripts/mac.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
@@ -12,12 +12,12 @@ import { calendarEvent, fakeCalendar, cli, tmpHome } from "./helpers.ts";
 
 const start = "2026-10-05T10:00:00Z", end = "2026-10-05T10:30:00Z", account = "owner@example.com";
 const now = Date.parse("2026-10-03T08:00:00Z");
-function fixture(t: TestContext) {
+function fixture(t: TestContext, chatUid?: string) {
   const home = tmpHome(), old = process.env.MEETLY_HOME;
   process.env.MEETLY_HOME = home;
   t.after(() => { if (old === undefined) delete process.env.MEETLY_HOME; else process.env.MEETLY_HOME = old; fs.rmSync(home, { recursive: true, force: true }); });
   const offered = [{ start, end, account, holdId: "hold-one" }, { start: "2026-10-06T10:00:00Z", end: "2026-10-06T10:30:00Z", account, holdId: "hold-two" }];
-  const input = { origin: "owner" as const, handle: "+15551234567", name: "Guest", topic: "Lunch", durationMin: 30, offered };
+  const input = { origin: "owner" as const, handle: "+15551234567", name: "Guest", chatUid, topic: "Lunch", durationMin: 30, offered };
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, input, now - 72 * 3_600_000, "r_one"));
   writeJson(join(home, "config.json"), { ...DEFAULTS, defaultAccount: account, timezone: "UTC", ownerName: "Alex", setupDoneAt: new Date(now).toISOString(), calendars: [{account, id: account}] });
   const { events, calls, command } = fakeCalendar(offered.map(o => calendarEvent(o.holdId, o.start, o.end)));
@@ -426,6 +426,158 @@ test("an offline preflight after a hold was created keeps the journal for recove
   assert.equal(f.calls.filter(c => c[2] === "create").length, 2);
 });
 
+test("booked replacement holds preserve the event, expire independently and clean up after a move", async t => {
+  const f = fixture(t, "chat-one");
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const booked = f.read().booked;
+  const replacement = { ...f.offer, offered: [
+    { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account },
+    { start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z", account },
+  ] };
+  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
+  assert.equal(f.read().status, "booked");
+  assert.deepEqual(f.read().booked, booked);
+  assert.equal(f.events.get("hold-one")!.start.dateTime, start);
+  const early = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 47 * 3600_000 });
+  assert.equal(early.skipped, true, "expiry uses the replacement timestamp, not the original offer");
+  assert.equal(early.groupNotice, undefined);
+  const expired = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
+  assert.equal(expired.request.status, "booked");
+  assert.equal(expired.request.reoffer, undefined);
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+  assert.equal(f.events.get("new-1")!.status, "cancelled");
+  assert.equal(f.events.get("new-2")!.status, "cancelled");
+  assert.equal(expired.groupNotice?.chatUid, "chat-one");
+  assert.match(expired.groupNotice?.text ?? "", /replacement times were released.*booking.*unchanged/i);
+  t.diagnostic(`Group expiry notice: ${expired.groupNotice?.text}`);
+  const again = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
+  assert.equal(again.skipped, true);
+  assert.equal(again.groupNotice, undefined);
+  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
+  await calendarAction("r_one", { action: "book", start: replacement.offered[0]!.start }, f.options);
+  assert.equal(f.read().eventId, "hold-one");
+  assert.equal(f.read().booked!.start, replacement.offered[0]!.start);
+  assert.equal(f.read().reoffer, undefined);
+  assert.equal(f.events.get("new-3")!.status, "cancelled");
+  assert.equal(f.events.get("new-4")!.status, "cancelled");
+  assert.ok(f.calls.filter(c => c[2] === "delete").every(c => c[4] !== "hold-one"));
+  assert.ok(f.calls.filter(c => c[2] === "update").every(c => c[c.indexOf("--send-updates") + 1] === "all"));
+});
+
+test("moving an externally cancelled booked event refuses to create another invitation", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  f.events.get("hold-one")!.status = "cancelled";
+  const before = f.read();
+  await assert.rejects(calendarAction("r_one", { action: "book", start: "2026-10-06T11:00:00Z" }, f.options), /booked event was cancelled/);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.calls.filter(c => c[2] === "create").length, 0);
+});
+
+for (const outcome of ["failure", "lost-response"] as const) test(`booked reoffers preserve the booking across ${outcome}`, async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const original = f.read().booked;
+  const input = { ...f.offer, offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account }] };
+  await calendarAction("r_one", { action: "offer", request: input }, f.options);
+  const previous = f.read().reoffer;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] !== "create") return f.command(cmd);
+    if (outcome === "failure") return { error: "offline" };
+    await f.command(cmd); return undefined;
+  };
+  const replacement = calendarAction("r_one", { action: "offer", request: input }, { ...f.options, command });
+  if (outcome === "failure") {
+    await assert.rejects(replacement, /previous offer retained/);
+    assert.deepEqual(f.read().reoffer, previous);
+    assert.equal(f.events.get("new-1")!.status, "confirmed");
+  } else {
+    await replacement;
+    assert.equal(f.read().reoffer!.offered[0]!.holdId, "new-2");
+    assert.equal(f.events.get("new-1")!.status, "cancelled");
+  }
+  assert.deepEqual(f.read().booked, original);
+  assert.equal(f.read().status, "booked");
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+});
+
+test("a reconciled move commits once and retains failed reoffer cleanup for retry", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  await calendarAction("r_one", { action: "offer", request: f.offer }, f.options);
+  const before = f.read().booked;
+  let moved = false;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] === "delete") return { error: "offline" };
+    const result = await f.command(cmd);
+    if (cmd.argv[2] === "update") { moved = true; return { handle: "move-pending" }; }
+    return result;
+  };
+  const options = { ...f.options, command, poll: async () => ({ handle: "move-pending" }) };
+  await assert.rejects(calendarAction("r_one", { action: "book", start: "2026-10-06T10:00:00Z" }, options), /approval is pending/);
+  assert.equal(moved, true);
+  assert.deepEqual(f.read().booked, before);
+  assert.ok(f.read().reoffer);
+  await calendarAction("r_one", { action: "resume" }, { ...options, poll: async () => ({ output: JSON.stringify(f.events.get("hold-one")) }) });
+  assert.equal(f.read().eventId, "hold-one");
+  assert.equal(f.read().reoffer, undefined);
+  assert.equal(f.read().holdCleanup!.length, 2);
+  await calendarAction("r_one", { action: "cleanup" }, f.options);
+  assert.deepEqual(f.read().holdCleanup, []);
+  assert.equal(f.calls.filter(c => c[2] === "update").length, 2, "one initial booking and one move");
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+});
+
+test("format changes retain a live reoffer; cancel releases it and notifies only the booked invite", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  await calendarAction("r_one", { action: "offer", request: f.offer }, f.options);
+  const replacement = f.read().reoffer;
+  await calendarAction("r_one", { action: "format", format: "meet" }, f.options);
+  assert.deepEqual(f.read().reoffer, replacement);
+  assert.equal(f.events.get("new-1")!.status, "confirmed");
+  assert.equal(f.events.get("new-2")!.status, "confirmed");
+  await calendarAction("r_one", { action: "cancel" }, f.options);
+  assert.equal(f.read().status, "dropped");
+  assert.equal(f.read().reoffer, undefined);
+  assert.deepEqual(f.read().holdCleanup, []);
+  for (const id of ["hold-one", "new-1", "new-2"]) {
+    assert.equal(f.events.get(id)!.status, "cancelled");
+    const deletion = f.calls.find(c => c[2] === "delete" && c[4] === id)!;
+    assert.equal(deletion[deletion.indexOf("--send-updates") + 1], id === "hold-one" ? "all" : "none");
+  }
+});
+
+test("owner DM lookup and exact-time check select the booked record and move its event", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const env = { MEETLY_HOME: f.home };
+  const listed = cli("ledger.ts", ["booked"], env);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.equal(listed.json.requests.length, 1);
+  assert.equal(listed.json.requests[0].id, "r_one");
+  const busyFile = join(f.home, "busy.json");
+  writeJson(busyFile, { busy: [{ id: "hold-one", account, start, end }], degraded: [] });
+  const checked = cli("slots.ts", ["--in", busyFile, "--request", "r_one", "--at", "2026-10-05T10:15:00Z", "--now", new Date(now).toISOString()], env);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.equal(checked.json.free, true, "the original event is not a conflict with its own move");
+  await calendarAction(listed.json.requests[0].id, { action: "book", start: checked.json.slot.start, end: checked.json.slot.end }, f.options);
+  assert.equal(f.read().eventId, "hold-one");
+  assert.equal(Date.parse(f.read().booked!.start), Date.parse("2026-10-05T10:15:00Z"));
+  t.diagnostic(`Mock owner DM flow: booked lookup → exact-time check → update ${f.read().eventId} at ${f.read().booked!.start}; no replacement event created.`);
+});
+
+
+test("a flagged owner offer requires explicit confirmation and retains the contact flag afterwards", async t => {
+  const f = fixture(t);
+  const path = join(f.home, "ledger.json");
+  writeJson(path, setDoNotContact(readJson<Ledger>(path, { requests: [] }), f.input.handle, true, now));
+  await assert.rejects(offerRequest(f.offer, f.options), /Confirm in the owner's DM/);
+  assert.deepEqual(f.calls, [], "no calendar operation before confirmation");
+  const result = await offerRequest(f.offer, { ...f.options, confirmContact: true });
+  assert.equal(result.request.doNotContact, true);
+  assert.ok(f.calls.some(c => c[2] === "create"));
+});
 
 for (const collision of [false, true]) test(`overlap approval applies only to its account (collision=${collision})`, async t => {
   const f = fixture(t);
@@ -594,4 +746,178 @@ test("a time approval never sends a conflict override even across its own hold",
   assert.equal(result.approved, false);
   assert.equal(writes.length, 1);
   assert.equal(writes.some(c => c.includes("--confirm-conflict")), false);
+});
+
+const travel = { beforeMin: 25, afterMin: 20 };
+
+test("travel only creates private busy children on booking, then moves, resizes and cancels through the seam", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, format: "in_person", location: "Tartine", travel } }, f.options);
+  assert.equal(f.calls.filter(c => c[2] === "create").length, 2, "offered holds have no travel events");
+  const result = await calendarAction("r_one", { action: "book", start, attendees: "guest@example.com" }, f.options);
+  assert.match(("ownerTravelNote" in result && result.ownerTravelNote) || "", /25 min travel before and 20 min after.*Tartine/);
+  const children = f.read().travelEvents!;
+  assert.equal(children.length, 2);
+  assert.deepEqual(children.map(c => f.events.get(c.holdId)!.start.dateTime), ["2026-10-05T09:35:00.000Z", end]);
+  const creates = f.calls.filter(c => c[2] === "create" && c.includes("--visibility"));
+  for (const command of creates) {
+    assert.equal(command[command.indexOf("--visibility") + 1], "private");
+    assert.equal(command[command.indexOf("--transparency") + 1], "opaque");
+    assert.equal(command[command.indexOf("--send-updates") + 1], "none");
+    assert.ok(command.includes("meetlyRequest=r_one"));
+    assert.ok(!command.includes("--attendees"));
+  }
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, offered: [{ start: "2026-10-05T10:30:00Z", end: "2026-10-05T11:00:00Z", account }] } }, f.options);
+  assert.deepEqual(f.read().travelEvents, children, "replacement holds keep booked travel");
+  await calendarAction("r_one", { action: "book", start: "2026-10-05T10:30:00Z" }, f.options);
+  assert.ok(children.every(c => f.events.get(c.holdId)!.status === "cancelled"));
+  assert.equal(f.read().travelEvents!.length, 2);
+  assert.equal(f.events.get(f.read().travelEvents![0]!.holdId)!.start.dateTime, "2026-10-05T10:05:00.000Z");
+  await calendarAction("r_one", { action: "travel", travel: { beforeMin: 45, afterMin: 45, override: true } }, f.options);
+  assert.equal(f.events.get(f.read().travelEvents![0]!.holdId)!.start.dateTime, "2026-10-05T09:45:00.000Z");
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Cafe", travel }, f.options);
+  assert.deepEqual(f.read().travel, { beforeMin: 45, afterMin: 45, override: true });
+  await calendarAction("r_one", { action: "cancel" }, f.options);
+  assert.ok([...f.events.values()].every(e => e.status === "cancelled"));
+  for (const command of f.calls.filter(c => c[2] === "delete" && c[4] !== f.read().eventId)) {
+    assert.equal(command[command.indexOf("--send-updates") + 1], "none");
+  }
+});
+
+for (const side of ["before", "after"] as const) test(`offers and picks recheck ${side} travel against other events`, async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Tartine", travel }, f.options);
+  const event = side === "before" ? calendarEvent("busy", "2026-10-05T09:30:00Z", "2026-10-05T09:45:00Z")
+    : calendarEvent("busy", "2026-10-05T10:40:00Z", "2026-10-05T11:00:00Z");
+  f.events.set("busy", event);
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /previous offer retained/);
+  assert.equal(f.read().status, "offered");
+  assert.equal(f.calls.filter(c => ["create", "update"].includes(c[2]!)).length, 0);
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, format: "in_person", travel } }, f.options);
+  assert.equal(f.read().offered.length, 1);
+  assert.equal(f.read().offered[0]!.start, f.offer.offered[1]!.start);
+});
+
+test("unknown-place meals default to fifteen minutes; a named place resizes, virtual removes travel", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, meal: "lunch" } }, f.options);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  assert.equal(f.events.get(f.read().travelEvents![0]!.holdId)!.start.dateTime, "2026-10-05T09:45:00.000Z");
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Tartine", travel }, f.options);
+  assert.equal(f.events.get(f.read().travelEvents![0]!.holdId)!.start.dateTime, "2026-10-05T09:35:00.000Z");
+  const children = f.read().travelEvents!;
+  await calendarAction("r_one", { action: "format", format: "meet" }, f.options);
+  assert.deepEqual(f.read().travelEvents, []);
+  assert.ok(children.every(c => f.events.get(c.holdId)!.status === "cancelled"));
+  assert.equal(f.read().status, "booked");
+});
+
+for (const failure of ["second child", "meeting"] as const) test(`failed ${failure} rolls back staged travel and leaves original booking intact`, async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "format", format: "in_person", travel }, f.options);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const before = f.read();
+  let creates = 0;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] === "create" && ++creates === 2 && failure === "second child" || cmd.argv[2] === "update" && failure === "meeting") return { error: "write refused" };
+    return f.command(cmd);
+  };
+  await assert.rejects(calendarAction("r_one", { action: "book", start: "2026-10-05T11:00:00Z" }, { ...f.options, command }), /previous offer retained/);
+  assert.deepEqual(f.read().booked, before.booked);
+  assert.deepEqual(f.read().travelEvents, before.travelEvents);
+  assert.equal(f.events.get(before.eventId!)!.start.dateTime, start);
+  assert.equal([...f.events.values()].filter(e => e.status !== "cancelled").length, 3);
+  assert.deepEqual(f.read().holdCleanup, []);
+});
+
+test("lost travel create reconciles without duplication and cleanup failure remains owned until retry", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "format", format: "in_person", travel }, f.options);
+  const command = async (cmd: MacCommand) => {
+    const result = await f.command(cmd);
+    return cmd.argv[2] === "create" ? undefined : result;
+  };
+  await calendarAction("r_one", { action: "book", start }, { ...f.options, command });
+  assert.equal(f.calls.filter(c => c[2] === "create").length, 2);
+  const children = f.read().travelEvents!;
+  await calendarAction("r_one", { action: "travel", travel: { beforeMin: 0, afterMin: 0, override: true } }, {
+    ...f.options, command: async cmd => cmd.argv[2] === "delete" ? { error: "failed" } : f.command(cmd),
+  });
+  assert.deepEqual(f.read().travelEvents, []);
+  assert.deepEqual(f.read().holdCleanup, children);
+  await calendarAction("r_one", { action: "cleanup" }, f.options);
+  assert.deepEqual(f.read().holdCleanup, []);
+  assert.ok(children.every(c => f.events.get(c.holdId)!.status === "cancelled"));
+});
+
+test("travel bounds fail before any calendar operation and cannot bypass the seam", async t => {
+  const f = fixture(t);
+  for (const minutes of [-1, 121, 1.5, NaN]) {
+    await assert.rejects(calendarAction("r_one", { action: "travel", travel: { beforeMin: minutes, afterMin: 0 } }, f.options), /whole minutes/);
+  }
+  assert.equal(f.calls.length, 0);
+  const result = cli("ledger.ts", ["update", "--id", "r_one", "--json", JSON.stringify({ travel })], { MEETLY_HOME: f.home });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /managed by calendar.ts/);
+});
+
+test("travel commit failure resumes without recreating children; replacement expiry preserves booked travel", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "format", format: "in_person", travel }, f.options);
+  const rename = fs.renameSync;
+  let fail = true;
+  t.mock.method(fs, "renameSync", (from: fs.PathLike, to: fs.PathLike) => {
+    if (fail && to === join(f.home, "ledger.json")) throw new Error("simulated commit failure");
+    return rename(from, to);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /simulated commit failure/);
+  assert.equal(f.read().status, "offered");
+  assert.equal(f.read().travelEvents, undefined);
+  fail = false;
+  await calendarAction("r_one", { action: "resume" }, f.options);
+  assert.equal(f.calls.filter(c => c[2] === "create").length, 2);
+  const children = f.read().travelEvents!;
+  await calendarAction("r_one", { action: "offer", request: f.offer }, f.options);
+  await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 72 * 3600_000 });
+  assert.deepEqual(f.read().travelEvents, children);
+  assert.equal(f.read().status, "booked");
+  assert.ok(children.every(c => f.events.get(c.holdId)!.status === "confirmed"));
+});
+
+for (const [from, to] of [["09:30", "09:50"], ["09:30", "11:00"]]) test(`title-based overlap authorization includes travel (${from}–${to}) and never changes the blocker`, async t => {
+  const f = fixture(t);
+  const focus = { ...calendarEvent("focus", `2026-10-05T${from}:00Z`, `2026-10-05T${to}:00Z`), summary: "Focus block" };
+  const original = structuredClone(focus);
+  f.events.set(focus.id, focus);
+  const oldToken = process.env.PLOW_MCP_BRIDGE_TOKEN;
+  process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture";
+  t.after(() => { if (oldToken === undefined) delete process.env.PLOW_MCP_BRIDGE_TOKEN; else process.env.PLOW_MCP_BRIDGE_TOKEN = oldToken; });
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    const command = JSON.parse(String(init.body)).params.arguments;
+    const result = await f.command({ argv: command.argv });
+    return Response.json({ result: { content: [{ type: "text", text: JSON.stringify({ exit_code: 0, output: result.output }) }] } });
+  });
+  await offerRequest({ ...f.offer, format: "in_person", travel, offered: [{ start, end }], allowOverlapTitles: ["  FOCUS BLOCK  "] }, f.options);
+  assert.deepEqual(f.read().allowOverlap, [{ account, id: "focus" }]);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  assert.equal(f.read().travelEvents!.length, 2);
+  assert.ok(f.calls.filter(c => c[2] === "create").every(c => c.includes("--confirm-conflict")));
+  await calendarAction("r_one", { action: "cancel" }, f.options);
+  assert.deepEqual(f.events.get("focus"), original);
+  assert.ok(f.calls.filter(c => ["update", "delete"].includes(c[2]!)).every(c => c[4] !== "focus"));
+});
+
+test("remembered permission alone never allows an offer over the owner's event", async t => {
+  const f = fixture(t);
+  const configPath = join(f.home, "config.json");
+  const config = readJson<Record<string, unknown>>(configPath, {});
+  writeJson(configPath, { ...config, overlapDecisions: { "focus block": { allowed: true, at: new Date(now).toISOString() } } });
+  const focus = { ...calendarEvent("focus", start, end), summary: "Focus block" };
+  f.events.set(focus.id, focus);
+  await assert.rejects(offerRequest({ ...f.offer, offered: [{ start, end }], format: "in_person", travel }, f.options), /previous offer retained/);
+  assert.equal(f.calls.filter(c => ["create", "update"].includes(c[2]!)).length, 0);
+  assert.equal(f.read().allowOverlap, undefined);
+  assert.equal(f.events.get("focus")!.status, "confirmed");
 });

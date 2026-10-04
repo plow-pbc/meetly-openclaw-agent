@@ -8,6 +8,7 @@ import { offerOwnerGroup } from "../skills/meetly/scripts/owner-group.ts";
 import { registerOwnerGroupTool, registerOwnerDmTool } from "../plugin/owner-tools.js";
 import plugin from "../plugin/index.js";
 import { calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.ts";
+import { reserveNudges } from "../skills/meetly/scripts/pipeline.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
 import { addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
@@ -47,7 +48,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const ledger = addRequest({ requests: [] }, {
     origin: "owner", handle: context.requesterSenderId, chatUid: context.nativeChannelId, name: "Guest", topic: "Lunch",
     durationMin: 30, constraints: { days: ["mon", "tue"], after: "10:00", before: "15:00", from: "2026-10-05", to: "2026-10-06" },
-    allowOverlap: [{ account: "owner@example.com", id: "approved" }], offered: offers, format: "unknown", locale: "en-US",
+    allowOverlap: [{ account: "owner@example.com", id: "approved" }], offered: offers.map(o => ({ ...o })), format: "unknown", locale: "en-US",
   }, now, "request-one");
   const save = (value: Ledger) => writeJson(join(home, "ledger.json"), value);
   save(ledger);
@@ -105,7 +106,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const outbound = async () => ({
     buildOutboundSessionContext: (args: object) => args,
     sendDurableMessageBatch: async (args: Record<string, any>) => {
-      assert.ok(read().requests[0]!.pendingOwner, "save the question before sending");
+      assert.ok(read().requests[0]!.pendingOwner || read().requests[0]!.booked, "save the question or booking change before sending");
       deliveries.push(args);
       if (delivery.fail) throw new Error("PRIVATE TRANSPORT ERROR");
       ownerLines.push(args.payloads[0].text);
@@ -121,8 +122,8 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     session: { resolveStorePath: () => "/sessions", updateLastRoute: async (args: Record<string, any>) => { routes.push(args); } },
   } }, registerTool(factory: (ctx: GuestContext) => { name: string; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
     const tool = factory(context); tools.set(tool.name, tool);
-  } }, guestAction, outbound);
-  const act = (ctx: GuestContext, action: GuestAction, args: GuestArgs = {}) => guestAction(ctx, action, args, sendOwner);
+  } }, (ctx, action, args, send) => guestAction({ ...ctx, turnStartedAt: now + 1 }, action, args, send), outbound);
+  const act = (ctx: GuestContext, action: GuestAction, args: GuestArgs = {}) => guestAction({ turnStartedAt: now + 1, ...ctx }, action, args, sendOwner);
   return { home, read, save, ledger, participants, events, commands, fail, lost, hooks, tools, act, ownerLines, deliveries, routes, delivery, request: () => read().requests[0]! };
 }
 
@@ -295,6 +296,23 @@ for (const args of [
   assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
+test("booking in person carries the no-more-details instruction after the opener question", async t => {
+  const f = fixture(t);
+  const first = await f.tools.get("meetly_view_request")!.execute("view", {});
+  assert.equal(JSON.parse(first.content[0]!.text).askDetails, true);
+  assert.doesNotMatch(first.content.slice(1).map(c => c.text).join("\n"), /do not ask how or where/i);
+  await f.tools.get("meetly_set_format")!.execute("format", { format: "in_person" });
+  const booked = await f.tools.get("meetly_pick_time")!.execute("pick", { start: offers[0]!.start });
+  const details = JSON.parse(booked.content[0]!.text);
+  assert.equal(details.askDetails, false);
+  assert.equal(details.status, "booked");
+  assert.equal(details.format, "in_person");
+  assert.ok(!details.location);
+  assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /do not ask how or where to meet.*missing/i);
+  assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /do not mention missing or unspecified/i);
+  t.diagnostic(`Booking guidance: ${booked.content.slice(1).map(c => c.text).join(" ")}`);
+});
+
 test("blank optional preferences through the guest tool still produce fresh held times", async t => {
   const f = fixture(t);
   const result = await f.tools.get("meetly_other_times")!.execute("call", {
@@ -420,9 +438,9 @@ test("format before and after booking updates the event and records only the bac
   assert.doesNotMatch(JSON.stringify(result), /https:\/\/meet|PRIVATE/);
 });
 
-for (const status of ["booked", "dropped", "expired"] as const) test(`${status} stays this chat's request; guest cannot rebook or cancel it`, async t => {
+for (const status of ["dropped", "expired"] as const) test(`${status} stays this chat's request; guest cannot rebook or cancel it`, async t => {
   const f = fixture(t); f.ledger.requests[0]!.status = status; f.ledger.requests[0]!.format = "phone"; f.save(f.ledger);
-  for (const [action, args] of actions.filter(([a]) => a !== "format" && !(status === "booked" && a === "ask_owner"))) {
+  for (const [action, args] of actions.filter(([a]) => a !== "format")) {
     const result = await f.act(context, action, args);
     assert.equal((result as { status: string }).status, status);
   }
@@ -946,6 +964,367 @@ test("a duration change's replacement topic reaches holds, booking titles and th
   assert.equal(booking[booking.indexOf("--summary") + 1], "60-minute call with Guest");
   assert.equal(f.request().durationMin, 60);
   await f.act(context, "ask_owner", { question: "Should I bring the budget numbers?" });
+  assert.deepEqual(f.ownerLines, ["Guest asked in your 60-minute call thread. Guest question: \"Should I bring the budget numbers?\". Reply there, or tell me what to say."]);
+});
+
+test("an owner duration change keeps an unanswered opener question suppressed on guest re-offers", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.detailsAskedAt = new Date(now).toISOString();
+  f.ledger.requests[0]!.durationMin = 60;
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { days: ["tue"] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal("askDetails" in result && result.askDetails, false);
+  assert.equal(f.request().detailsAskedAt, new Date(now).toISOString());
+  assert.equal(f.request().format, "unknown");
+  assert.equal(f.request().durationMin, 60);
+});
+
+
+
+
+test("owner-group lunch resolves its default duration without model-supplied config", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  f.events.clear();
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Lunch", meal: "lunch" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().meal, "lunch");
+  assert.equal(f.request().durationMin, 60);
+  assert.equal(f.request().offered[0]!.account, "owner@example.com");
+});
+
+test("a topic ending in the guest name stays separate from hold titles and owner question labels", async t => {
+  const f = fixture(t);
+  const { origin, handle, chatUid, constraints, allowOverlap, format, locale } = f.request();
+  await calendarAction("request-one", { action: "offer", request: {
+    origin, handle, name: "Kai", chatUid, constraints, allowOverlap, format, locale, topic: "lunch with Kai", durationMin: 30,
+    offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account: "owner@example.com" }],
+  } });
+  assert.equal(f.request().topic, "lunch");
+  const hold = f.commands.find(c => c[2] === "create")!;
+  assert.equal(hold[hold.indexOf("--summary") + 1], "Hold: lunch with Kai");
+  await f.act(context, "ask_owner", { question: "Should I bring the budget numbers?" });
+  assert.deepEqual(f.ownerLines, ["Kai asked in your lunch thread. Guest question: \"Should I bring the budget numbers?\". Reply there, or tell me what to say."]);
+});
+
+test("guest next_week uses the source timestamp and owner timezone before filtering weekdays", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints!.to = "2026-10-16";
+  f.save(f.ledger);
+  const result = await f.act(context, "other_times", { next_week: "2026-10-05T23:30:00Z", days: ["tue"] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.ok(f.request().offered.length > 0);
+  assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-13")), JSON.stringify(f.request().offered));
+});
+
+test("guest reschedules and cancels this thread's booked lunch through the calendar writer", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.meal = "lunch";
+  f.ledger.requests[0]!.offered = [{ ...offers[0]!, start: "2026-10-05T12:00:00Z", end: "2026-10-05T12:30:00Z" }];
+  f.events.set("hold-one", event("hold-one", "2026-10-05T12:00:00Z", "2026-10-05T12:30:00Z"));
+  f.save(f.ledger);
+  await f.act(context, "pick", { start: "2026-10-05T12:00:00Z" });
+  const booked = f.request().booked;
+  const offered = await f.act(context, "other_times", { start: "2026-10-06T12:00" });
+  assert.ok(!("error" in offered), JSON.stringify(offered));
+  assert.equal("offered" in offered && (offered.offered as unknown[]).length, 1);
+  assert.deepEqual(f.request().booked, booked);
+  assert.equal(f.request().status, "booked");
+  const moved = await f.act(context, "pick", { start: "2026-10-06T12:00:00Z" });
+  assert.ok(!("error" in moved), JSON.stringify(moved));
+  assert.equal(f.request().eventId, "hold-one");
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse("2026-10-06T12:00:00Z"));
+  const move = f.commands.filter(c => c[2] === "update").at(-1)!;
+  assert.equal(move[4], "hold-one");
+  assert.equal(move[move.indexOf("--send-updates") + 1], "all");
+  assert.ok(!move.includes("--attendees"), "preserve existing invitees on a move");
+  assert.equal(f.events.get("new-1")!.status, "cancelled");
+  const cancelled = await f.act(context, "decline");
+  assert.equal("status" in cancelled && cancelled.status, "dropped");
+  assert.equal(f.events.get("hold-one")!.status, "cancelled");
+  const deletion = f.commands.find(c => c[2] === "delete" && c[4] === "hold-one")!;
+  assert.equal(deletion[deletion.indexOf("--send-updates") + 1], "all");
+  assert.equal(f.read().requests.length, 1);
+});
+
+test("booked guest picks require this thread's current replacement and preserve owner conditions", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  const booked = f.request().booked;
+  assert.ok("error" in await f.act(context, "pick", { start: offers[1]!.start }));
+  const alternatives = await f.act(context, "other_times", { days: ["thu"], after: "16:00" });
+  assert.ok("preferencesUnavailable" in alternatives && alternatives.preferencesUnavailable);
+  assert.match("message" in alternatives ? String(alternatives.message) : "", /Replacement times are held:/);
+  t.diagnostic(`Replacement reply: ${"message" in alternatives && alternatives.message}`);
+  const replacement = f.request().reoffer!;
+  assert.ok(replacement);
+  assert.ok(replacement.offered.every(o => ["2026-10-05", "2026-10-06"].includes(o.start.slice(0, 10)) && o.start.slice(11, 16) < "15:00"));
+  const rejected = await f.tools.get("meetly_other_times")!.execute("call", { excludedDays: ["mon", "tue"] });
+  const rejectedDetails = JSON.parse(rejected.content[0]!.text);
+  assert.ok(rejectedDetails.error);
+  assert.equal(rejectedDetails.offered, undefined, "do not present old holds that the guest just ruled out");
+  assert.deepEqual(f.request().reoffer, replacement);
+  for (const ctx of [{ ...context, nativeChannelId: "another-chat" }, { ...context, requesterSenderId: "+15559999999" }]) {
+    assert.ok("error" in await f.act(ctx, "pick", { start: replacement.offered[0]!.start }));
+    assert.ok("error" in await f.act(ctx, "decline"));
+  }
+  await calendarAction("request-one", { action: "expire" }, { now: () => now + 49 * 3600_000 });
+  assert.equal(f.request().reoffer, undefined);
+  assert.ok("error" in await f.act(context, "pick", { start: replacement.offered[0]!.start }));
+  assert.deepEqual(f.request().booked, booked);
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+});
+
+for (const invited of [false, true]) test(`booked guest changes notify the owner privately and report invitation evidence: invited=${invited}`, async t => {
+  const f = fixture(t, invited ? undefined : "S|0\n");
+  const call = async (name: string, args = {}) => JSON.parse((await f.tools.get(name)!.execute("call", args)).content[0]!.text);
+  const initial = await call("meetly_pick_time", { start: offers[0]!.start });
+  assert.equal(initial.invitationSent, invited);
+  assert.equal(f.deliveries.length, 0);
+  await call("meetly_other_times", { start: offers[1]!.start });
+  const moved = await call("meetly_pick_time", { start: offers[1]!.start });
+  assert.equal(moved.invitationUpdated, invited);
+  assert.equal(moved.ownerNotified, true);
+  assert.equal(f.deliveries.length, 1);
+  assert.equal(f.deliveries[0]!.to, "plow-owner");
+  assert.match(f.ownerLines[0]!, /Lunch with Guest moved to.*10\/6.*UTC/);
+  const cancelled = await call("meetly_decline");
+  assert.equal(cancelled.ownerNotified, true);
+  assert.equal(f.deliveries.length, 2);
+  assert.equal(f.deliveries[1]!.to, "plow-owner");
+  assert.match(f.ownerLines[1]!, /^Guest cancelled Lunch on .*UTC/);
+  await call("meetly_decline");
+  assert.equal(f.deliveries.length, 2, "repeated declines must not send another DM");
+  t.diagnostic(JSON.stringify({ moved, cancelled, ownerDMs: f.ownerLines }));
+});
+
+test("a failed owner notice preserves a completed move and never claims delivery", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  await f.act(context, "other_times", { start: offers[1]!.start });
+  f.delivery.fail = true;
+  const result = JSON.parse((await f.tools.get("meetly_pick_time")!.execute("call", { start: offers[1]!.start })).content[0]!.text);
+  assert.equal(result.ownerNotified, false);
+  assert.equal(result.warning, "owner-notification-unconfirmed");
+  assert.equal(result.error, undefined);
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse(offers[1]!.start));
+  assert.equal(f.deliveries.length, 1);
+});
+
+test("an incomplete guest cancellation names the guest and keeps cleanup pending", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  f.fail.add("delete");
+  const result = await f.act(context, "decline");
+  assert.ok("cleanupPending" in result && result.cleanupPending);
+  assert.match(f.ownerLines[0]!, /^Guest requested cancellation of Lunch on .*calendar cleanup is pending/);
+  t.diagnostic(`Owner DM: ${f.ownerLines[0]}`);
+});
+for (const args of [{ question: "Should I bring the budget?" }, { start: "2026-10-05T20:00" }]) {
+  test(`owner ask reserves its monitor fingerprint before sending: ${JSON.stringify(args)}`, async t => {
+    const f = fixture(t);
+    f.ledger.requests[0]!.constraints!.before = "21:00";
+    f.save(f.ledger);
+    let sends = 0;
+    let duringSend: string | null = null;
+    const result = await guestAction(context, "question" in args ? "ask_owner" : "other_times", args, async () => {
+      sends++;
+      duringSend = reserveNudges(f.read(), now).text;
+    });
+    assert.equal("ownerAskSent" in result && result.ownerAskSent, true);
+    assert.equal(sends, 1);
+    assert.equal(duringSend, null, "a concurrent poll must not duplicate this DM");
+    assert.equal(reserveNudges(f.read(), now + 5 * 60_000).text, null);
+    assert.ok(f.request().lastNudge);
+  });
+}
+function emailFixture(t: TestContext) {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.channel = "email";
+  request.handle = "ana@example.net";
+  request.name = "Ana";
+  f.save(f.ledger);
+  const ctx = { ...context, agentAccountId: "email", requesterSenderId: "ea@example.net", senderIsOwner: false,
+    config: { channels: { plow: { apiBase: "https://plow.test", emailLineUid: "mail-line" } } } };
+  const thread = { uid: ctx.nativeChannelId, status: "active", participants: [
+    { type: "agent", relationship: "self", line: { uid: "mail-line" } },
+    { type: "member", provider_key: "ANA@example.net" }, { type: "member", provider_key: ctx.requesterSenderId },
+  ] };
+  const fetchCalendar = globalThis.fetch;
+  const previous = process.env.PLOW_AGENT_TOKEN;
+  process.env.PLOW_AGENT_TOKEN = "email-fixture";
+  t.after(() => { if (previous === undefined) delete process.env.PLOW_AGENT_TOKEN; else process.env.PLOW_AGENT_TOKEN = previous; });
+  t.mock.method(globalThis, "fetch", async (url: string | URL | globalThis.Request, init?: RequestInit) => {
+    if (String(url).startsWith("https://plow.test/")) {
+      assert.equal(String(url), `https://plow.test/v1/chats/${ctx.nativeChannelId}`);
+      assert.equal((init?.headers as Record<string, string>).Authorization, "Bearer email-fixture");
+      return Response.json(thread);
+    }
+    return fetchCalendar(url, init);
+  });
+  const emailTools = new Map<string, { execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
+  registerGuestTools({ registerTool(factory: (context: GuestContext) => { name: string; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
+    const tool = factory(ctx); emailTools.set(tool.name, tool);
+  } }, guestAction);
+  return { ...f, ctx, thread, emailTools };
+}
+
+test("the first email reply and CC booking carry thread delivery and details instructions", async t => {
+  const f = emailFixture(t);
+  f.ledger.requests[0]!.detailsAskedAt = new Date(now).toISOString();
+  f.save(f.ledger);
+  const view = await f.emailTools.get("meetly_view_request")!.execute("first-reply", {});
+  const instructions = view.content.slice(1).map(c => c.text).join("\n");
+  assert.match(instructions, /plow_send_email/);
+  assert.match(instructions, /time zone "UTC" in every offer/);
+  assert.ok(instructions.includes(JSON.stringify(f.ctx.nativeChannelId)));
+  assert.match(instructions, /first reply.*CC/i);
+  assert.match(instructions, /final.*private.*owner/i);
+  await f.emailTools.get("meetly_set_format")!.execute("format", { format: "in_person" });
+  const booked = await f.emailTools.get("meetly_pick_time")!.execute("pick", { start: offers[0]!.start });
+  assert.equal(JSON.parse(booked.content[0]!.text).askDetails, false);
+  assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /do not ask how or where to meet.*missing/i);
+  assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /plow_send_email/);
+  assert.equal(f.ownerLines.length, 0);
+});
+
+for (const [action, args] of actions.filter(([action]) => action !== "ask_owner")) test(`a CC'd participant can ${action} in the email thread`, async t => {
+  const f = emailFixture(t);
+  const result = await f.act(f.ctx, action, args);
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().channel, "email");
+  assert.equal(f.request().chatUid, context.nativeChannelId);
+  assert.equal(f.ownerLines.length, 0);
+  if (action === "pick") {
+    assert.equal("invitationSent" in result && result.invitationSent, true);
+    const booking = f.commands.find(argv => argv.includes("--attendees"))!;
+    assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net");
+    assert.ok(f.commands.every(argv => argv[0] !== "/bin/sh"), "an email guest does not need Contacts");
+  }
+});
+
+test("an explicit additional email invitee is included without replacing the guest", async t => {
+  const f = emailFixture(t);
+  const result = await f.act(f.ctx, "pick", { start: offers[0]!.start, attendees: ["ea@example.net"] });
+  assert.ok(!("error" in result));
+  const booking = f.commands.find(argv => argv.includes("--attendees"))!;
+  assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net,ea@example.net");
+});
+
+test("email requests cannot be acted on from phone turns or another email thread", async t => {
+  const f = emailFixture(t);
+  for (const ctx of [context, { ...f.ctx, nativeChannelId: "other-thread", config: {} }, { ...f.ctx, senderIsOwner: true }]) {
+    assert.ok("error" in await f.act(ctx, "pick", { start: offers[0]!.start }));
+  }
+  assert.deepEqual(f.read(), f.ledger);
+  assert.equal(f.commands.length, 0);
+});
+
+test("an uncertain email opener links on a CC reply using the server roster", async t => {
+  const f = emailFixture(t);
+  delete f.ledger.requests[0]!.chatUid;
+  f.ledger.requests[0]!.startedAt = new Date(now).toISOString();
+  f.save(f.ledger);
+  const result = await f.act(f.ctx, "view");
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().chatUid, context.nativeChannelId);
+  assert.equal(f.request().handle, "ana@example.net");
+});
+
+for (const invalid of ["not-started", "absent-guest", "absent-sender", "wrong-line", "inactive", "ambiguous"] as const) test(`uncertain email linking refuses ${invalid}`, async t => {
+  const f = emailFixture(t);
+  const request = f.ledger.requests[0]!;
+  delete request.chatUid;
+  request.startedAt = new Date(now).toISOString();
+  if (invalid === "not-started") delete request.startedAt;
+  if (invalid === "absent-guest") f.thread.participants.splice(1, 1);
+  if (invalid === "absent-sender") f.thread.participants.pop();
+  if (invalid === "wrong-line") f.thread.participants[0]!.line!.uid = "another-mailbox";
+  if (invalid === "inactive") f.thread.status = "inactive";
+  if (invalid === "ambiguous") f.ledger.requests.push({ ...request, id: "other-email", handle: f.ctx.requesterSenderId });
+  f.save(f.ledger);
+  assert.ok("error" in await f.act(f.ctx, "view"));
+  assert.deepEqual(f.read(), f.ledger);
+});
+
+for (const args of [{ question: "Should Ana bring the budget?" }, { start: "2026-10-05T20:00" }]) test(`email owner handoff uses final routing, not a second DM: ${JSON.stringify(args)}`, async t => {
+  const f = emailFixture(t);
+  f.ledger.requests[0]!.constraints!.before = "21:00";
+  f.save(f.ledger);
+  const output = await f.emailTools.get("question" in args ? "meetly_ask_owner" : "meetly_other_times")!.execute("handoff", args);
+  const result = JSON.parse(output.content[0]!.text);
+  assert.match(output.content.slice(1).map(c => c.text).join("\n"), /ownerQuestion.*final/);
+  assert.doesNotMatch(output.content.slice(1).map(c => c.text).join("\n"), /plow_send_email/);
+  assert.ok("replyToOwner" in result && result.replyToOwner, JSON.stringify(result));
+  assert.ok("ownerQuestion" in result);
+  assert.ok(!("silent" in result));
+  assert.ok(!("ownerAskSent" in result));
+  assert.equal(f.ownerLines.length, 0);
+  assert.ok(f.request().pendingOwner);
+  assert.deepEqual(f.request().lastNudge, {
+    fingerprint: JSON.stringify(["question" in args ? "owner-question" : "time-approval", f.request().pendingOwner!.askedAt]),
+    at: new Date(now).toISOString(),
+  });
+  assert.equal(reserveNudges(f.read(), now + 5 * 60_000).text, null, "the poll must not duplicate the email owner handoff");
+  assert.ok("error" in await f.act(f.ctx, "question" in args ? "ask_owner" : "other_times", args));
+  assert.equal(f.ownerLines.length, 0);
+});
+
+test("an owner-side email booking also invites the saved guest without a Contacts lookup", async t => {
+  const f = emailFixture(t);
+  const result = await calendarAction(f.request().id, { action: "book", start: offers[0]!.start });
+  assert.equal("invitationSent" in result && result.invitationSent, true);
+  const booking = f.commands.find(argv => argv.includes("--attendees"))!;
+  assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net");
+});
+
+test("an unused empty attendee list does not block a phone booking", async t => {
+  const f = fixture(t);
+  const result = await f.act(context, "pick", { start: offers[0]!.start, attendees: [] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().status, "booked");
+});
+
+
+test("guests can re-offer and book dinner but cannot widen its meal window", async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.meal = "dinner";
+  request.durationMin = 60;
+  request.constraints = { days: ["mon", "tue"], from: "2026-10-05", to: "2026-10-06" };
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { after: "17:00", before: "23:00" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  const offered = f.request().offered;
+  assert.equal(offered.length, 3);
+  assert.ok(offered.every(o => o.start.slice(11, 16) >= "18:00" && o.end.slice(11, 16) <= "21:00"));
+  const booked = await guestAction(context, "pick", { start: offered[0]!.start });
+  assert.ok(!("error" in booked), JSON.stringify(booked));
+  assert.equal(f.request().status, "booked");
+});
+
+
+test("a duration change's replacement topic reaches holds, booking titles and the owner-facing group label", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.topic = "30-minute call";
+  f.save(f.ledger);
+  const { origin, handle, name, chatUid, constraints, allowOverlap, format, locale } = f.request();
+  await calendarAction("request-one", { action: "offer", request: {
+    origin, handle, name, chatUid, constraints, allowOverlap, format, locale, topic: "60-minute call", durationMin: 60,
+    offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T12:00:00Z", account: "owner@example.com" }],
+  } });
+  f.ledger.requests[0]!.durationMin = 60;
+  const hold = f.commands.find(c => c[2] === "create")!;
+  assert.equal(hold[hold.indexOf("--summary") + 1], "Hold: 60-minute call with Guest");
+  const booked = await guestAction(context, "pick", { start: f.request().offered[0]!.start });
+  assert.ok(!("error" in booked), JSON.stringify(booked));
+  const booking = f.commands.find(c => c[2] === "update")!;
+  assert.equal(booking[booking.indexOf("--summary") + 1], "60-minute call with Guest");
+  assert.equal(f.request().durationMin, 60);
+  await f.act(context, "ask_owner", { question: "Should I bring the budget numbers?" });
   assert.deepEqual(f.ownerLines, [`Guest asked in your 60-minute call thread. Guest question: "Should I bring the budget numbers?". Reply there, or tell me what to say.`]);
 });
 
@@ -1061,8 +1440,9 @@ test("a pending time approval suppresses detail questions without consuming the 
   assert.equal(f.request().detailsAskedAt, undefined);
 });
 
+for (const status of ["offered", "booked"] as const)
 for (const [requested, expectedDate] of [[{ weekday: "tue", time: "16:00" }, "13"], ["2026-10-06T16:00:00-07:00", "06"]] as const)
-test(`other-times resolves Tuesday at 4pm without rewriting explicit dates: ${JSON.stringify(requested)}`, async t => {
+test(`other-times resolves Tuesday at 4pm without rewriting explicit dates (${status}): ${JSON.stringify(requested)}`, async t => {
   const f = fixture(t, undefined, "America/Los_Angeles");
   const request = f.ledger.requests[0]!;
   request.meal = "lunch"; request.durationMin = 60;
@@ -1070,9 +1450,20 @@ test(`other-times resolves Tuesday at 4pm without rewriting explicit dates: ${JS
   request.offered = [12, 15].map(day => ({ start: `2026-10-${day}T11:30:00-07:00`, end: `2026-10-${day}T12:30:00-07:00`, holdId: `offer-${day}`, account: "owner@example.com" }));
   f.save(f.ledger); f.events.clear();
   for (const offer of request.offered) f.events.set(offer.holdId!, event(offer.holdId!, offer.start, offer.end));
+  if (status === "booked") {
+    const latest = f.request();
+    latest.status = "booked";
+    latest.booked = { ...offers[0]!, account: "owner@example.com" };
+    latest.eventId = "booked-event";
+    latest.reoffer = { offered: latest.offered, offeredAt: new Date(now).toISOString() };
+    latest.offered = offers;
+    latest.constraints = { from: "2026-10-01", to: "2026-10-18" };
+    f.ledger.requests[0]!.constraints = latest.constraints;
+    f.save({ requests: [latest] });
+  }
   const result = await f.tools.get("meetly_other_times")!.execute("weekday", { start: requested });
   const details = JSON.parse(result.content[0]!.text);
-  if (expectedDate === "06") {
+  if (expectedDate === "06" && status === "offered") {
     assert.equal(details.preferencesUnavailable, true, JSON.stringify(details));
     assert.ok(details.offered.length);
     assert.ok(details.offered.every((o: { start: string }) => o.start >= "2026-10-12"));
@@ -1085,7 +1476,7 @@ test(`other-times resolves Tuesday at 4pm without rewriting explicit dates: ${JS
   assert.equal(details.askDetails, false);
   assert.deepEqual(f.request().pendingOwner, { start: `2026-10-${expectedDate}T16:00:00-07:00`, end: `2026-10-${expectedDate}T17:00:00-07:00`, askedAt: new Date(now).toISOString() });
   assert.ok(f.ownerLines[0]!.includes(`Tue, 10/${Number(expectedDate)}, 04:00 PM`));
-  assert.deepEqual(f.request().offered, request.offered);
+  assert.deepEqual(status === "booked" ? f.request().reoffer!.offered : f.request().offered, request.offered);
   t.diagnostic(`Owner approval: ${f.ownerLines[0]}`);
 });
 
@@ -1301,7 +1692,8 @@ test("owner DM named overlaps stay private in owner-group and guest tool outputs
   const f = fixture(t);
   const privateTitle = "Private medical consultation";
   f.events.set("approved", { ...event("approved", "2026-10-05T10:00:00Z", "2026-10-05T15:00:00Z"), summary: privateTitle });
-  const { request } = await offerRequest({ ...f.request(), status: "offered", allowOverlapTitles: [privateTitle],
+  const { origin, handle, chatUid, topic, durationMin } = f.request();
+  const { request } = await offerRequest({ origin, handle, chatUid, topic, durationMin, allowOverlapTitles: [privateTitle],
     offered: offers.map(({ start, end }) => ({ start, end })) });
   assert.deepEqual(request.allowOverlap, [{ account: "owner@example.com", id: "approved" }]);
 
@@ -1332,6 +1724,140 @@ test("an unlinked guest proposal returns only the owner's confirmation line", as
   assert.deepEqual(f.read().requests, []);
   assert.equal(f.commands.length, 0);
   assert.equal(f.ownerLines.length, 0);
+});
+
+for (const turnStartedAt of [undefined, now - 1, now]) test(`a booked guest cannot pick a replacement created in this turn (${turnStartedAt})`, async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  await f.act(context, "other_times", { start: offers[1]!.start });
+  const before = f.read();
+  const commands = f.commands.length;
+  const result = await guestAction({ ...context, turnStartedAt } as GuestContext, "pick", {
+    start: offers[1]!.start, turnStartedAt: now + 1,
+  } as GuestArgs);
+  assert.ok("error" in result, JSON.stringify(result));
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.commands.length, commands, "reject before any calendar operation");
+  assert.equal(f.ownerLines.length, 0);
+});
+
+for (const account of ["chat", "email"]) test(`runtime hooks keep a replacement unpickable through a prompt rebuild, then allow the next guest turn (${account})`, async t => {
+  const email = account === "email" ? emailFixture(t) : undefined;
+  const f = email ?? fixture(t);
+  const inputContext = email?.ctx ?? context;
+  await f.act(inputContext, "pick", { start: offers[0]!.start });
+  const hooks: Record<string, (event: any, ctx: any) => any> = {};
+  plugin.register({ registerTool() {}, on(name: string, fn: typeof hooks[string]) { hooks[name] = fn; }, logger: { info() {} } });
+  const ctx = { ...inputContext, sessionKey: `agent:main:plow:${account}:chat-one` };
+  const turn = { channel: "plow", accountId: account, sessionKey: ctx.sessionKey, runId: "replacement-turn" };
+  const tools = new Map<string, { execute: (id: string, args: object) => Promise<any> }>();
+  const register = () => registerGuestTools({ registerTool(factory: (ctx: object) => any) {
+    const tool = factory(ctx); tools.set(tool.name, tool);
+  } }, (bound, action, args) => guestAction(bound, action, args, async text => { f.ownerLines.push(text); }));
+  register();
+  t.mock.method(Date, "now", () => now - 1);
+  await hooks.before_prompt_build!({}, turn);
+  t.mock.method(Date, "now", () => now);
+  const offered = await tools.get("meetly_other_times")!.execute("offer", { start: offers[1]!.start });
+  assert.equal(offered.isError, false);
+  assert.equal(Date.parse(offered.details.offered[0].start), Date.parse(offers[1]!.start));
+  const before = f.read();
+  const commands = f.commands.length;
+  const pick = async (id: string) => {
+    hooks.before_tool_call!({ toolName: "meetly_pick_time" }, { ...turn, toolCallId: id });
+    return tools.get("meetly_pick_time")!.execute(id, { start: offers[1]!.start, turnStartedAt: now + 1000 });
+  };
+  assert.equal((await pick("same-run")).isError, true);
+  t.mock.method(Date, "now", () => now + 1);
+  await hooks.before_prompt_build!({}, turn);
+  register();
+  assert.equal((await pick("rebuilt-prompt")).isError, true);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.commands.length, commands);
+  assert.equal(f.ownerLines.length, 0);
+  hooks.agent_end!({}, turn);
+  turn.runId = "guest-choice-turn";
+  await hooks.before_prompt_build!({}, turn);
+  const moved = await pick("later-choice");
+  assert.equal(moved.isError, false, JSON.stringify(moved));
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse(offers[1]!.start));
+  assert.equal(f.ownerLines.length, 1);
+  hooks.agent_end!({}, turn);
+  t.diagnostic(`Same-run pick blocked; booking stayed at ${before.requests[0]!.booked!.start}. Next-turn choice moved it to ${f.request().booked!.start}.`);
+});
+
+for (const args of [{}, { after: "20:00" }, { from: "2026-10-05", to: "2026-10-06" }, { days: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] }])
+test(`booked other-times excludes the booked local date through fallbacks: ${JSON.stringify(args)}`, async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[1]!.start });
+  const booked = f.request().booked;
+  const result = await f.tools.get("meetly_other_times")!.execute("other", args);
+  const details = JSON.parse(result.content[0]!.text);
+  assert.equal(details.error, undefined, JSON.stringify(details));
+  assert.ok(details.offered.length > 0);
+  assert.ok(details.offered.every((o: { start: string }) => o.start.startsWith("2026-10-05")), JSON.stringify(details.offered));
+  assert.deepEqual(f.request().booked, booked);
+  t.diagnostic(`Tuesday booking retained; replacement offer: ${JSON.stringify(details.offered)}`);
+});
+
+for (const start of [{ weekday: "funday", time: "10:00" }, { weekday: "tue", time: "25:00" }, {}, null])
+test(`other-times rejects a malformed weekday start clearly: ${JSON.stringify(start)}`, async t => {
+  const f = fixture(t);
+  const before = f.read();
+  const result = await f.tools.get("meetly_other_times")!.execute("invalid", { start });
+  assert.match(JSON.parse(result.content[0]!.text).error, /Provide.*weekday.*HH:MM/);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.commands.length, 0);
+});
+
+for (const args of [
+  { days: ["tue"] }, { from: "2026-10-06", to: "2026-10-06" },
+  { start: "2026-10-06T11:00" }, { start: { weekday: "tue", time: "11:00" } },
+]) test(`booked other-times honors an explicit request for the booked date: ${JSON.stringify(args)}`, async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[1]!.start });
+  const booked = f.request().booked;
+  const result = await f.tools.get("meetly_other_times")!.execute("same-day", args);
+  const details = JSON.parse(result.content[0]!.text);
+  assert.equal(details.error, undefined, JSON.stringify(details));
+  assert.ok(details.offered.length > 0);
+  assert.ok(details.offered.every((o: { start: string }) => o.start.startsWith("2026-10-06")));
+  if (args.start) assert.equal(Date.parse(details.offered[0].start), Date.parse("2026-10-06T11:00:00Z"));
+  assert.deepEqual(f.request().booked, booked);
+});
+
+test("booked-date exclusion uses the owner's local date and keeps later occurrences of its weekday", async t => {
+  const f = fixture(t, undefined, "America/Los_Angeles");
+  const request = f.ledger.requests[0]!;
+  request.constraints = { from: "2026-10-05", to: "2026-10-13" };
+  request.offered = [{ ...offers[0]!, start: "2026-10-06T00:00:00Z", end: "2026-10-06T00:30:00Z" }];
+  f.save(f.ledger); f.events.clear();
+  f.events.set("hold-one", event("hold-one", request.offered[0]!.start, request.offered[0]!.end));
+  await f.act(context, "pick", { start: request.offered[0]!.start });
+  const booked = f.request().booked;
+  assert.ok(booked);
+  f.events.set("blocked-week", event("blocked-week", "2026-10-07T00:00:00-07:00", "2026-10-12T00:00:00-07:00"));
+  const result = await f.act(context, "other_times");
+  assert.ok(!("error" in result), JSON.stringify(result));
+  const dates = f.request().reoffer!.offered.map(o => o.start.slice(0, 10));
+  assert.ok(!dates.includes("2026-10-05"), JSON.stringify(dates));
+  assert.ok(dates.includes("2026-10-06"), "Tuesday is eligible: the booking's UTC date must not be excluded");
+  assert.ok(dates.includes("2026-10-12"), "exclude only the booked Monday, not every Monday");
+  assert.deepEqual(f.request().booked, booked);
+  t.diagnostic(`Booking ${booked.start} is Monday locally; offered dates: ${dates.join(", ")}`);
+});
+
+test("no other booked dates leaves the existing event and replacement holds intact", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[1]!.start });
+  await f.act(context, "other_times", { start: "2026-10-06T11:00" });
+  f.events.set("busy-monday", event("busy-monday", "2026-10-05T00:00:00Z", "2026-10-06T00:00:00Z"));
+  const before = f.read();
+  const commands = f.commands.length;
+  const result = await f.act(context, "other_times");
+  assert.ok("error" in result, JSON.stringify(result));
+  assert.deepEqual(f.read(), before);
+  assert.ok(f.commands.slice(commands).every(c => c[2] === "events"));
 });
 
 function useUtcHost(t: TestContext) {
@@ -1432,4 +1958,39 @@ test("rejecting offered slots without naming excluded days keeps other times on 
   assert.ok(result.offered.length, JSON.stringify(result));
   assert.ok(result.offered.every((o: { start: string }) => ["2026-10-05", "2026-10-06"].includes(o.start.slice(0, 10))));
   assert.ok(result.offered.every((o: { start: string }) => !offers.some(old => Date.parse(old.start) === Date.parse(o.start))));
+});
+
+test("guest booking and place changes send travel only to the owner, and cannot overwrite their override", async t => {
+  const f = fixture(t);
+  const travel = { beforeMin: 25, afterMin: 20 };
+  assert.ok(!("error" in await f.act(context, "format", { format: "in_person", location: "Tartine", travel })));
+  const booked = await f.act(context, "pick", { start: offers[0]!.start });
+  assert.ok(!("error" in booked));
+  assert.match(f.ownerLines.at(-1)!, /25 min travel before and 20 min after.*Tartine/);
+  assert.doesNotMatch(JSON.stringify(booked), /beforeMin|afterMin|travelEvents|Held .*travel|owner@example/);
+  const before = f.read().requests[0]!;
+  assert.equal(before.travelEvents!.length, 2);
+  await calendarAction(before.id, { action: "travel", travel: { beforeMin: 45, afterMin: 45, override: true } });
+  const changed = await f.act(context, "format", { format: "in_person", location: "Cafe", travel: { beforeMin: 5, afterMin: 5, override: true } });
+  assert.ok(!("error" in changed));
+  assert.deepEqual(f.read().requests[0]!.travel, { beforeMin: 45, afterMin: 45, override: true });
+  assert.match(f.ownerLines.at(-1)!, /45 min travel before and 45 min after.*Cafe/);
+  assert.doesNotMatch(JSON.stringify(changed), /travel|beforeMin|afterMin|owner@example/);
+  const viewed = await f.act(context, "view");
+  assert.doesNotMatch(JSON.stringify(viewed), /travel|beforeMin|afterMin/);
+  const other = await f.act(context, "other_times", { start: "2026-10-05T10:30:00Z" });
+  assert.ok(!("error" in other), JSON.stringify(other));
+  assert.equal(f.read().requests[0]!.reoffer!.offered[0]!.start, "2026-10-05T10:30:00+00:00");
+});
+
+
+test("an existing owner-group offer still respects a do-not-contact flag", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.doNotContact = true;
+  f.save(f.ledger);
+  const before = f.read();
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { topic: "Lunch" });
+  assert.equal("doNotContact" in result && result.doNotContact, true, JSON.stringify(result));
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.commands.some(c => ["create", "update", "delete"].includes(c[2]!)), false);
 });
