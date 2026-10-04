@@ -1128,8 +1128,30 @@ function emailFixture(t: TestContext) {
     }
     return fetchCalendar(url, init);
   });
-  return { ...f, ctx, thread };
+  const emailTools = new Map<string, { execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
+  registerGuestTools({ registerTool(factory: (context: GuestContext) => { name: string; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
+    const tool = factory(ctx); emailTools.set(tool.name, tool);
+  } }, guestAction);
+  return { ...f, ctx, thread, emailTools };
 }
+
+test("the first email reply and CC booking carry thread delivery and details instructions", async t => {
+  const f = emailFixture(t);
+  f.ledger.requests[0]!.detailsAskedAt = new Date(now).toISOString();
+  f.save(f.ledger);
+  const view = await f.emailTools.get("meetly_view_request")!.execute("first-reply", {});
+  const instructions = view.content.slice(1).map(c => c.text).join("\n");
+  assert.match(instructions, /plow_send_email/);
+  assert.ok(instructions.includes(JSON.stringify(f.ctx.nativeChannelId)));
+  assert.match(instructions, /first reply.*CC/i);
+  assert.match(instructions, /final.*private.*owner/i);
+  await f.emailTools.get("meetly_set_format")!.execute("format", { format: "in_person" });
+  const booked = await f.emailTools.get("meetly_pick_time")!.execute("pick", { start: offers[0]!.start });
+  assert.equal(JSON.parse(booked.content[0]!.text).askDetails, false);
+  assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /do not ask how or where to meet.*missing/i);
+  assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /plow_send_email/);
+  assert.equal(f.ownerLines.length, 0);
+});
 
 for (const [action, args] of actions.filter(([action]) => action !== "ask_owner")) test(`a CC'd participant can ${action} in the email thread`, async t => {
   const f = emailFixture(t);
@@ -1192,7 +1214,10 @@ for (const invalid of ["not-started", "absent-guest", "absent-sender", "wrong-li
 
 for (const args of [{ question: "Should Ana bring the budget?" }, { start: "2026-10-05T20:00" }]) test(`email owner handoff uses final routing, not a second DM: ${JSON.stringify(args)}`, async t => {
   const f = emailFixture(t);
-  const result = await f.act(f.ctx, "ask_owner", args);
+  const output = await f.emailTools.get("meetly_ask_owner")!.execute("handoff", args);
+  const result = JSON.parse(output.content[0]!.text);
+  assert.match(output.content.slice(1).map(c => c.text).join("\n"), /ownerQuestion.*final/);
+  assert.doesNotMatch(output.content.slice(1).map(c => c.text).join("\n"), /plow_send_email/);
   assert.ok("replyToOwner" in result && result.replyToOwner, JSON.stringify(result));
   assert.ok("ownerQuestion" in result);
   assert.ok(!("silent" in result));

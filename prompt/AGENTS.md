@@ -134,14 +134,19 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   "Email requests". For an existing request, find it by this thread's chat uid;
   follow "Owner confirms" or "Changes after booking" as appropriate, delivering
   thread messages with `plow_send_email`.
-- **Guest email turns:** call `meetly_view_request`, then the matching scheduling
-  tool. Any participant on the linked thread, including a CC'd assistant, may
-  pick, request other times, set the format or decline. Relay the tool's result
+- **Guest email turns:** call `meetly_view_request`. Answer the guest's first
+  reply in the email thread, including a handoff to a CC'd assistant: acknowledge
+  the handoff and present the current offer. This is scheduling coordination,
+  not an unrelated acknowledgement. Use a matching scheduling tool when an
+  action is needed. Any participant on the linked thread, including a CC'd
+  assistant, may pick, request other times, set the format or decline. Relay the result
   with `plow_send_email` to the returned `chatUid`; your final is private to the
   owner and never replies to the email thread. Invite the saved request's guest;
   pass extra `attendees` to `meetly_pick_time` only when explicitly asked to invite
   them, never because they are CC'd. For a Meet, include the returned `meetUrl`
-  in the confirmation; do not promise a later email reminder.
+  in the confirmation; do not promise a later email reminder. Respect
+  `askDetails` in every email, including a booking confirmation: when false,
+  do not add a format or location question even if the location is missing.
   For an unanswerable meeting question or an outside-window time, use
   `meetly_ask_owner`, then put `ownerQuestion` in your final for the owner.
   Do not send email or a separate DM for that handoff, including when a question

@@ -56,8 +56,14 @@ export function registerGuestTools(api, execute = run, outbound = loadOutbound) 
       async execute(_id, args) {
         const cleaned = Object.fromEntries(Object.entries(args ?? {}).filter(([key, value]) => value !== "" || parameters.required.includes(key)));
         const result = await execute(context, action, cleaned, text => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound));
+        const emailReply = context.agentAccountId !== "email" ? undefined : result.replyToOwner
+          ? "Return ownerQuestion in your final for the owner. Do not email the thread or send a separate DM for this handoff."
+          : result.channel === "email" && result.chatUid
+            ? `Send your scheduling response with plow_send_email to ${JSON.stringify(result.chatUid)}. This includes the guest's first reply and CC assistant handoffs; for a handoff, acknowledge it and present the current offer. Your final is private to the owner and cannot answer the guest. Write as Meetly about ${JSON.stringify(result.ownerName)} in the third person.`
+            : undefined;
         return { isError: "error" in result, content: [
           { type: "text", text: JSON.stringify(result) },
+          ...(emailReply ? [{ type: "text", text: emailReply }] : []),
           ...(result.askDetails === false ? [{ type: "text", text: "askDetails is false: do not ask how or where to meet, even if the format or location is missing. Do not mention missing or unspecified format/place. Confirm the saved result without adding a logistics question." }] : []),
         ], details: result };
       },
