@@ -298,6 +298,8 @@ test("booking in person carries the no-more-details instruction after the opener
   assert.equal(details.format, "in_person");
   assert.ok(!details.location);
   assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /do not ask how or where to meet.*missing/i);
+  assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /do not mention missing or unspecified/i);
+  t.diagnostic(`Booking guidance: ${booked.content.slice(1).map(c => c.text).join(" ")}`);
 });
 
 test("blank optional preferences through the guest tool still produce fresh held times", async t => {
@@ -1023,6 +1025,11 @@ test("booked guest picks require this thread's current replacement and preserve 
   const replacement = f.request().reoffer!;
   assert.ok(replacement);
   assert.ok(replacement.offered.every(o => ["2026-10-05", "2026-10-06"].includes(o.start.slice(0, 10)) && o.start.slice(11, 16) < "15:00"));
+  const rejected = await f.tools.get("meetly_other_times")!.execute("call", { excludedDays: ["mon", "tue"] });
+  const rejectedDetails = JSON.parse(rejected.content[0]!.text);
+  assert.ok(rejectedDetails.error);
+  assert.equal(rejectedDetails.offered, undefined, "do not present old holds that the guest just ruled out");
+  assert.deepEqual(f.request().reoffer, replacement);
   for (const ctx of [{ ...context, nativeChannelId: "another-chat" }, { ...context, requesterSenderId: "+15559999999" }]) {
     assert.ok("error" in await f.act(ctx, "pick", { start: replacement.offered[0]!.start }));
     assert.ok("error" in await f.act(ctx, "decline"));
@@ -1051,7 +1058,7 @@ for (const invited of [false, true]) test(`booked guest changes notify the owner
   assert.equal(cancelled.ownerNotified, true);
   assert.equal(f.deliveries.length, 2);
   assert.equal(f.deliveries[1]!.to, "plow-owner");
-  assert.match(f.ownerLines[1]!, /Lunch with Guest.*cancelled/);
+  assert.match(f.ownerLines[1]!, /^Guest cancelled Lunch on .*UTC/);
   await call("meetly_decline");
   assert.equal(f.deliveries.length, 2, "repeated declines must not send another DM");
   t.diagnostic(JSON.stringify({ moved, cancelled, ownerDMs: f.ownerLines }));
@@ -1068,4 +1075,14 @@ test("a failed owner notice preserves a completed move and never claims delivery
   assert.equal(result.error, undefined);
   assert.equal(Date.parse(f.request().booked!.start), Date.parse(offers[1]!.start));
   assert.equal(f.deliveries.length, 1);
+});
+
+test("an incomplete guest cancellation names the guest and keeps cleanup pending", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  f.fail.add("delete");
+  const result = await f.act(context, "decline");
+  assert.ok("cleanupPending" in result && result.cleanupPending);
+  assert.match(f.ownerLines[0]!, /^Guest requested cancellation of Lunch on .*calendar cleanup is pending/);
+  t.diagnostic(`Owner DM: ${f.ownerLines[0]}`);
 });

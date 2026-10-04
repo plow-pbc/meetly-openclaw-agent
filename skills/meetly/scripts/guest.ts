@@ -79,8 +79,8 @@ async function notifyOwner(request: Request, config: Config, change: "moved" | "
   const when = localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(request.booked!.start));
   const subject = `${meetingTopic(request)} with ${request.name ?? request.handle}`;
   const text = change === "moved" ? `${subject} moved to ${when} (${config.timezone}).`
-    : request.holdCleanup?.length ? `${subject} on ${when} (${config.timezone}): cancellation requested; calendar cleanup is pending.`
-    : `${subject} on ${when} (${config.timezone}) was cancelled.`;
+    : request.holdCleanup?.length ? `${request.name ?? request.handle} requested cancellation of ${meetingTopic(request)} on ${when} (${config.timezone}); calendar cleanup is pending.`
+    : `${request.name ?? request.handle} cancelled ${meetingTopic(request)} on ${when} (${config.timezone}).`;
   try {
     if (!sendOwner) throw new Error("owner messaging unavailable");
     await sendOwner(text);
@@ -139,7 +139,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     }
     if (!slots.length) slots = findSlots(fallback).slots;
   }
-  if (!slots.length) return { ...(request.status === "booked" && currentOffers(request).length ? view(request, config) : {}), error: "No new times are available within the owner's conditions. The current offer is unchanged." };
+  if (!slots.length) return { error: "No new times are available within the owner's conditions. The current offer is unchanged." };
   const { origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {
     origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,

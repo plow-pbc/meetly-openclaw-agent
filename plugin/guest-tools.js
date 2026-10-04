@@ -58,7 +58,7 @@ export function registerGuestTools(api, execute = run, outbound = loadOutbound) 
         const result = await execute(context, action, cleaned, text => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound));
         return { isError: "error" in result, content: [
           { type: "text", text: JSON.stringify(result) },
-          ...(result.askDetails === false ? [{ type: "text", text: "askDetails is false: do not ask how or where to meet, even if the format or location is missing. Confirm the saved result without adding a logistics question." }] : []),
+          ...(result.askDetails === false ? [{ type: "text", text: "askDetails is false: do not ask how or where to meet, even if the format or location is missing. Do not mention missing or unspecified format/place. Confirm the saved result without adding a logistics question." }] : []),
         ], details: result };
       },
     }));
