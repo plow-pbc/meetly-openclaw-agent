@@ -6,7 +6,7 @@ import { ContactConfirmationRequired, normalizeHandle, sameHandle, type Constrai
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "durationMin" | "allowOverlapTitles" | "offered">;
+type GroupRequest = Pick<OfferInput, "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "durationMin" | "allowOverlapTitles" | "offered">;
 
 // Tool callers may fill unused optional fields with empty values.
 function conditions(value?: Constraints): Constraints | undefined {
@@ -41,8 +41,8 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
       const contact = await lookupContact(handle);
       if (contact.found) name = contact.name?.trim() || undefined;
     }
-    const { topic, meal, durationMin, constraints, proposed, format, location, locale, offered } = args;
-    const { request } = await offerRequest({ handle, name, topic, meal, durationMin, constraints: conditions(constraints), proposed: conditions(proposed), format, location, locale,
+    const { travel, topic, meal, durationMin, constraints, proposed, format, location, locale, offered } = args;
+    const { request } = await offerRequest({ travel, handle, name, topic, meal, durationMin, constraints: conditions(constraints), proposed: conditions(proposed), format, location, locale,
       allowOverlapTitles: args.allowOverlapTitles, offered: offered.map(({ start, end }) => ({ start, end })),
       origin: "owner-group", chatUid: chat, askDetails: false }, options);
     return view(request, loadConfig());

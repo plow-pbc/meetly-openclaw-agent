@@ -9,6 +9,7 @@ import { durationFor, holdHours, loadConfig, reminderLeadMin } from "./config.ts
 import { isMeetUrl } from "./event.ts";
 import { file } from "./paths.ts";
 import { uniqueEvents, type EventRef } from "./busy.ts";
+import { checkTravel, type Travel } from "./travel.ts";
 import type { Constraints } from "./slots.ts";
 export type { Constraints } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -61,6 +62,8 @@ export type Request = {
   log?: { at: string; text: string }[];
   topic: string;
   location?: string;
+  travel?: Travel;
+  travelEvents?: HoldRef[];
   durationMin: number;
   meal?: Meal;
   // The owner's conditions, kept for every offer of this request.
@@ -95,17 +98,19 @@ export const requestHolds = (request: Request): HoldRef[] => currentOffers(reque
   .flatMap(o => o.holdId ? [{ holdId: o.holdId, account: o.account }] : []);
 export const requestEvents = (request: Request): HoldRef[] => [
   ...requestHolds(request),
+  ...(request.holdCleanup ?? []).flatMap(ref => ref.holdId ? [{ holdId: ref.holdId, account: ref.account }] : []),
+  ...(request.status === "booked" ? request.travelEvents ?? [] : []),
   ...(request.status === "booked" && request.eventId && request.booked ? [{ holdId: request.eventId, account: request.booked.account }] : []),
 ];
 
 export type Ledger = { requests: Request[] };
 
 export type NewRequest = Omit<Request,
-  "id" | "channel" | "doNotContact" | "lastGuestReplyAt" | "lastNudge" | "log" | "reoffer" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
+  "travelEvents" | "id" | "channel" | "doNotContact" | "lastGuestReplyAt" | "lastNudge" | "log" | "reoffer" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
   | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { channel?: Request["channel"]; status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
-  "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale">> & {
+  "travel" | "travelEvents" | "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale">> & {
   reoffer?: Request["reoffer"] | null;
   pendingOwner?: PendingOwner | null;
   booked?: Booked | null;
@@ -118,7 +123,7 @@ const OPEN: readonly Status[] = ["asked", "offered"];
 const FORMATS: readonly Format[] = ["meet", "in_person", "phone", "unknown"];
 const OUTCOMES: readonly Reminder["outcome"][] = ["sent", "cancelled", "no-link"];
 const PATCH_KEYS = [
-  "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "topic", "pendingOwner",
+  "travel", "travelEvents", "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "topic", "pendingOwner",
   "format", "locale", "booked", "meetUrl", "reminder", "reoffer",
 ];
 // Keys a patch can clear with null.
@@ -282,7 +287,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   const channel = input.channel ?? "text";
   if (channel !== "text" && channel !== "email") throw new Error("channel must be text or email");
   if (channel === "email" && !input.handle.includes("@")) throw new Error("email requests need an email address");
-  for (const key of ["calendarRevision", "reoffer"]) {
+  for (const key of ["calendarRevision", "reoffer", "travelEvents"]) {
     if (key in input) throw new Error(`${key} is managed by calendar.ts`);
   }
   if ("detailsAskedAt" in input) throw new Error("detailsAskedAt is managed by request-view.ts");
@@ -301,6 +306,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   const format = input.format === undefined ? "unknown" : input.format;
   checkFormat(format);
   if (input.locale !== undefined) checkLocale(input.locale);
+  if (input.travel !== undefined) checkTravel(input.travel);
   const open = findOpenByHandle(ledger, input.handle);
   if (open) throw new Error(`open request ${open.id} already exists for this person; update it instead`);
   const at = new Date(now).toISOString();
@@ -335,6 +341,7 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
   if (existing.channel === "email" && existing.chatUid && input.chatUid && input.chatUid !== existing.chatUid) throw new Error("an email request cannot move to another thread");
   input = { ...input, channel: existing.channel, origin: existing.origin, chatUid: input.chatUid ?? existing.chatUid,
     askDetails: input.askDetails ?? existing.askDetails,
+    travel: existing.travel?.override ? existing.travel : input.travel ?? existing.travel,
     allowOverlap: uniqueEvents([...(existing.allowOverlap ?? []), ...(input.allowOverlap ?? [])]) };
   if (existing.chatUid && input.chatUid !== existing.chatUid) throw new Error("a request cannot move to another chat");
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
@@ -377,6 +384,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
       throw new Error("pendingOwner needs askedAt and either a short question or valid start and end");
     }
   }
+  if (patch.travel !== undefined) checkTravel(patch.travel);
   if (patch.format !== undefined) checkFormat(patch.format);
   if (patch.locale !== undefined) checkLocale(patch.locale);
   if (patch.booked) checkBooked(patch.booked);
@@ -538,7 +546,7 @@ if (isMain(import.meta.url)) {
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
         const patch = jsonArg(values);
-        for (const key of ["status", "eventId", "offered", "reoffer", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location"]) {
+        for (const key of ["travel", "travelEvents", "status", "eventId", "offered", "reoffer", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location"]) {
           if (key in patch) throw new Error(`${key} is managed by calendar.ts or reminder-check.ts`);
         }
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => updateRequest(l, values.id!, patch, now));

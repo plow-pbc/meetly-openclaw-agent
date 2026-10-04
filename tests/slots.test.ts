@@ -253,7 +253,7 @@ test("lunch and dinner override working hours; coffee keeps the owner's window a
   const dinner = { ...query, meal: "dinner" as const, after: "19:00", before: "21:00", days: ["mon"] as const,
     busy: [{ start: "2026-09-28T19:00:00-03:00", end: "2026-09-28T20:00:00-03:00" }] };
   const slots = findSlots({ ...dinner, days: [...dinner.days] }).slots;
-  assert.deepEqual(slots.map(s => s.start), ["2026-09-28T20:00:00-03:00", "2026-10-05T19:00:00-03:00", "2026-10-05T19:30:00-03:00"]);
+  assert.deepEqual(slots.map(s => s.start), ["2026-10-05T19:00:00-03:00", "2026-10-05T19:30:00-03:00", "2026-10-05T20:00:00-03:00"]);
   assert.equal(checkTime({ ...query, meal: "dinner", start: slots[0]!.start }).outsideHours, false);
   assert.equal(checkTime({ ...query, meal: "dinner", start: "2026-09-28T21:00:00-03:00" }).outsideHours, true);
   assert.deepEqual(findSlots({ ...query, meal: "dinner", days: ["sat"] }).slots, []);
@@ -315,4 +315,37 @@ test("the CLI accepts coffee and preserves dinner's window and saved duration on
   assert.equal(coffee.status, 0, coffee.stderr);
   assert.equal(coffee.json.slots[0].start, "2026-09-28T17:00:00-03:00");
   assert.equal(coffee.json.slots[0].end, "2026-09-28T17:30:00-03:00");
+});
+
+test("travel must fit on both sides while only the meeting must fit the working window", () => {
+  const query = q({ now: NOW - 86400000, config: { ...CONFIG, horizonDays: 1 }, format: "in_person", travel: { beforeMin: 45, afterMin: 30 } });
+  const first = findSlots(query).slots[0]!;
+  assert.equal(first.start.slice(11, 16), CONFIG.windowStart);
+  for (const busy of [
+    { start: "2026-09-28T08:00:00-03:00", end: "2026-09-28T08:30:00-03:00" },
+    { start: "2026-09-28T09:45:00-03:00", end: "2026-09-28T10:00:00-03:00" },
+  ]) {
+    assert.equal(checkTime({ ...query, start: first.start, busy: [busy] }).reason, "busy");
+    assert.ok(findSlots({ ...query, busy: [busy] }).slots.every(s => s.start !== first.start));
+  }
+  assert.equal(checkTime({ ...query, start: first.start, unknownAfter: first.end }).reason, "unknown");
+  assert.equal(checkTime({ ...query, start: first.start, busy: [], format: "meet", unknownAfter: first.end }).free, true);
+});
+
+test("slots --request ignores its booked travel, preserves minutes, and conceals private fields", () => {
+  const home = tmpHome();
+  writeJson(join(home, "config.json"), CONFIG);
+  const request = { id: "travel", status: "booked", durationMin: 30, format: "in_person", travel: { beforeMin: 45, afterMin: 20 },
+    travelEvents: [{ holdId: "private-travel", account: "owner@example.com" }], offered: [] };
+  writeJson(join(home, "ledger.json"), { requests: [request] });
+  const busyFile = join(home, "busy.json");
+  writeJson(busyFile, { busy: [{ id: "private-travel", account: "owner@example.com", start: "2026-09-28T08:30:00-03:00", end: "2026-09-28T09:00:00-03:00" }], degraded: [] });
+  const args = ["--request", "travel", "--in", busyFile, "--at", "2026-09-28T09:00:00-03:00", "--now", new Date(NOW - 86400000).toISOString()];
+  const own = cli("slots.ts", args, { MEETLY_HOME: home });
+  assert.equal(own.status, 0, own.stderr);
+  assert.equal(own.json.free, true);
+  assert.doesNotMatch(own.stdout, /private-travel|beforeMin|owner@example/);
+  writeJson(busyFile, { busy: [{ id: "other", account: "owner@example.com", start: "2026-09-28T08:30:00-03:00", end: "2026-09-28T09:00:00-03:00" }], degraded: [] });
+  const other = cli("slots.ts", args, { MEETLY_HOME: home });
+  assert.equal(other.json.reason, "busy");
 });

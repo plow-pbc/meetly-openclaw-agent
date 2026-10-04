@@ -1536,3 +1536,26 @@ test("calendar tool failures give the model safe recovery instructions", async t
   assert.equal(details.recovery.retry, false);
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE|owner@example.com/);
 });
+
+test("guest booking and place changes send travel only to the owner, and cannot overwrite their override", async t => {
+  const f = fixture(t);
+  const travel = { beforeMin: 25, afterMin: 20 };
+  assert.ok(!("error" in await f.act(context, "format", { format: "in_person", location: "Tartine", travel })));
+  const booked = await f.act(context, "pick", { start: offers[0]!.start });
+  assert.ok(!("error" in booked));
+  assert.match(f.ownerLines.at(-1)!, /25 min travel before and 20 min after.*Tartine/);
+  assert.doesNotMatch(JSON.stringify(booked), /beforeMin|afterMin|travelEvents|Held .*travel|owner@example/);
+  const before = f.read().requests[0]!;
+  assert.equal(before.travelEvents!.length, 2);
+  await calendarAction(before.id, { action: "travel", travel: { beforeMin: 45, afterMin: 45, override: true } });
+  const changed = await f.act(context, "format", { format: "in_person", location: "Cafe", travel: { beforeMin: 5, afterMin: 5, override: true } });
+  assert.ok(!("error" in changed));
+  assert.deepEqual(f.read().requests[0]!.travel, { beforeMin: 45, afterMin: 45, override: true });
+  assert.match(f.ownerLines.at(-1)!, /45 min travel before and 45 min after.*Cafe/);
+  assert.doesNotMatch(JSON.stringify(changed), /travel|beforeMin|afterMin|owner@example/);
+  const viewed = await f.act(context, "view");
+  assert.doesNotMatch(JSON.stringify(viewed), /travel|beforeMin|afterMin/);
+  const other = await f.act(context, "other_times", { start: "2026-10-05T10:30:00Z" });
+  assert.ok(!("error" in other), JSON.stringify(other));
+  assert.equal(f.read().requests[0]!.reoffer!.offered[0]!.start, "2026-10-05T10:30:00+00:00");
+});

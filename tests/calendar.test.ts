@@ -681,3 +681,141 @@ test("a time approval never sends a conflict override even across its own hold",
   assert.equal(writes.length, 1);
   assert.equal(writes.some(c => c.includes("--confirm-conflict")), false);
 });
+
+const travel = { beforeMin: 25, afterMin: 20 };
+
+test("travel only creates private busy children on booking, then moves, resizes and cancels through the seam", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, format: "in_person", location: "Tartine", travel } }, f.options);
+  assert.equal(f.calls.filter(c => c[2] === "create").length, 2, "offered holds have no travel events");
+  const result = await calendarAction("r_one", { action: "book", start, attendees: "guest@example.com" }, f.options);
+  assert.match(("ownerTravelNote" in result && result.ownerTravelNote) || "", /25 min travel before and 20 min after.*Tartine/);
+  const children = f.read().travelEvents!;
+  assert.equal(children.length, 2);
+  assert.deepEqual(children.map(c => f.events.get(c.holdId)!.start.dateTime), ["2026-10-05T09:35:00.000Z", end]);
+  const creates = f.calls.filter(c => c[2] === "create" && c.includes("--visibility"));
+  for (const command of creates) {
+    assert.equal(command[command.indexOf("--visibility") + 1], "private");
+    assert.equal(command[command.indexOf("--transparency") + 1], "opaque");
+    assert.equal(command[command.indexOf("--send-updates") + 1], "none");
+    assert.ok(command.includes("meetlyRequest=r_one"));
+    assert.ok(!command.includes("--attendees"));
+  }
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, offered: [{ start: "2026-10-05T10:30:00Z", end: "2026-10-05T11:00:00Z", account }] } }, f.options);
+  assert.deepEqual(f.read().travelEvents, children, "replacement holds keep booked travel");
+  await calendarAction("r_one", { action: "book", start: "2026-10-05T10:30:00Z" }, f.options);
+  assert.ok(children.every(c => f.events.get(c.holdId)!.status === "cancelled"));
+  assert.equal(f.read().travelEvents!.length, 2);
+  assert.equal(f.events.get(f.read().travelEvents![0]!.holdId)!.start.dateTime, "2026-10-05T10:05:00.000Z");
+  await calendarAction("r_one", { action: "travel", travel: { beforeMin: 45, afterMin: 45, override: true } }, f.options);
+  assert.equal(f.events.get(f.read().travelEvents![0]!.holdId)!.start.dateTime, "2026-10-05T09:45:00.000Z");
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Cafe", travel }, f.options);
+  assert.deepEqual(f.read().travel, { beforeMin: 45, afterMin: 45, override: true });
+  await calendarAction("r_one", { action: "cancel" }, f.options);
+  assert.ok([...f.events.values()].every(e => e.status === "cancelled"));
+  for (const command of f.calls.filter(c => c[2] === "delete" && c[4] !== f.read().eventId)) {
+    assert.equal(command[command.indexOf("--send-updates") + 1], "none");
+  }
+});
+
+for (const side of ["before", "after"] as const) test(`offers and picks recheck ${side} travel against other events`, async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Tartine", travel }, f.options);
+  const event = side === "before" ? calendarEvent("busy", "2026-10-05T09:30:00Z", "2026-10-05T09:45:00Z")
+    : calendarEvent("busy", "2026-10-05T10:40:00Z", "2026-10-05T11:00:00Z");
+  f.events.set("busy", event);
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /previous offer retained/);
+  assert.equal(f.read().status, "offered");
+  assert.equal(f.calls.filter(c => ["create", "update"].includes(c[2]!)).length, 0);
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, format: "in_person", travel } }, f.options);
+  assert.equal(f.read().offered.length, 1);
+  assert.equal(f.read().offered[0]!.start, f.offer.offered[1]!.start);
+});
+
+test("unknown-place meals default to fifteen minutes; a named place resizes, virtual removes travel", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, meal: "lunch" } }, f.options);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  assert.equal(f.events.get(f.read().travelEvents![0]!.holdId)!.start.dateTime, "2026-10-05T09:45:00.000Z");
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Tartine", travel }, f.options);
+  assert.equal(f.events.get(f.read().travelEvents![0]!.holdId)!.start.dateTime, "2026-10-05T09:35:00.000Z");
+  const children = f.read().travelEvents!;
+  await calendarAction("r_one", { action: "format", format: "meet" }, f.options);
+  assert.deepEqual(f.read().travelEvents, []);
+  assert.ok(children.every(c => f.events.get(c.holdId)!.status === "cancelled"));
+  assert.equal(f.read().status, "booked");
+});
+
+for (const failure of ["second child", "meeting"] as const) test(`failed ${failure} rolls back staged travel and leaves original booking intact`, async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "format", format: "in_person", travel }, f.options);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const before = f.read();
+  let creates = 0;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] === "create" && ++creates === 2 && failure === "second child" || cmd.argv[2] === "update" && failure === "meeting") return { error: "write refused" };
+    return f.command(cmd);
+  };
+  await assert.rejects(calendarAction("r_one", { action: "book", start: "2026-10-05T11:00:00Z" }, { ...f.options, command }), /previous offer retained/);
+  assert.deepEqual(f.read().booked, before.booked);
+  assert.deepEqual(f.read().travelEvents, before.travelEvents);
+  assert.equal(f.events.get(before.eventId!)!.start.dateTime, start);
+  assert.equal([...f.events.values()].filter(e => e.status !== "cancelled").length, 3);
+  assert.deepEqual(f.read().holdCleanup, []);
+});
+
+test("lost travel create reconciles without duplication and cleanup failure remains owned until retry", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "format", format: "in_person", travel }, f.options);
+  const command = async (cmd: MacCommand) => {
+    const result = await f.command(cmd);
+    return cmd.argv[2] === "create" ? undefined : result;
+  };
+  await calendarAction("r_one", { action: "book", start }, { ...f.options, command });
+  assert.equal(f.calls.filter(c => c[2] === "create").length, 2);
+  const children = f.read().travelEvents!;
+  await calendarAction("r_one", { action: "travel", travel: { beforeMin: 0, afterMin: 0, override: true } }, {
+    ...f.options, command: async cmd => cmd.argv[2] === "delete" ? { error: "failed" } : f.command(cmd),
+  });
+  assert.deepEqual(f.read().travelEvents, []);
+  assert.deepEqual(f.read().holdCleanup, children);
+  await calendarAction("r_one", { action: "cleanup" }, f.options);
+  assert.deepEqual(f.read().holdCleanup, []);
+  assert.ok(children.every(c => f.events.get(c.holdId)!.status === "cancelled"));
+});
+
+test("travel bounds fail before any calendar operation and cannot bypass the seam", async t => {
+  const f = fixture(t);
+  for (const minutes of [-1, 121, 1.5, NaN]) {
+    await assert.rejects(calendarAction("r_one", { action: "travel", travel: { beforeMin: minutes, afterMin: 0 } }, f.options), /whole minutes/);
+  }
+  assert.equal(f.calls.length, 0);
+  const result = cli("ledger.ts", ["update", "--id", "r_one", "--json", JSON.stringify({ travel })], { MEETLY_HOME: f.home });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /managed by calendar.ts/);
+});
+
+test("travel commit failure resumes without recreating children; replacement expiry preserves booked travel", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "format", format: "in_person", travel }, f.options);
+  const rename = fs.renameSync;
+  let fail = true;
+  t.mock.method(fs, "renameSync", (from: fs.PathLike, to: fs.PathLike) => {
+    if (fail && to === join(f.home, "ledger.json")) throw new Error("simulated commit failure");
+    return rename(from, to);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /simulated commit failure/);
+  assert.equal(f.read().status, "offered");
+  assert.equal(f.read().travelEvents, undefined);
+  fail = false;
+  await calendarAction("r_one", { action: "resume" }, f.options);
+  assert.equal(f.calls.filter(c => c[2] === "create").length, 2);
+  const children = f.read().travelEvents!;
+  await calendarAction("r_one", { action: "offer", request: f.offer }, f.options);
+  await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 72 * 3600_000 });
+  assert.deepEqual(f.read().travelEvents, children);
+  assert.equal(f.read().status, "booked");
+  assert.ok(children.every(c => f.events.get(c.holdId)!.status === "confirmed"));
+});

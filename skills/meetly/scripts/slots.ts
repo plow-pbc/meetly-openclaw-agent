@@ -5,6 +5,7 @@
 // that window or the owner's days, --at requires owner confirmation.
 // With a locale (the other person's, e.g. pt-BR or en-US) the label follows
 // that locale's date and time conventions; without one it is "tue 29/9 12:00".
+import { travelRange, type TravelInput } from "./travel.ts";
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { durationFor, loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
@@ -18,7 +19,7 @@ export type Slot = { start: string; end: string; dayOfWeek: Day; label: string }
 
 export type Constraints = { days?: string[]; after?: string; before?: string; from?: string; to?: string };
 
-export type SlotQuery = Constraints & {
+export type SlotQuery = Constraints & TravelInput & {
   now: number;
   config: Config;
   busy: Busy[];
@@ -100,12 +101,13 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; durationMin: number; u
     for (let t = startMin; t + duration <= endMin; t += STEP_MIN) {
       const start = zonedToUtc(y, m, d, Math.floor(t / 60), t % 60, tz);
       const end = start + duration * 60_000;
-      if (unknownAfter !== undefined && end > unknownAfter) {
+      const range = travelRange(start, end, q);
+      if (unknownAfter !== undefined && Date.parse(range.to) > unknownAfter) {
         perDay.push(found);
         break scan;
       }
       if (start < earliest || excluded.has(start) || !withinConstraints(start, end, tz, q)) continue;
-      if (busy.some((b) => b.start < end && b.end > start)) continue;
+      if (busy.some((b) => b.start < Date.parse(range.to) && b.end > Date.parse(range.from))) continue;
       found.push({ start, end, day });
     }
     perDay.push(found);
@@ -146,7 +148,7 @@ export type TimeCheck = {
 // (except allowOverlap), with enough notice, and inside what was read.
 // outsideHours: not on the owner's days or not inside the window, so the
 // owner must confirm before it is held or booked.
-export function checkTime(q: {
+export function checkTime(q: TravelInput & {
   now: number;
   config: Config;
   busy: Busy[];
@@ -171,10 +173,11 @@ export function checkTime(q: {
   const [windowStart, windowEnd] = windowFor(q.config, q.meal);
   const outsideHours = !q.config.days.includes(s.weekday) || !sameDay ||
     s.hh * 60 + s.mm < windowStart || e.hh * 60 + e.mm > windowEnd;
+  const range = travelRange(start, end, q);
   let reason: TimeCheck["reason"];
-  if (q.unknownAfter !== undefined && end > Date.parse(q.unknownAfter)) reason = "unknown";
+  if (q.unknownAfter !== undefined && Date.parse(range.to) > Date.parse(q.unknownAfter)) reason = "unknown";
   else if (start < q.now + MIN_NOTICE_MIN * 60_000) reason = "too-soon";
-  else if (q.busy.some((b) => (!allowsOverlap(b, q.allowOverlap)) && Date.parse(b.start) < end && Date.parse(b.end) > start)) {
+  else if (q.busy.some((b) => (!allowsOverlap(b, q.allowOverlap)) && Date.parse(b.start) < Date.parse(range.to) && Date.parse(b.end) > Date.parse(range.from))) {
     reason = "busy";
   }
   const format = q.locale !== undefined ? localeFormatter(q.locale, tz) : undefined;
@@ -200,6 +203,8 @@ if (isMain(import.meta.url)) {
         request: { type: "string" },
         duration: { type: "string" },
         meal: { type: "string" },
+        format: { type: "string" },
+        travel: { type: "string" },
         days: { type: "string" },
         after: { type: "string" },
         before: { type: "string" },
@@ -232,11 +237,13 @@ if (isMain(import.meta.url)) {
       : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
     if (values.request !== undefined && (!request || !["offered", "booked"].includes(request.status))) throw new Error("--request needs an offered or booked request");
     if (request) input.busy = input.busy.filter(b => !requestEvents(request).some(o => o.holdId === b.id && o.account === b.account));
+    const travelInput: TravelInput = { format: request?.format ?? values.format as TravelInput["format"],
+      travel: request?.travel?.override ? request.travel : values.travel ? JSON.parse(values.travel) : request?.travel };
     if (values.at !== undefined) {
       for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
-      const check: Parameters<typeof checkTime>[0] = { now, config, meal: request?.meal ?? meal, durationMin: request?.durationMin, locale: request?.locale, busy: input.busy, start: values.at, allowOverlap: request?.allowOverlap ?? input.allowOverlap };
+      const check: Parameters<typeof checkTime>[0] = { ...travelInput, now, config, meal: request?.meal ?? meal, durationMin: request?.durationMin, locale: request?.locale, busy: input.busy, start: values.at, allowOverlap: request?.allowOverlap ?? input.allowOverlap };
       if (input.unknownAfter !== undefined) check.unknownAfter = input.unknownAfter;
       if (values.duration !== undefined) check.durationMin = positiveInt(values.duration, "--duration");
       if (values["allow-overlap"]) check.allowOverlap = values["allow-overlap"].map(value => JSON.parse(value));
@@ -244,7 +251,7 @@ if (isMain(import.meta.url)) {
       if (values["no-overlap"]) check.allowOverlap = [];
       return { ...checkTime(check), degraded };
     }
-    const q: SlotQuery = { now, config, meal, busy: input.busy, allowOverlap: input.allowOverlap };
+    const q: SlotQuery = { ...travelInput, now, config, meal, busy: input.busy, allowOverlap: input.allowOverlap };
     if (input.unknownAfter !== undefined) q.unknownAfter = input.unknownAfter;
     if (values.duration !== undefined) q.durationMin = positiveInt(values.duration, "--duration");
     if (values.count !== undefined) q.count = positiveInt(values.count, "--count");
