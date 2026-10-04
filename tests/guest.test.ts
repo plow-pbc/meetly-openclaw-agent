@@ -773,7 +773,7 @@ test("owner group offers ignore a parsed line name and use the actual guest part
 });
 
 for (const name of ["", "unnamed member", "+15551234567"]) {
-  test(`owner group offers omit an unknown participant name (${name})`, async t => {
+  test(`owner group offers resolve an unnamed participant through exact Contacts (${name})`, async t => {
     const f = fixture(t);
     f.save({ requests: [] });
     f.events.clear();
@@ -781,7 +781,10 @@ for (const name of ["", "unnamed member", "+15551234567"]) {
     const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
       { topic: "Lunch", offered: offers });
     assert.ok(!("error" in result), JSON.stringify(result));
-    assert.equal(f.request().name, undefined);
+    assert.equal(f.request().name, "Guest");
+    assert.equal(f.request().handle, context.requesterSenderId);
+    assert.ok(f.commands.some(argv => argv[0] === "/bin/sh"));
+    assert.ok(f.commands.filter(argv => argv[2] === "create").every(argv => argv[argv.indexOf("--summary") + 1] === "Hold: Lunch with Guest"));
   });
 }
 
@@ -811,4 +814,26 @@ test("owner group participant lookup failure stops before creating holds", async
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
   assert.deepEqual(f.read().requests, []);
   assert.deepEqual(f.commands, []);
+});
+
+for (const contact of ["missing", "suffix-only", "unavailable"]) test(`phone-only owner-group name stays absent when Contacts is ${contact}`, async t => {
+  const f = fixture(t, contact === "suffix-only" ? "S|0\nR|1|Wrong|Person|\nP|1|+44551234567||" : "");
+  f.save({ requests: [] });
+  f.events.clear();
+  f.participants[2]!.display_name = context.requesterSenderId;
+  if (contact === "unavailable") f.fail.add("-c");
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Lunch", offered: offers });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().name, undefined);
+  assert.equal(f.request().handle, context.requesterSenderId);
+});
+
+test("a pending time approval suppresses detail questions without consuming the later question", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.pendingOwner = { start: "2026-10-05T20:00:00Z", end: "2026-10-05T20:30:00Z", askedAt: new Date(now).toISOString() };
+  f.save(f.ledger);
+  const result = await guestAction(context, "view");
+  assert.equal("askDetails" in result && result.askDetails, false);
+  assert.equal(f.request().detailsAskedAt, undefined);
 });

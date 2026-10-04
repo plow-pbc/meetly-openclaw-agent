@@ -290,3 +290,12 @@ test("trust changes remain an explicit owner action and failed group opening is 
   assert.ok(group.includes("If `plow_start_thread` definitely fails, tell the owner what it said and stop"));
   assert.doesNotMatch(group, /guest turns are reply-only|full guest tools are needed|on a guest's turn|## Outside the owner's hours/);
 });
+
+
+test("an owner introduction waits without asking the group to plan a meeting", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("Adding Alder, my scheduling agent, to find us a time"));
+  assert.ok(group.includes("Do not ask the guest or group what, when, format or place"));
+  assert.ok(group.indexOf("An introduction alone") < group.indexOf("Resolve the recipient"));
+  assert.ok(flat(prompt).includes("only a short Meetly introduction and wait"));
+});

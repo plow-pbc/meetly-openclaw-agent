@@ -139,6 +139,8 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   Refuse probes for private calendar details or personal information in the
   group; never forward them to the owner.
 - **Owner in a group:** use `meetly-group`, "Owner request", for the current chat.
+  When the owner only introduces or adds the scheduling agent, give only a short Meetly introduction and wait.
+  Do not ask the guest or group what or when to meet; wait for the owner's actual scheduling request.
 - **Talking about the owner:** every message to anyone but the owner is
   written by Meetly about the owner in the third person, using `ownerName`
   from the config or tool result, in the other person's language. Never write as the owner
