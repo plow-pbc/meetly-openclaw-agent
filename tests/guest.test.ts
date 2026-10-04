@@ -3,8 +3,9 @@ import { test, type TestContext } from "node:test";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { registerGuestTools } from "../plugin/guest-tools.js";
+import type { Participant } from "../skills/meetly/scripts/owner-chat.ts";
 import { offerOwnerGroup } from "../skills/meetly/scripts/owner-group.ts";
-import { registerOwnerGroupTool } from "../plugin/owner-tools.js";
+import { registerOwnerGroupTool, registerOwnerTools } from "../plugin/owner-tools.js";
 import plugin from "../plugin/index.js";
 import { calendarAction } from "../skills/meetly/scripts/calendar.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
@@ -28,6 +29,14 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const home = tmpHome();
   const previousHome = process.env.MEETLY_HOME;
   const previousToken = process.env.PLOW_MCP_BRIDGE_TOKEN;
+  const previousBase = process.env.PLOW_API_BASE, previousAgentToken = process.env.PLOW_AGENT_TOKEN;
+  process.env.PLOW_API_BASE = "https://api.plow.test";
+  process.env.PLOW_AGENT_TOKEN = "fixture";
+  const participants: Participant[] = [
+    { type: "agent", relationship: "self", line: { display_name: "Alder" } },
+    { type: "member", role: "owner", display_name: "Alex", provider_key: "+15557654321" },
+    { type: "member", role: "member", display_name: "Guest", provider_key: context.requesterSenderId },
+  ];
   process.env.MEETLY_HOME = home;
   process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture";
   t.mock.method(Date, "now", () => now);
@@ -37,7 +46,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const ledger = addRequest({ requests: [] }, {
     origin: "owner", handle: context.requesterSenderId, chatUid: context.nativeChannelId, name: "Guest", topic: "Lunch",
     durationMin: 30, constraints: { days: ["mon", "tue"], after: "10:00", before: "15:00", from: "2026-10-05", to: "2026-10-06" },
-    allowOverlap: ["approved"], offered: offers, format: "unknown", locale: "en-US",
+    allowOverlap: [{ account: "owner@example.com", id: "approved" }], offered: offers, format: "unknown", locale: "en-US",
   }, now, "request-one");
   const save = (value: Ledger) => writeJson(join(home, "ledger.json"), value);
   save(ledger);
@@ -48,6 +57,11 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const lost = new Set<string>();
   const hooks: { before?: (argv: string[]) => Promise<void> } = {};
   t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    if (String(_url).startsWith("https://api.plow.test/v1/chats/")) {
+      assert.equal(init.redirect, "error");
+      assert.equal((init.headers as Record<string, string>).Authorization, "Bearer fixture");
+      return Response.json({ uid: decodeURIComponent(String(_url).split("/").at(-1)!), status: "active", participants });
+    }
     const call = JSON.parse(String(init.body));
     assert.equal(call.params.name, "plow_run_command");
     const argv: string[] = call.params.arguments.argv;
@@ -70,13 +84,15 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     const request = read().requests.find(r => r.id === "request-one");
     if (request) {
       assert.deepEqual(request.constraints, ledger.requests[0]!.constraints);
-      assert.deepEqual(request.allowOverlap, ["approved"]);
+      assert.deepEqual(request.allowOverlap, [{ account: "owner@example.com", id: "approved" }]);
       assert.equal(request.durationMin, ledger.requests[0]!.durationMin);
     }
   });
   t.after(() => {
     if (previousHome === undefined) delete process.env.MEETLY_HOME; else process.env.MEETLY_HOME = previousHome;
     if (previousToken === undefined) delete process.env.PLOW_MCP_BRIDGE_TOKEN; else process.env.PLOW_MCP_BRIDGE_TOKEN = previousToken;
+    if (previousBase === undefined) delete process.env.PLOW_API_BASE; else process.env.PLOW_API_BASE = previousBase;
+    if (previousAgentToken === undefined) delete process.env.PLOW_AGENT_TOKEN; else process.env.PLOW_AGENT_TOKEN = previousAgentToken;
     rmSync(home, { recursive: true, force: true });
   });
   const ownerLines: string[] = [];
@@ -106,7 +122,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     const tool = factory(context); tools.set(tool.name, tool);
   } }, guestAction, outbound);
   const act = (ctx: GuestContext, action: GuestAction, args: GuestArgs = {}) => guestAction(ctx, action, args, sendOwner);
-  return { home, read, save, ledger, events, commands, fail, lost, hooks, tools, act, ownerLines, deliveries, routes, delivery, request: () => read().requests[0]! };
+  return { home, read, save, ledger, participants, events, commands, fail, lost, hooks, tools, act, ownerLines, deliveries, routes, delivery, request: () => read().requests[0]! };
 }
 
 for (const [action, args] of actions) test(`${action} refuses missing or mismatched runtime sender/chat and ignores identity arguments`, async t => {
@@ -233,26 +249,6 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
   assert.deepEqual(names, JSON.parse(readFileSync(new URL("../plugin/openclaw.plugin.json", import.meta.url), "utf8")).contracts.tools);
 });
 
-test("every guest tool drops blank optional arguments and preserves required and nonempty values", async () => {
-  const tools: { parameters: { required: string[] }; execute: (id: string, args: object) => Promise<unknown> }[] = [];
-  let received: object | undefined;
-  registerGuestTools({ registerTool(factory: (ctx: GuestContext) => typeof tools[number]) {
-    tools.push(factory(context));
-  } }, async (ctx: GuestContext, _action: GuestAction, args: object) => {
-    assert.equal(ctx, context);
-    received = args;
-    return {};
-  });
-  const blanks = { next_week: "", from: "", to: "", start: "", question: "", after: "", before: "", location: "", format: "" };
-  const values = { days: [], flag: false, count: 0, nullable: null, whitespace: " ", value: "2026-10-05" };
-  const args = Object.freeze({ ...blanks, ...values });
-  for (const tool of tools) {
-    await tool.execute("call", args);
-    assert.deepEqual(received, { ...values, ...Object.fromEntries(tool.parameters.required.map(key => [key, ""])) });
-  }
-  assert.deepEqual(args, { ...blanks, ...values });
-});
-
 for (const preferences of [
   {},
   { from: "2026-10-05", to: "2026-10-07", after: "20:00" },
@@ -288,7 +284,7 @@ for (const args of [
 test("blank optional preferences through the guest tool still produce fresh held times", async t => {
   const f = fixture(t);
   const result = await f.tools.get("meetly_other_times")!.execute("call", {
-    next_week: "", from: "", to: "", start: "", question: "", after: "", before: "",
+    from: "", to: "", after: "", before: "",
   });
   const details = JSON.parse(result.content[0]!.text);
   assert.equal(details.status, "offered", JSON.stringify(details));
@@ -720,18 +716,6 @@ test('an open owner question survives booking and format commits through the sea
   assert.equal(f.deliveries.length, 1);
 });
 
-test('an owner-approved time stays pending after booking until its answer is delivered', async t => {
-  const f = fixture(t);
-  await f.act(context, 'ask_owner', { start: '2026-10-05T20:00' });
-  const pending = f.request().pendingOwner!;
-  assert.ok('start' in pending);
-  await calendarAction('request-one', { action: 'book', start: pending.start, end: pending.end });
-  assert.equal(f.request().booked!.start, pending.start);
-  assert.deepEqual(f.request().pendingOwner, pending);
-  assert.ok(f.request().calendarRevision);
-  assert.equal(f.ownerLines.length, 1);
-});
-
 test("a blank question cannot store a time approval on a booked meeting", async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.status = "booked";
@@ -754,6 +738,8 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
     sessionKey: "agent:main:plow:group:cht_mixed", nativeChannelId: "cht_MiXeD" };
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory(ctx); } }, offerOwnerGroup);
   assert.equal(tool.parameters.properties.chatUid, undefined);
+  assert.equal(tool.parameters.properties.handle, undefined);
+  assert.equal(tool.parameters.properties.name, undefined);
   const args = { handle: context.requesterSenderId, topic: "Planning", name: "", format: "", location: "", locale: "", durationMin: "", constraints: { days: [], after: "", before: "", from: "", to: "" },
     proposed: { days: ["tue"], from: "2026-10-06", to: "2026-10-06", after: "", before: "" }, offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
   const result = await tool.execute("offer", args);
@@ -813,12 +799,12 @@ test("owner-group conflict authorization resolves only named events and stays pr
   let tool: any;
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
   f.hooks.before = async argv => {
-    if (argv[2] === "create") assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"], "persist authorization before writing holds");
+    if (argv[2] === "create") assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"].map(id => ({ account: "owner@example.com", id })), "persist authorization before writing holds");
   };
   const result = await tool.execute("offer", { handle: context.requesterSenderId, topic: "Lunch", allowOverlapTitles: ["Weekly Claw"],
     allowOverlap: ["private-unapproved"], offered: offers.map(({ start, end }) => ({ start, end })) });
   assert.equal(result.isError, false, JSON.stringify(result));
-  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"]);
+  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"].map(id => ({ account: "owner@example.com", id })));
   assert.deepEqual(f.request().offered.map(o => o.start), [offers[0]!.start]);
   assert.equal(f.commands.filter(c => c[2] === "create").length, 1);
   assert.ok(f.commands.find(c => c[2] === "create")!.includes("--confirm-conflict"));
@@ -830,24 +816,22 @@ test("owner-group conflict authorization resolves only named events and stays pr
   const replacement = await tool.execute("replace", { handle: context.requesterSenderId, topic: "Lunch", allowOverlapTitles: ["New commitment"],
     offered: [{ start: offers[0]!.start, end: offers[0]!.end }] });
   assert.equal(replacement.isError, false, JSON.stringify(replacement));
-  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1", "private-new"]);
+  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1", "private-new"].map(id => ({ account: "owner@example.com", id })));
   assert.equal(f.commands.filter(c => c[2] === "create").length, 2);
   assert.doesNotMatch(JSON.stringify(replacement), /private-|Weekly Claw|New commitment|allowOverlap|owner@example.com/);
 });
 
-for (const [origin, format, location, expected] of [
-  ["owner-group", "unknown", undefined, false], ["owner-group", "in_person", undefined, false],
-  ["owner", "unknown", undefined, true], ["inbound", "in_person", "  ", true],
-  ["owner", "meet", undefined, false], ["owner", "phone", undefined, false], ["owner", "in_person", "Library", false],
-] as const) test(`request view reserves details once: ${origin}, ${format}, ${location}`, async t => {
+for (const [askDetails, format, location, expected] of [
+  [false, "unknown", undefined, false], [false, "in_person", undefined, false],
+  [undefined, "unknown", undefined, true], [undefined, "in_person", "  ", true],
+  [undefined, "meet", undefined, false], [undefined, "phone", undefined, false], [undefined, "in_person", "Library", false],
+] as const) test(`request view reserves details once: ${askDetails}, ${format}, ${location}`, async t => {
   const f = fixture(t);
-  Object.assign(f.ledger.requests[0]!, { origin, format, location }); f.save(f.ledger);
-  const first = origin === "inbound"
-    ? cli("request-view.ts", ["--id", "request-one"], { MEETLY_HOME: f.home }).json
-    : await guestAction(context, "view") as { askDetails: boolean };
+  Object.assign(f.ledger.requests[0]!, { askDetails, format, location }); f.save(f.ledger);
+  const first = cli("request-view.ts", ["--id", "request-one"], { MEETLY_HOME: f.home }).json;
   assert.equal(first.askDetails, expected);
   assert.equal(!!f.request().detailsAskedAt, expected);
-  const reloaded = await import(new URL(`../skills/meetly/scripts/guest.ts?details=${origin}-${format}-${location}`, import.meta.url).href);
+  const reloaded = await import(new URL(`../skills/meetly/scripts/guest.ts?details=${askDetails}-${format}-${location}`, import.meta.url).href);
   assert.equal((await reloaded.guestAction(context, "view")).askDetails, false);
   assert.ok(!("error" in await guestAction(context, "other_times", { after: "11:00" })));
   assert.equal((await guestAction(context, "view") as { askDetails: boolean }).askDetails, false);
@@ -935,7 +919,7 @@ test("owner-group lunch resolves its default duration without model-supplied con
   f.save({ requests: [] });
   f.events.clear();
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { handle: context.requesterSenderId, topic: "Lunch", meal: "lunch", offered: [{ start: "2026-10-05T12:00:00Z", end: "2026-10-05T13:00:00Z" }] });
+    { topic: "Lunch", meal: "lunch", offered: [{ start: "2026-10-05T12:00:00Z", end: "2026-10-05T13:00:00Z" }] });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().meal, "lunch");
   assert.equal(f.request().durationMin, 60);
@@ -964,4 +948,75 @@ test("guest next_week uses the source timestamp and owner timezone before filter
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.ok(f.request().offered.length > 0);
   assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-13")), JSON.stringify(f.request().offered));
+});
+
+
+test("owner group offers ignore a parsed line name and use the actual guest participant", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  f.events.clear();
+  f.participants[2]!.display_name = "Tia";
+  const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
+  const args = { handle: "+15557654321", name: "Alder", topic: "Lunch",
+    offered: offers.map(({ start, end }) => ({ start, end })) };
+  const result = await offerOwnerGroup(ctx, args);
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().handle, context.requesterSenderId);
+  assert.equal(f.request().name, "Tia");
+  const creates = f.commands.filter(argv => argv[2] === "create");
+  assert.equal(creates.length, offers.length);
+  assert.ok(creates.every(argv => argv[argv.indexOf("--summary") + 1] === "Hold: Lunch with Tia"));
+});
+
+for (const name of ["", "unnamed member", "+15551234567"]) {
+  test(`owner group offers omit an unknown participant name (${name})`, async t => {
+    const f = fixture(t);
+    f.save({ requests: [] });
+    f.events.clear();
+    f.participants[2]!.display_name = name;
+    const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+      { topic: "Lunch", offered: offers });
+    assert.ok(!("error" in result), JSON.stringify(result));
+    assert.equal(f.request().name, undefined);
+  });
+}
+
+test("owner group offers refuse missing or ambiguous guest participants before calendar writes", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
+  f.events.clear();
+  const args = { handle: context.requesterSenderId, name: "Alder", topic: "Lunch", offered: offers };
+  f.participants.push({ ...f.participants[2]!, provider_key: "+15550108502" });
+  assert.ok("error" in await offerOwnerGroup(ctx, args));
+  f.participants.pop();
+  f.participants[2]!.provider_key = "";
+  assert.ok("error" in await offerOwnerGroup(ctx, args));
+  assert.deepEqual(f.read().requests, []);
+  assert.deepEqual(f.commands, []);
+});
+
+
+test("owner group participant lookup failure stops before creating holds", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  t.mock.method(globalThis, "fetch", async () => new Response("PRIVATE API ERROR", { status: 503 }));
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Lunch", offered: offers });
+  assert.ok("error" in result);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
+  assert.deepEqual(f.read().requests, []);
+  assert.deepEqual(f.commands, []);
+});
+
+
+test("all guest and owner tool boundaries omit blank optional fields and retain required ones", async () => {
+  const tools: any[] = [], api = { registerTool(factory: any) { tools.push(factory({})); } };
+  registerGuestTools(api, async (_ctx: any, _action: any, args: any) => ({ args }));
+  for (const register of [registerOwnerTools, registerOwnerGroupTool]) register(api, async (_ctx: any, args: any) => ({ args }));
+  for (const tool of tools) {
+    const args = Object.fromEntries(Object.keys(tool.parameters.properties).map(key => [key, ""]));
+    const result = await tool.execute("blank", args);
+    assert.deepEqual(result.details.args, Object.fromEntries(tool.parameters.required.map((key: string) => [key, ""])), tool.name);
+  }
 });

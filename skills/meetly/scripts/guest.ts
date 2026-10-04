@@ -1,5 +1,5 @@
 // Scheduling actions scoped to the sender and conversation supplied by OpenClaw.
-import { fetchBusy, type BusyResult } from "./busy.ts";
+import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config, type Day } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
@@ -71,7 +71,7 @@ async function check(request: Request, config: Config, start: string) {
   const { slot } = checkTime({ ...query, busy: [] });
   const busy = await busyFor(request, config, slot.start, slot.end);
   const checked = checkTime({ ...query, ...busy });
-  const overlap = busy.busy.some(b => b.id && request.allowOverlap?.includes(b.id)
+  const overlap = busy.busy.some(b => allowsOverlap(b, request.allowOverlap)
     && Date.parse(b.start) < Date.parse(slot.end) && Date.parse(b.end) > Date.parse(slot.start));
   return { ...checked, overlap };
 }

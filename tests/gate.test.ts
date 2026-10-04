@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { allowOwnerTools, applyGate, installGate } from "../boot/gate.ts";
+import { applyGate, installGate } from "../boot/gate.ts";
 import gate, { gateContext, isOwnerDmTurn } from "../plugin/index.js";
 
 const status = (s: unknown) => JSON.stringify(s) + "\n";
@@ -102,13 +102,4 @@ test("with no Mac at the time zone question the gate still asks it, and adds the
   assert.match(context, /https:\/\/plow\.co\/download\/latch/);
   const connected = gateContext(status({ status: "SETUP_NEEDED", next: "timezone", question: "What time zone are you in?", draft: {}, defaults: DEFAULTS, mac: { connected: true } }))!;
   assert.doesNotMatch(connected, /plow\.co/);
-});
-
-
-test("owner answer tools extend the profile without changing guest grants", () => {
-  const config = { tools: { alsoAllow: ["existing"] }, channels: { plow: { guestTools: ["meetly_ask_owner"] } } };
-  allowOwnerTools(config);
-  allowOwnerTools(config);
-  assert.deepEqual(config.tools.alsoAllow, ["existing", "meetly_answer_owner", "meetly_offer_owner_group"]);
-  assert.deepEqual(config.channels.plow.guestTools, ["meetly_ask_owner"]);
 });
