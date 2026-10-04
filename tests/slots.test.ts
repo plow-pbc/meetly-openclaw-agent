@@ -356,9 +356,10 @@ test("replacement search honors an explicit format change with its travel estima
   writeJson(join(home, "ledger.json"), {requests: [{id: "change", status: "booked", format: "meet", durationMin: 30,
     travel: {beforeMin: 0, afterMin: 0}, offered: []}]});
   const busyFile = join(home, "busy.json");
-  writeJson(busyFile, {busy: [], degraded: []});
+  writeJson(busyFile, {busy: [{start: "2026-09-28T09:45:00-03:00", end: "2026-09-28T10:00:00-03:00"}], degraded: []});
   const result = cli("slots.ts", ["--request", "change", "--in", busyFile, "--now", new Date(NOW).toISOString(),
-    "--format", "in_person", "--travel", '{"beforeMin":25,"afterMin":25}'], {MEETLY_HOME: home});
+    "--at", "2026-09-28T10:00:00-03:00", "--format", "in_person", "--travel", '{"beforeMin":25,"afterMin":25}'], {MEETLY_HOME: home});
   assert.equal(result.status, 0, result.stderr);
-  assert.ok(result.json.slots.length);
+  assert.equal(result.json.free, false);
+  assert.equal(result.json.reason, "busy");
 });
