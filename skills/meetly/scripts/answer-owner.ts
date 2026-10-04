@@ -1,14 +1,13 @@
 import { recordDelivery, updateRequest, type Ledger } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
+import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type Context = { messageChannel?: string; agentAccountId?: string; senderIsOwner?: boolean; requesterSenderId?: string;
-  sessionKey?: string; nativeChannelId?: string; deliveryContext?: { to?: string } };
 type Args = { requestId?: string; askedAt?: string; text?: string };
 
-export async function answerOwner(ctx: Context, args: Args, send: (to: string, text: string) => Promise<void>): Promise<object> {
-  const chat = ctx.nativeChannelId ?? ctx.deliveryContext?.to?.replace(/^plow:/, "");
-  if (ctx.messageChannel !== "plow" || ctx.agentAccountId !== "chat" || ctx.senderIsOwner !== true || !ctx.requesterSenderId || !chat) {
+export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: string, text: string) => Promise<void>): Promise<object> {
+  const chat = resolveOwnerChat(ctx);
+  if (!chat) {
     return { error: "Only the owner's own Plow turn can answer a meeting question." };
   }
   if (typeof args.text !== "string" || !args.text.trim()) return { error: "Provide the owner's answer." };

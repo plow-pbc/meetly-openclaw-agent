@@ -8,6 +8,7 @@ import { isMain, run } from "./cli.ts";
 import { holdHours, reminderLeadMin } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { file } from "./paths.ts";
+import { uniqueEvents, type EventRef } from "./busy.ts";
 import type { Constraints } from "./slots.ts";
 export type { Constraints } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -27,6 +28,16 @@ export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
 // One question or out-of-hours time waiting for the owner's answer.
 export const OWNER_QUESTION_LIMIT = 500;
 export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ start: string; end: string } | { question: string });
+export function intersectConstraints(owner: Constraints = {}, guest: Constraints = {}): Constraints {
+  return {
+    days: owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
+    after: [owner.after, guest.after].filter(Boolean).sort().at(-1),
+    before: [owner.before, guest.before].filter(Boolean).sort()[0],
+    from: [owner.from, guest.from].filter(Boolean).sort().at(-1),
+    to: [owner.to, guest.to].filter(Boolean).sort()[0],
+  };
+}
+
 // How the meeting happens. `unknown` until the request or an answer says it.
 export type Format = "meet" | "in_person" | "phone" | "unknown";
 // The booked event's time, and the Google account it lives on.
@@ -36,7 +47,7 @@ export type Reminder = { at: string; outcome: "sent" | "cancelled" | "no-link" }
 
 export type Request = {
   id: string;
-  origin: "inbound" | "owner";
+  origin: "inbound" | "owner" | "owner-group";
   handle: string;
   name?: string;
   sourceRowid?: number;
@@ -49,7 +60,8 @@ export type Request = {
   constraints?: Constraints;
   // Times the person proposed; only the first offer uses them.
   proposed?: Constraints;
-  allowOverlap?: string[];
+  allowOverlap?: EventRef[];
+  askDetails?: boolean;
   offered: Offer[];
   status: Status;
   eventId?: string;
@@ -64,6 +76,8 @@ export type Request = {
   notifiedAt?: string;
   startedAt?: string;
   startCompletedAt?: string;
+  // Reserved before returning a details question, including uncertain delivery.
+  detailsAskedAt?: string;
   offeredAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -73,7 +87,7 @@ export type Ledger = { requests: Request[] };
 
 export type NewRequest = Omit<Request,
   "id" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
-  | "notifyAttemptedAt" | "notifiedAt" | "startedAt" | "startCompletedAt"
+  | "notifyAttemptedAt" | "notifiedAt" | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
   "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale">> & {
@@ -174,10 +188,11 @@ function checkOffers(offered: unknown): Offer[] {
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
   input = { ...input, handle: normalizeHandle(input.handle) };
   if ("calendarRevision" in input) throw new Error("calendarRevision is managed by calendar.ts");
+  if ("detailsAskedAt" in input) throw new Error("detailsAskedAt is managed by request-view.ts");
   for (const key of ["notifyAttemptedAt", "notifiedAt", "startedAt", "startCompletedAt"]) {
     if (key in input) throw new Error(`${key} is managed by ledger.ts delivery`);
   }
-  if (input.origin !== "inbound" && input.origin !== "owner") throw new Error(`origin must be inbound or owner, got ${input.origin}`);
+  if (input.origin !== "inbound" && input.origin !== "owner" && input.origin !== "owner-group") throw new Error(`origin must be inbound, owner or owner-group, got ${input.origin}`);
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
   if (!Number.isInteger(input.durationMin) || input.durationMin <= 0) throw new Error("durationMin must be a positive whole number");
   const status = input.status ?? "offered";
@@ -215,6 +230,10 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
 
   // Reuse addRequest's validation and timestamp behavior, then apply its new
   // offer to the existing record. An absent chatUid must not erase the link.
+  input = { ...input, name: input.name ?? existing.name, origin: existing.origin, chatUid: input.chatUid ?? existing.chatUid,
+    askDetails: input.askDetails ?? existing.askDetails,
+    allowOverlap: uniqueEvents([...(existing.allowOverlap ?? []), ...(input.allowOverlap ?? [])]) };
+  if (existing.chatUid && input.chatUid !== existing.chatUid) throw new Error("a request cannot move to another chat");
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   const newHolds = new Set(validated.offered.flatMap((offer) => offer.holdId ? [`${offer.account}\0${offer.holdId}`] : []));
   const replacedHolds = existing.offered.flatMap((offer) => offer.holdId && !newHolds.has(`${offer.account}\0${offer.holdId}`)
@@ -262,6 +281,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   const at = new Date(now).toISOString();
   const updated: Request = { ...ledger.requests[index]!, updatedAt: at };
   if (updated.status === "asked" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
+  if (updated.chatUid && patch.chatUid !== undefined && patch.chatUid !== updated.chatUid) throw new Error("a request cannot move to another chat");
   for (const [key, value] of Object.entries(patch)) {
     if (value === null && (NULLABLE as readonly string[]).includes(key)) delete updated[key as (typeof NULLABLE)[number]];
     else if (value !== undefined) (updated as Record<string, unknown>)[key] = value;
@@ -363,6 +383,7 @@ if (isMain(import.meta.url)) {
       args: rest,
       options: {
         handle: { type: "string" },
+        name: { type: "string" },
         chat: { type: "string" },
         id: { type: "string" },
         json: { type: "string" },
@@ -380,21 +401,32 @@ if (isMain(import.meta.url)) {
     switch (cmd) {
       case "find": {
         const ledger = readJson<Ledger>(path, EMPTY);
-        if (values.chat !== undefined) return { request: findByChat(ledger, values.chat, values.handle) ?? null };
+        if (values.chat !== undefined) {
+          const chat = values.chat.trim().replace(/^plow:/, "");
+          return { request: findByChat(ledger, chat, values.handle) ?? null };
+        }
         if (values.handle !== undefined) {
           if (values.status !== undefined && !OPEN.includes(values.status as Status)) throw new Error(`--status must be ${OPEN.join(" or ")}`);
           return { request: findOpenByHandle(ledger, values.handle, values.status ? [values.status as Status] : OPEN) ?? null };
         }
-        throw new Error("usage: ledger.ts find --handle H [--status asked|offered] | --chat U");
+        if (values.name !== undefined) {
+          const name = values.name.trim().toLowerCase();
+          const matches = ledger.requests.filter(r => OPEN.includes(r.status) && name && r.name?.trim().toLowerCase() === name);
+          if (matches.length > 1) throw new Error("Ambiguous guest name; ask the owner which meeting they mean.");
+          return { request: matches[0] ?? null };
+        }
+        throw new Error("usage: ledger.ts find --handle H [--status asked|offered] | --chat U | --name N");
       }
       case "add": {
         const input = jsonArg(values);
+        if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => addRequest(l, input, now, id));
         return { request: ledger.requests.find((r) => r.id === id) };
       }
       case "save": {
         const input = jsonArg(values);
+        if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
         return { request: findOpenByHandle(ledger, input.handle) ?? findOpenBySource(ledger, input) };
@@ -402,7 +434,7 @@ if (isMain(import.meta.url)) {
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
         const patch = jsonArg(values);
-        for (const key of ["status", "eventId", "offered", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location"]) {
+        for (const key of ["status", "eventId", "offered", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location", "durationMin", "allowOverlap"]) {
           if (key in patch) throw new Error(`${key} is managed by calendar.ts or reminder-check.ts`);
         }
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => updateRequest(l, values.id!, patch, now));

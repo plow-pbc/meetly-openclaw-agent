@@ -11,12 +11,17 @@ import { status } from "./setup-status.ts";
 import { writeJson } from "./store.ts";
 import { zonedToUtc } from "./time.ts";
 
+export type EventRef = { account: string; id: string };
+export const allowsOverlap = (event: Partial<EventRef>, refs: EventRef[] = []) =>
+  refs.some(ref => !!ref.account && !!ref.id && ref.account === event.account && ref.id === event.id);
+export const uniqueEvents = (refs: EventRef[]) => refs.filter((ref, i) => allowsOverlap(ref, [ref]) && !allowsOverlap(ref, refs.slice(0, i)));
 export type Busy = { start: string; end: string; id?: string; account?: string };
-export type BusyResult = { busy: Busy[]; unknownAfter?: string; degraded: string[] };
+export type BusyResult = { busy: Busy[]; unknownAfter?: string; degraded: string[]; allowOverlap?: EventRef[] };
 
 type Stamp = string | { dateTime?: string; date?: string } | undefined;
 type CalEvent = {
   id?: string;
+  summary?: string;
   account?: string;
   startLocal?: string;
   endLocal?: string;
@@ -112,6 +117,12 @@ function listingOf(output: string): unknown {
   return JSON.parse(output.slice(start));
 }
 
+// Latch wraps fetched text as data. Remove only a complete, matching envelope.
+function eventTitle(summary = ""): string {
+  const wrapped = summary.match(/^<<<EXTERNAL_UNTRUSTED_CONTENT id="([^"\r\n]+)">>>\r?\nSource: google_api\r?\n---\r?\n([\s\S]*)\r?\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="\1">>>$/);
+  return (wrapped?.[2] ?? summary).trim().toLowerCase();
+}
+
 const FETCH_MAX = 100;
 
 // Reads every configured account on the Mac directly (mac.ts), one
@@ -121,8 +132,10 @@ const FETCH_MAX = 100;
 export async function fetchBusy(
   config: Pick<Config, "timezone" | "calendars">,
   range: { from: string; to: string },
-  opts: BridgeOptions = {},
+  opts: BridgeOptions & { allowOverlapTitles?: string[] } = {},
 ): Promise<BusyResult> {
+  const titles = new Set(opts.allowOverlapTitles?.map(title => title.trim().toLowerCase()).filter(Boolean));
+  const allowOverlap: EventRef[] = [];
   const byAccount = new Map<string, string[]>();
   for (const c of config.calendars) byAccount.set(c.account, [...(byAccount.get(c.account) ?? []), c.id]);
   const results: unknown[] = [];
@@ -142,22 +155,24 @@ export async function fetchBusy(
       degraded.push(account);
       continue;
     }
+    allowOverlap.push(...events.filter(e => e.id && !skipped(e) && titles.has(eventTitle(e.summary))).map(e => ({ account, id: e.id! })));
     results.push({ events: events.map((e) => ({ ...e, account })) });
   }
   const out = toBusy(results, { tz: config.timezone, max: FETCH_MAX });
   out.degraded.push(...degraded);
+  if (titles.size) out.allowOverlap = uniqueEvents(allowOverlap);
   return out;
 }
 
 if (isMain(import.meta.url)) {
   run(async () => {
     const { values } = parseArgs({
-      options: { in: { type: "string", multiple: true }, max: { type: "string", default: "100" }, fetch: { type: "boolean", default: false } },
+      options: { in: { type: "string", multiple: true }, max: { type: "string", default: "100" }, fetch: { type: "boolean", default: false }, "allow-overlap-title": { type: "string", multiple: true } },
     });
     if (values.fetch) {
       const current = status();
       if (current.status !== "READY") throw new Error("Meetly is not set up yet");
-      const result = await fetchBusy(current.config, current.range);
+      const result = await fetchBusy(current.config, current.range, { allowOverlapTitles: values["allow-overlap-title"] });
       const out = file("tmp/busy.json");
       writeJson(out, result);
       const summary: { file: string; busy: number; degraded: string[]; unknownAfter?: string } = { file: out, busy: result.busy.length, degraded: result.degraded };

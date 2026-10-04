@@ -24,7 +24,7 @@ times. Nobody hears from Meetly until you say yes. Then it:
    hours you allow,
 3. holds those times on your calendar so nothing else takes them,
 4. asks how you'll meet (Google Meet or in person) when the message does
-   not say it,
+   not say it, except in a group you started, where missing details are left to you,
 5. books the one they pick, invites them if it knows their email, and
    releases the other holds; for a Meet it creates the room,
 6. posts the Meet link in the group 10 minutes before the start,
@@ -61,7 +61,7 @@ signed as Meetly.
 - **Holds expire.** No answer in 48 hours: the holds are deleted and the
   group is told the times were released.
 - **Overlaps only with your word.** Meetly books over an existing event only
-  when you named that event in your request (or said yes in the group). People
+  when you name that event and authorize the overlap in your DM. People
   in the group can never unlock a conflict or a time outside your hours.
 - **Stays on topic in groups.** The group is for this one meeting. Meetly does
   not read your mail, files or other conversations for the other person.
@@ -174,7 +174,15 @@ message is skipped.
   registered by `register-crons.ts` when setup finishes. It lives in the state
   volume and survives restarts and rebuilds.
 - **Chat.** Your phone DM is the main session and runs setup. A group Meetly
-  opened is recognized from its ledger and handled as that one meeting.
+  opened is recognized from its ledger and handled as that one meeting. In an
+  existing group with the owner, one guest and Meetly, the owner can request
+  scheduling directly; Meetly resolves the guest from the group, links the
+  request and offers times there. Explicit duration changes replace the topic,
+  duration and holds together under the calendar lock. Unnamed requests stay in
+  their originating group; chat lookup requires the exact runtime chat uid.
+  Overlap authorization goes through the registered `meetly_offer_owner_dm` tool,
+  which verifies the runtime Plow owner and main-DM session before calling the
+  internal calendar writer. Raw calendar commands reject overlap authorization.
 - **Opening groups.** Only in the owner's DM, with the base's
   `plow_start_thread`; new groups are untrusted. Guests receive the six
   scheduling tools in `PLOW_GUEST_TOOLS`; owner turns keep full tools. An uncertain
