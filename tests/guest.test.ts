@@ -909,3 +909,22 @@ for (const constraints of [
   assert.equal(f.deliveries.length, 0);
   assert.ok(f.commands.every(c => c[2] === "events"));
 });
+
+test("owner-group duration steering updates the ledger then replaces holds in the same chat", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] }); f.events.clear();
+  const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
+  assert.ok(!("error" in await offerOwnerGroup(ctx, { topic: "30-minute call" })));
+  const before = f.request();
+  const steered = cli("ledger.ts", ["update", "--id", before.id, "--json", JSON.stringify({ durationMin: 60, topic: "60-minute call" })], { MEETLY_HOME: f.home });
+  assert.equal(steered.status, 0, steered.stderr);
+  await assert.rejects(calendarAction(before.id, { action: "book", start: before.offered[0]!.start }), /duration changed.*re-offer/i);
+  assert.ok(!("error" in await offerOwnerGroup(ctx, { topic: steered.json.request.topic })));
+  assert.equal(f.request().id, before.id);
+  assert.equal(f.request().origin, "owner-group");
+  assert.equal(f.request().chatUid, before.chatUid);
+  assert.equal(f.request().durationMin, 60);
+  assert.equal(f.request().offered.length, SLOT_COUNT);
+  assert.ok(f.request().offered.every(o => Date.parse(o.end) - Date.parse(o.start) === 60 * 60_000));
+  assert.ok(before.offered.every(o => f.events.get(o.holdId!)?.status === "cancelled"));
+});

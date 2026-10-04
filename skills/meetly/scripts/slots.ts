@@ -60,6 +60,16 @@ export function withinConstraints(start: number, end: number, timezone: string, 
     && !(constraints.before && (e.slice(0, 10) !== date || e.slice(11, 16) > constraints.before));
 }
 
+export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}, fallbacks: SlotQuery[] = [query]) {
+  let { slots } = findSlots({ ...query, ...intersectConstraints(query, preferred) });
+  const preferencesUnavailable = slots.length === 0;
+  for (const fallback of fallbacks) {
+    if (slots.length) break;
+    slots = findSlots(fallback).slots;
+  }
+  return { slots, preferencesUnavailable };
+}
+
 export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string } {
   const { config, now } = q;
   const tz = config.timezone;

@@ -161,6 +161,9 @@ export async function calendarAction(id: string, input: CalendarAction, options:
           ? { start: request.booked!.start, end: request.booked!.end, account: request.booked!.account, holdId: request.eventId }
           : request.offered.find(o => Date.parse(o.start) === Date.parse(input.start)) ?? { start: input.start, end: input.end!, account: config.defaultAccount };
         if (!slot.end || !(Date.parse(slot.end) > Date.parse(slot.start))) throw new Error("booking needs valid start and end");
+        if (input.action === "book" && request.offered.includes(slot) && Date.parse(slot.end) - Date.parse(slot.start) !== request.durationMin * 60_000) {
+          throw new Error("Meeting duration changed; re-offer before booking an old hold.");
+        }
         let verb: Step["verb"] = slot.holdId ? "update" : "create";
         if (slot.holdId) {
           const output = await call(["event", "primary", slot.holdId, "--json"], slot.account);

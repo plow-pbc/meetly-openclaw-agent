@@ -4,7 +4,7 @@ import { lookupContact } from "./contact.ts";
 import { loadConfig } from "./config.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
-import { findSlots } from "./slots.ts";
+import { findPreferredSlots } from "./slots.ts";
 import { view } from "./request-view.ts";
 import { findOpenByHandle, intersectConstraints, normalizeHandle, sameHandle, type Ledger } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
@@ -53,14 +53,10 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
     const busy = await fetchBusy(config, { from: new Date(now).toISOString(), to: new Date(now + (config.horizonDays + 1) * 86_400_000).toISOString() });
     if (busy.degraded.length) throw new Error("calendar unavailable");
     busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
-    const query = { ...busy, now, config, durationMin, locale, allowOverlap: existing?.allowOverlap };
-    let { slots } = findSlots({ ...query, ...intersectConstraints(constraints, proposed) });
-    const preferencesUnavailable = slots.length === 0;
-    if (preferencesUnavailable) {
-      const near = proposed?.from && proposed.from === proposed.to
-        ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
-      slots = findSlots({ ...query, ...constraints, near }).slots;
-    }
+    const query = { ...busy, ...constraints, now, config, durationMin, locale, allowOverlap: existing?.allowOverlap };
+    const near = proposed?.from && proposed.from === proposed.to
+      ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
+    const { slots, preferencesUnavailable } = findPreferredSlots(query, proposed, [{ ...query, near }]);
     if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
     const { request } = await offerRequest({ handle, name, topic, durationMin, constraints, proposed, format, location, locale,
       offered: slots.map(({ start, end }) => ({ start, end })),

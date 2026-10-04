@@ -40,7 +40,8 @@ free there.
    `proposed`, `name` as given by the owner in this thread, `format`, `location` and `locale` as known.
    It resolves the guest and chat, searches within the owner's conditions and
    holds times itself using the saved or configured duration; never supply `durationMin` or `offered` intervals. On error, stop. Otherwise
-   continue at step 6 with its returned offer; if `preferencesUnavailable` is true,
+   apply any explicit owner duration as described below before delivery, then
+   continue at step 6 with the final returned offer; if `preferencesUnavailable` is true,
    explain that the preferred times do not work and offer the returned alternatives
    in their returned order. For a busy requested date/time, the tool uses the same
    nearest-time ranking as `slots.ts --near`, keeping all hard conditions.
@@ -133,6 +134,13 @@ use the runtime chat id and the canonical `chatUid` returned by the ledger;
 for a pending question or time approval follow "Owner confirms". No match means
 offer only after the owner makes a scheduling request. The group tool reuses a
 same-handle unlinked `asked` request and binds it to this chat.
+
+For an explicit owner-stated length, update the open request with
+`ledger.ts update --id <saved id> --json '{"durationMin":<minutes>,"topic":"<matching topic>"}'`,
+then re-offer through `meetly_offer_owner_group`. Keep duration wording in `topic`
+consistent. If this is a new group request, create its initial offer without replying,
+find its saved id using the runtime chat uid, apply the duration update, and re-offer
+before delivering any times. Do not update duration when the owner did not state one.
 
 Extract the topic, proposed times, hard conditions, explicit duration, format,
 place. Extract owner-authorized overlap titles only in the owner's DM.

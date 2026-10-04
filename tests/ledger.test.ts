@@ -493,3 +493,14 @@ test("owner chat lookup refuses normalization collisions instead of choosing a m
   assert.match(ambiguous.stderr, /ambiguous/i);
   assert.equal(cli("ledger.ts", ["find", "--chat", "cht_MiXeD"], { MEETLY_HOME: home }).json.request.id, "first");
 });
+
+test("duration steering accepts only positive whole minutes on open requests", () => {
+  const ledger = addRequest(empty(), input(), T0, "request");
+  for (const durationMin of [0, -1, 1.5, NaN]) {
+    assert.throws(() => updateRequest(ledger, "request", { durationMin }, T0), /positive whole number/);
+  }
+  for (const status of ["booked", "dropped", "expired"] as const) {
+    assert.throws(() => updateRequest({ requests: [{ ...ledger.requests[0]!, status }] }, "request", { durationMin: 60 }, T0), /open request/);
+  }
+  assert.equal(updateRequest(ledger, "request", { durationMin: 60 }, T0).requests[0]!.durationMin, 60);
+});
