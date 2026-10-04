@@ -164,8 +164,9 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
       request = (await write(request, { action: "format", ...change })).request;
       return view(request, config);
     }
-    if (action === "ask_owner" && (request.status === "offered" || (request.status === "booked" && typeof args.question === "string" && args.question.trim()))) {
-      return await askOwner(request, config, args, sendOwner);
+    if (action === "ask_owner" && ["offered", "booked"].includes(request.status)) {
+      if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
+      return await askOwner(request, config, { question: args.question }, sendOwner);
     }
     if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
     if (action === "decline") {

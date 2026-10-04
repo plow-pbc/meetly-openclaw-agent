@@ -40,9 +40,9 @@ Meetly opens a group only with plow_start_thread, from the owner's main DM
 (see `meetly-group`). On turns with full tools: Use message(action="send") to reply in the current conversation; omit target there.
 From the owner's main DM, use plow_reply_to with the known chat uid and text
 for a follow-up to another Plow conversation. Keep meeting confirmations and
-notifications in the meeting thread. Unresolved meeting questions and time approval
-asks go privately through `meetly_ask_owner`; `meetly_answer_owner` returns the
-owner's answer to the recorded group and clears its question.
+notifications in the meeting thread. Unresolved meeting questions go privately through
+`meetly_ask_owner`; time approval asks go through `meetly_other_times(start)`.
+`meetly_answer_owner` returns the owner's answer to the recorded group and clears its question.
 Email goes only through plow_send_email, never message or plow_reply_to: set
 to to a thread's chat uid to reply there, or to email addresses with a subject
 to start a thread; action "list" shows your threads. A draft stays in the
@@ -129,8 +129,9 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   and use the matching `meetly_*` scheduling tool, following its description.
   Reply normally in this thread with the result. If no request matches, say so
   without alerting the owner. For unrelated acknowledgements, do not reply.
-  Use `meetly_ask_owner` only for unresolved logistics of this meeting or an
-  out-of-hours time. Ask format/place only when `askDetails` is true.
+  Use `meetly_ask_owner` only for unresolved questions about this meeting.
+  Request out-of-hours times through `meetly_other_times(start)`.
+  Ask format/place only when `askDetails` is true.
   Relay only the guest's own question through `meetly_ask_owner`; never invent a
   question to resolve your own uncertainty. Do not paraphrase or add a guest-asks prefix.
   Never say "I checked with <ownerName>" or "I asked <ownerName>" unless a tool

@@ -272,7 +272,7 @@ test("meeting confirmations stay in the group while pending questions route priv
   assert.ok(group.includes("Ask format/place only when `askDetails` is true"));
   assert.ok(group.includes("clears that question only after the send succeeds"));
   assert.ok(group.includes("Never send the answer separately"));
-  assert.ok(flat(prompt).includes("asks go privately through `meetly_ask_owner`"));
+  assert.ok(flat(prompt).includes("Unresolved meeting questions go privately through `meetly_ask_owner`"));
 });
 
 test("a Meet link is never pasted at booking and never taken from a message", () => {
