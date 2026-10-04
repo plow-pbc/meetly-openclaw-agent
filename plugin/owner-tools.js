@@ -1,4 +1,4 @@
-import { constraints, sendPlowMessage } from "./guest-tools.js";
+import { cleanArgs, constraints, sendPlowMessage } from "./guest-tools.js";
 
 const run = async (context, args, send) => {
   const { answerOwner } = await import("/opt/plow/skills/meetly/scripts/answer-owner.ts");
@@ -19,8 +19,7 @@ export function registerOwnerTools(api, execute = run, outbound) {
       },
     },
     async execute(_id, args) {
-      const cleaned = Object.fromEntries(Object.entries(args ?? {}).filter(([key, value]) => value !== "" || required.includes(key)));
-      const result = await execute(context, cleaned, (to, text) => sendPlowMessage(api, context, to, text, "group", outbound));
+      const result = await execute(context, cleanArgs(args, required), (to, text) => sendPlowMessage(api, context, to, text, "group", outbound));
       return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   }));
@@ -36,7 +35,7 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
-    description: "For the owner's scheduling ask in a group with exactly one guest and Meetly. Read meetly-group and find free slots first. Records the request with this turn's exact chat uid and creates holds through the calendar writer. Resolves the sole non-owner member's handle and name from the current chat's participants; never supply a guest identity parsed from the owner's text or an agent/line display name. Use the owner's conditions and the slot results. Reply with the returned offer here; never open another thread. Ask format/place only when askDetails is true. Owner only.",
+    description: "Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group and find slots first. Supply only scheduling fields, never guest identity or calendar IDs. Reply here using the returned askDetails flag. Owner only.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
       topic: string, durationMin: { type: "integer", minimum: 1, description: "Only when explicitly specified; otherwise uses the configured duration." },
       constraints, proposed: constraints, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
@@ -46,8 +45,7 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
         required: ["start", "end"], properties: { start: string, end: string } } },
     } },
     async execute(_id, args) {
-      const cleaned = Object.fromEntries(Object.entries(args ?? {}).filter(([key, value]) => value !== "" || required.includes(key)));
-      const result = await execute(context, cleaned);
+      const result = await execute(context, cleanArgs(args, required));
       return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   }));

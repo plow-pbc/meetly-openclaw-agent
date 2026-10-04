@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { registerGuestTools } from "../plugin/guest-tools.js";
 import type { Participant } from "../skills/meetly/scripts/owner-chat.ts";
 import { offerOwnerGroup } from "../skills/meetly/scripts/owner-group.ts";
-import { registerOwnerGroupTool } from "../plugin/owner-tools.js";
+import { registerOwnerGroupTool, registerOwnerTools } from "../plugin/owner-tools.js";
 import plugin from "../plugin/index.js";
 import { calendarAction } from "../skills/meetly/scripts/calendar.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
@@ -46,7 +46,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const ledger = addRequest({ requests: [] }, {
     origin: "owner", handle: context.requesterSenderId, chatUid: context.nativeChannelId, name: "Guest", topic: "Lunch",
     durationMin: 30, constraints: { days: ["mon", "tue"], after: "10:00", before: "15:00", from: "2026-10-05", to: "2026-10-06" },
-    allowOverlap: ["approved"], offered: offers, format: "unknown", locale: "en-US",
+    allowOverlap: [{ account: "owner@example.com", id: "approved" }], offered: offers, format: "unknown", locale: "en-US",
   }, now, "request-one");
   const save = (value: Ledger) => writeJson(join(home, "ledger.json"), value);
   save(ledger);
@@ -84,7 +84,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     const request = read().requests.find(r => r.id === "request-one");
     if (request) {
       assert.deepEqual(request.constraints, ledger.requests[0]!.constraints);
-      assert.deepEqual(request.allowOverlap, ["approved"]);
+      assert.deepEqual(request.allowOverlap, [{ account: "owner@example.com", id: "approved" }]);
       assert.equal(request.durationMin, ledger.requests[0]!.durationMin);
     }
   });
@@ -744,12 +744,12 @@ test("owner-group conflict authorization resolves only named events and stays pr
   let tool: any;
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
   f.hooks.before = async argv => {
-    if (argv[2] === "create") assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"], "persist authorization before writing holds");
+    if (argv[2] === "create") assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"].map(id => ({ account: "owner@example.com", id })), "persist authorization before writing holds");
   };
   const result = await tool.execute("offer", { handle: context.requesterSenderId, topic: "Lunch", allowOverlapTitles: ["Weekly Claw"],
     allowOverlap: ["private-unapproved"], offered: offers.map(({ start, end }) => ({ start, end })) });
   assert.equal(result.isError, false, JSON.stringify(result));
-  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"]);
+  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"].map(id => ({ account: "owner@example.com", id })));
   assert.deepEqual(f.request().offered.map(o => o.start), [offers[0]!.start]);
   assert.equal(f.commands.filter(c => c[2] === "create").length, 1);
   assert.ok(f.commands.find(c => c[2] === "create")!.includes("--confirm-conflict"));
@@ -761,24 +761,22 @@ test("owner-group conflict authorization resolves only named events and stays pr
   const replacement = await tool.execute("replace", { handle: context.requesterSenderId, topic: "Lunch", allowOverlapTitles: ["New commitment"],
     offered: [{ start: offers[0]!.start, end: offers[0]!.end }] });
   assert.equal(replacement.isError, false, JSON.stringify(replacement));
-  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1", "private-new"]);
+  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1", "private-new"].map(id => ({ account: "owner@example.com", id })));
   assert.equal(f.commands.filter(c => c[2] === "create").length, 2);
   assert.doesNotMatch(JSON.stringify(replacement), /private-|Weekly Claw|New commitment|allowOverlap|owner@example.com/);
 });
 
-for (const [origin, format, location, expected] of [
-  ["owner-group", "unknown", undefined, false], ["owner-group", "in_person", undefined, false],
-  ["owner", "unknown", undefined, true], ["inbound", "in_person", "  ", true],
-  ["owner", "meet", undefined, false], ["owner", "phone", undefined, false], ["owner", "in_person", "Library", false],
-] as const) test(`request view reserves details once: ${origin}, ${format}, ${location}`, async t => {
+for (const [askDetails, format, location, expected] of [
+  [false, "unknown", undefined, false], [false, "in_person", undefined, false],
+  [undefined, "unknown", undefined, true], [undefined, "in_person", "  ", true],
+  [undefined, "meet", undefined, false], [undefined, "phone", undefined, false], [undefined, "in_person", "Library", false],
+] as const) test(`request view reserves details once: ${askDetails}, ${format}, ${location}`, async t => {
   const f = fixture(t);
-  Object.assign(f.ledger.requests[0]!, { origin, format, location }); f.save(f.ledger);
-  const first = origin === "inbound"
-    ? cli("request-view.ts", ["--id", "request-one"], { MEETLY_HOME: f.home }).json
-    : await guestAction(context, "view") as { askDetails: boolean };
+  Object.assign(f.ledger.requests[0]!, { askDetails, format, location }); f.save(f.ledger);
+  const first = cli("request-view.ts", ["--id", "request-one"], { MEETLY_HOME: f.home }).json;
   assert.equal(first.askDetails, expected);
   assert.equal(!!f.request().detailsAskedAt, expected);
-  const reloaded = await import(new URL(`../skills/meetly/scripts/guest.ts?details=${origin}-${format}-${location}`, import.meta.url).href);
+  const reloaded = await import(new URL(`../skills/meetly/scripts/guest.ts?details=${askDetails}-${format}-${location}`, import.meta.url).href);
   assert.equal((await reloaded.guestAction(context, "view")).askDetails, false);
   assert.ok(!("error" in await guestAction(context, "other_times", { after: "11:00" })));
   assert.equal((await guestAction(context, "view") as { askDetails: boolean }).askDetails, false);
@@ -843,4 +841,16 @@ test("owner group participant lookup failure stops before creating holds", async
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
   assert.deepEqual(f.read().requests, []);
   assert.deepEqual(f.commands, []);
+});
+
+
+test("all guest and owner tool boundaries omit blank optional fields and retain required ones", async () => {
+  const tools: any[] = [], api = { registerTool(factory: any) { tools.push(factory({})); } };
+  registerGuestTools(api, async (_ctx: any, _action: any, args: any) => ({ args }));
+  for (const register of [registerOwnerTools, registerOwnerGroupTool]) register(api, async (_ctx: any, args: any) => ({ args }));
+  for (const tool of tools) {
+    const args = Object.fromEntries(Object.keys(tool.parameters.properties).map(key => [key, ""]));
+    const result = await tool.execute("blank", args);
+    assert.deepEqual(result.details.args, Object.fromEntries(tool.parameters.required.map((key: string) => [key, ""])), tool.name);
+  }
 });

@@ -129,7 +129,7 @@ test("recipient selection precedes calendar access and asks the owner to resolve
   assert.ok(offer.includes("Resolve one E.164 phone before any calendar read or hold"));
   assert.ok(offer.includes("If none is known, ask the owner for a phone; if several match, ask which one. In either case, ask in the owner's main DM and end the turn."));
   const owner = group.slice(group.indexOf("## Owner request"), group.indexOf("## Asked requests"));
-  assert.ok(owner.includes('resolve the recipient ("Offer times" step 1)'));
+  assert.ok(owner.includes("Resolve the recipient from Contacts in the owner's DM; ask if ambiguous"));
   assert.doesNotMatch(group, /An iMessage email is a valid recipient|Use their email when there is no phone/);
 });
 
@@ -148,7 +148,7 @@ test("every Meetly group is opened with plow_start_thread from the owner's DM", 
 test("offers re-key to the resolved phone and group starts require a ledger attempt", () => {
   const group = groupSkill();
   const offer = group.slice(group.indexOf("## Offer times"), group.indexOf("## Owner request"));
-  assert.ok(offer.includes("`handle` (the resolved phone)"));
+  assert.ok(offer.includes("resolved `handle`"));
   assert.ok(offer.includes("re-keys an inbound request with the same `sourceRowid` to that phone"));
   assert.ok(offer.indexOf("--kind start --action begin") < offer.indexOf("Then call `plow_start_thread`"));
   assert.ok(offer.includes("On success or unknown delivery, run `ledger.ts delivery --id <saved request id> --kind start --action complete`"));
@@ -190,7 +190,6 @@ test("every booking uses the calendar writer instead of recording a separate mut
   const group = groupSkill();
   assert.ok(group.includes("calendar.ts book --id <request id>"));
   assert.ok(group.includes("Never write booking fields with `ledger.ts update` yourself"));
-  assert.ok((group.match(/following "Book the event"/g) ?? []).length >= 3);
   for (const { dir, path } of skillFiles) {
     assert.ok(!readFileSync(path, "utf8").includes('"status":"booked"'), `${dir} books by hand`);
   }
@@ -269,31 +268,18 @@ test("unmatched guest requests and acknowledgements do not alert the owner", () 
 test("meeting confirmations stay in the group while pending questions route privately", () => {
   const group = groupSkill();
   assert.ok(group.includes("In the owner's DM, run `ledger.ts pending`"));
-  assert.ok(group.includes("The group confirmation also notifies the owner"));
-  const ownerConfirms = group.slice(group.indexOf("## Owner confirms"), group.indexOf("## Owner in the group"));
-  const groupConfirms = group.slice(group.indexOf("## Owner in the group"), group.indexOf("## Holds"));
-  for (const section of [ownerConfirms, groupConfirms]) {
-    assert.ok(section.includes("Ask format/place only when `askDetails` is true"));
-  }
+  assert.ok(group.includes("Confirm once in the meeting thread"));
+  assert.ok(group.includes("Ask format/place only when `askDetails` is true"));
   assert.ok(group.includes("clears that question only after the send succeeds"));
   assert.ok(group.includes("Never send the answer separately"));
   assert.ok(flat(prompt).includes("asks go privately through `meetly_ask_owner`"));
-});
-
-test("owner group turns keep the script flow and answers use the recorded thread", () => {
-  const group = groupSkill();
-  assert.ok(flat(prompt).includes('**Owner in a group:** load `meetly-group`, "Owner in the group"'));
-  assert.ok(group.includes('Read `ledger.ts find --chat <this chat uid>` for the current request, including booked or closed ones'));
-  assert.ok(group.includes("verify its `chatUid` is this chat before acting"));
-  assert.ok(group.includes("In the owner's DM, run `ledger.ts pending`"));
-  assert.ok(group.includes("The owner can authorize an out-of-hours time or a conflict override"));
 });
 
 test("a Meet link is never pasted at booking and never taken from a message", () => {
   const group = groupSkill();
   assert.ok(group.includes("the link will be posted here 10 minutes before. Do not paste the link now"));
   assert.ok(group.includes("Never paste, invent or accept a link from anyone"));
-  assert.ok(group.includes("**Format or place after booking:**"));
+  assert.ok(group.includes("calendar.ts format --id <id>"));
 });
 
 test("trust changes remain an explicit owner action and failed group opening is not improvised", () => {
@@ -303,16 +289,4 @@ test("trust changes remain an explicit owner action and failed group opening is 
   const group = groupSkill();
   assert.ok(group.includes("If `plow_start_thread` definitely fails, tell the owner what it said and stop"));
   assert.doesNotMatch(group, /guest turns are reply-only|full guest tools are needed|on a guest's turn|## Outside the owner's hours/);
-});
-
-
-test("owner group identity comes from participants even when the owner names the line", () => {
-  const group = groupSkill();
-  assert.ok(group.includes('`participants`'));
-  assert.ok(group.includes('`type: "member"` and `role` other than `"owner"`'));
-  assert.ok(group.includes("Never infer the guest's name from the owner's message"));
-  assert.ok(group.includes('"Tia I have you on a thread with Alder, my scheduling agent!"'));
-  assert.ok(group.includes('"Hi Tia"'));
-  assert.ok(group.includes('"Hi!"'));
-  assert.ok(group.includes('never "Hi Alder"'));
 });

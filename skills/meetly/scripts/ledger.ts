@@ -8,6 +8,7 @@ import { isMain, run } from "./cli.ts";
 import { holdHours, reminderLeadMin } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { file } from "./paths.ts";
+import { uniqueEvents, type EventRef } from "./busy.ts";
 import type { Constraints } from "./slots.ts";
 export type { Constraints } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -59,7 +60,8 @@ export type Request = {
   constraints?: Constraints;
   // Times the person proposed; only the first offer uses them.
   proposed?: Constraints;
-  allowOverlap?: string[];
+  allowOverlap?: EventRef[];
+  askDetails?: boolean;
   offered: Offer[];
   status: Status;
   eventId?: string;
@@ -191,7 +193,6 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
     if (key in input) throw new Error(`${key} is managed by ledger.ts delivery`);
   }
   if (input.origin !== "inbound" && input.origin !== "owner" && input.origin !== "owner-group") throw new Error(`origin must be inbound, owner or owner-group, got ${input.origin}`);
-  if (input.origin === "owner-group" && !input.chatUid) throw new Error("an owner-group request requires its chat uid");
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
   if (!Number.isInteger(input.durationMin) || input.durationMin <= 0) throw new Error("durationMin must be a positive whole number");
   const status = input.status ?? "offered";
@@ -229,8 +230,10 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
 
   // Reuse addRequest's validation and timestamp behavior, then apply its new
   // offer to the existing record. An absent chatUid must not erase the link.
-  if (existing.origin === "owner-group" && input.chatUid !== undefined && input.chatUid !== existing.chatUid) throw new Error("an owner-group request cannot move to another chat");
-  input = { ...input, origin: existing.origin === "owner-group" ? existing.origin : input.origin, chatUid: input.chatUid ?? existing.chatUid };
+  input = { ...input, origin: existing.origin, chatUid: input.chatUid ?? existing.chatUid,
+    askDetails: input.askDetails ?? existing.askDetails,
+    allowOverlap: uniqueEvents([...(existing.allowOverlap ?? []), ...(input.allowOverlap ?? [])]) };
+  if (existing.chatUid && input.chatUid !== existing.chatUid) throw new Error("a request cannot move to another chat");
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   const newHolds = new Set(validated.offered.flatMap((offer) => offer.holdId ? [`${offer.account}\0${offer.holdId}`] : []));
   const replacedHolds = existing.offered.flatMap((offer) => offer.holdId && !newHolds.has(`${offer.account}\0${offer.holdId}`)
@@ -278,7 +281,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   const at = new Date(now).toISOString();
   const updated: Request = { ...ledger.requests[index]!, updatedAt: at };
   if (updated.status === "asked" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
-  if (updated.origin === "owner-group" && patch.chatUid !== undefined && patch.chatUid !== updated.chatUid) throw new Error("an owner-group request cannot move to another chat");
+  if (updated.chatUid && patch.chatUid !== undefined && patch.chatUid !== updated.chatUid) throw new Error("a request cannot move to another chat");
   for (const [key, value] of Object.entries(patch)) {
     if (value === null && (NULLABLE as readonly string[]).includes(key)) delete updated[key as (typeof NULLABLE)[number]];
     else if (value !== undefined) (updated as Record<string, unknown>)[key] = value;

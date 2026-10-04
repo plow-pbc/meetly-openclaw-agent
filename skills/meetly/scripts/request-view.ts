@@ -7,7 +7,7 @@ import { localeFormatter } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
 
 const needsDetails = (request: Request) => ["offered", "booked"].includes(request.status)
-  && request.origin !== "owner-group" && !request.detailsAskedAt
+  && request.askDetails !== false && !request.detailsAskedAt
   && (!request.format || request.format === "unknown" || (request.format === "in_person" && !request.location?.trim()));
 
 export function view(request: Request, config: Config) {

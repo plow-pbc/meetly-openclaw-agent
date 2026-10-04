@@ -1,3 +1,6 @@
+export const cleanArgs = (args, required = []) => Object.fromEntries(
+  Object.entries(args ?? {}).filter(([key, value]) => value !== "" || required.includes(key)));
+
 const object = (properties = {}, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 const text = description => ({ type: "string", description });
 const start = text("An offered ISO start time; for an owner approval request, ISO with offset or YYYY-MM-DDTHH:MM in the owner's timezone.");
@@ -50,8 +53,7 @@ export function registerGuestTools(api, execute = run, outbound = loadOutbound) 
     api.registerTool(context => ({
       name, label: name, description, parameters,
       async execute(_id, args) {
-        const cleaned = Object.fromEntries(Object.entries(args ?? {}).filter(([key, value]) => value !== "" || parameters.required.includes(key)));
-        const result = await execute(context, action, cleaned, text => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound));
+        const result = await execute(context, action, cleanArgs(args, parameters.required), text => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound));
         return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       },
     }));

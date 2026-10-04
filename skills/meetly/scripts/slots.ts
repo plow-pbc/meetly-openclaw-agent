@@ -9,7 +9,7 @@
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
-import type { Busy } from "./busy.ts";
+import { allowsOverlap, uniqueEvents, type EventRef, type Busy } from "./busy.ts";
 import { intersectConstraints, type Ledger } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
@@ -25,7 +25,7 @@ export type SlotQuery = Constraints & {
   busy: Busy[];
   unknownAfter?: string;
   durationMin?: number;
-  allowOverlap?: string[];
+  allowOverlap?: EventRef[];
   exclude?: string[];
   count?: number;
   near?: string;
@@ -72,9 +72,8 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string 
 
   const earliest = now + MIN_NOTICE_MIN * 60_000;
   const excluded = new Set((q.exclude ?? []).map((e) => Date.parse(e)));
-  const allowed = new Set(q.allowOverlap ?? []);
   const busy = q.busy
-    .filter((b) => b.id === undefined || !allowed.has(b.id))
+    .filter((b) => !allowsOverlap(b, q.allowOverlap))
     .map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }));
   const unknownAfter = q.unknownAfter !== undefined ? Date.parse(q.unknownAfter) : undefined;
 
@@ -141,7 +140,7 @@ export function checkTime(q: {
   start: string;
   unknownAfter?: string;
   durationMin?: number;
-  allowOverlap?: string[];
+  allowOverlap?: EventRef[];
   locale?: string;
 }): TimeCheck {
   const tz = q.config.timezone;
@@ -157,11 +156,10 @@ export function checkTime(q: {
   const sameDay = s.y === e.y && s.m === e.m && s.d === e.d;
   const outsideHours = !q.config.days.includes(s.weekday) || !sameDay ||
     s.hh * 60 + s.mm < minutes(q.config.windowStart) || e.hh * 60 + e.mm > minutes(q.config.windowEnd);
-  const allowed = new Set(q.allowOverlap ?? []);
   let reason: TimeCheck["reason"];
   if (q.unknownAfter !== undefined && end > Date.parse(q.unknownAfter)) reason = "unknown";
   else if (start < q.now + MIN_NOTICE_MIN * 60_000) reason = "too-soon";
-  else if (q.busy.some((b) => (b.id === undefined || !allowed.has(b.id)) && Date.parse(b.start) < end && Date.parse(b.end) > start)) {
+  else if (q.busy.some((b) => (!allowsOverlap(b, q.allowOverlap)) && Date.parse(b.start) < end && Date.parse(b.end) > start)) {
     reason = "busy";
   }
   const format = q.locale !== undefined ? localeFormatter(q.locale, tz) : undefined;
@@ -203,7 +201,7 @@ if (isMain(import.meta.url)) {
     const config = loadConfig();
     const input = JSON.parse(readInput(values.in !== undefined ? [values.in] : [])[0]!) as {
       busy?: Busy[];
-      allowOverlap?: string[];
+      allowOverlap?: EventRef[];
       unknownAfter?: string;
       degraded?: string[];
     };
@@ -218,7 +216,7 @@ if (isMain(import.meta.url)) {
       const check: Parameters<typeof checkTime>[0] = { now, config, busy: input.busy, start: values.at, allowOverlap: input.allowOverlap };
       if (input.unknownAfter !== undefined) check.unknownAfter = input.unknownAfter;
       if (values.duration !== undefined) check.durationMin = positiveInt(values.duration, "--duration");
-      if (values["allow-overlap"]) check.allowOverlap = values["allow-overlap"];
+      if (values["allow-overlap"]) check.allowOverlap = values["allow-overlap"].map(value => JSON.parse(value));
       if (values.locale !== undefined) check.locale = values.locale;
       return { ...checkTime(check), degraded };
     }
@@ -238,7 +236,7 @@ if (isMain(import.meta.url)) {
     if (values.before !== undefined) q.before = parseTime(values.before);
     if (values.from !== undefined) q.from = date(values.from, "--from");
     if (values.to !== undefined) q.to = date(values.to, "--to");
-    if (values["allow-overlap"]) q.allowOverlap = values["allow-overlap"];
+    if (values["allow-overlap"]) q.allowOverlap = values["allow-overlap"].map(value => JSON.parse(value));
     if (values.locale !== undefined) q.locale = values.locale;
     if (values.exclude) {
       for (const e of values.exclude) if (Number.isNaN(Date.parse(e))) throw new Error(`--exclude is not a time: ${e}`);
@@ -251,7 +249,7 @@ if (isMain(import.meta.url)) {
       Object.assign(q, narrowed);
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
-      q.allowOverlap = [...new Set([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])])];
+      q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);
       q.busy = q.busy.filter(b => !request.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
     }
     return { ...findSlots(q), degraded };

@@ -412,12 +412,12 @@ test("CLI lists and clears a general owner question using the existing pending c
 });
 
 
-test("owner-group origin requires and preserves its exact chat across re-offers", () => {
-  assert.throws(() => addRequest(empty(), input({ origin: "owner-group" }), T0, "r_1"), /requires its chat uid/);
-  const ledger = addRequest(empty(), input({ origin: "owner-group", chatUid: "cht_MiXeD" }), T0, "r_1");
+for (const origin of ["owner", "owner-group", "inbound"] as const) test(`requests preserve their chat and prompt policy across re-offers (${origin})`, () => {
+  const ledger = addRequest(empty(), input({ origin, chatUid: "cht_MiXeD", askDetails: false }), T0, "r_1");
   assert.throws(() => saveRequest(ledger, input({ chatUid: "cht_mixed" }), T0 + HOUR, "r_2"), /cannot move/);
   assert.throws(() => updateRequest(ledger, "r_1", { chatUid: "elsewhere" }, T0 + HOUR), /cannot move/);
   const saved = saveRequest(ledger, input(), T0 + HOUR, "r_2").requests[0]!;
-  assert.equal(saved.origin, "owner-group");
+  assert.equal(saved.origin, origin);
+  assert.equal(saved.askDetails, false);
   assert.equal(saved.chatUid, "cht_MiXeD");
 });
