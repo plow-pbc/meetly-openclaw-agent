@@ -23,10 +23,12 @@ const patchFixture = (home: string, id: string, patch: Patch) => {
 
 test("handles normalize phones and emails", () => {
   assert.equal(normalizeHandle("+1 (555) 123-4567"), "+15551234567");
-  assert.equal(normalizeHandle("(555) 123-4567"), "5551234567");
+  for (const handle of ['(555) 123-4567', '5551234567', '+05551234567', '+15551234567junk', '+1234567890123456', 'guest@', 'guest name@example.com', '']) {
+    assert.throws(() => normalizeHandle(handle), /handle/);
+  }
   assert.equal(normalizeHandle(" Ana@Example.COM "), "ana@example.com");
-  assert.ok(sameHandle("+1 (555) 123-4567", "5551234567"));
-  assert.ok(sameHandle("+15551234567", "(555) 123-4567"));
+  assert.ok(sameHandle("+1 (555) 123-4567", "+15551234567"));
+  assert.ok(!sameHandle("+15551234567", "(555) 123-4567"));
   assert.ok(sameHandle("ANA@example.com", "ana@EXAMPLE.com"));
   assert.ok(!sameHandle("+15551234567", "+15551234568"));
   assert.ok(!sameHandle("4567", "+15551234567"));
@@ -35,7 +37,7 @@ test("handles normalize phones and emails", () => {
 
 test("the same person written three ways matches one request", () => {
   const l = addRequest(empty(), input({ handle: "+1 (555) 123-4567" }), T0, "r_1");
-  for (const h of ["+15551234567", "5551234567", "(555) 123-4567"]) assert.equal(findOpenByHandle(l, h)?.id, "r_1");
+  for (const h of ["+15551234567", "+1 5551234567", "+1 (555) 123-4567"]) assert.equal(findOpenByHandle(l, h)?.id, "r_1");
   const e = addRequest(empty(), input({ handle: "Ana@Example.com" }), T0, "r_2");
   assert.equal(findOpenByHandle(e, "ana@example.com")?.id, "r_2");
 });
@@ -57,7 +59,7 @@ test("add sets status and times, and validates", () => {
 
 test("a second open request for the same person is refused until the first closes", () => {
   let l = addRequest(empty(), input(), T0, "r_1");
-  assert.throws(() => addRequest(l, input({ handle: "5551234567", origin: "owner" }), T0, "r_2"), /open request r_1 already exists/);
+  assert.throws(() => addRequest(l, input({ handle: "+1 (555) 123-4567", origin: "owner" }), T0, "r_2"), /open request r_1 already exists/);
   l = updateRequest(l, "r_1", { status: "booked", eventId: "e1" }, T0);
   l = addRequest(l, input(), T0, "r_2");
   assert.equal(findOpenByHandle(l, "+15551234567")?.id, "r_2");
@@ -66,7 +68,7 @@ test("a second open request for the same person is refused until the first close
 test("save replaces a duplicate open offer by normalized handle and preserves its id and chat link", () => {
   const original = addRequest(empty(), input({ chatUid: "chat_1" }), T0, "r_1");
   const updatedOffer = { ...offer, start: "2026-09-30T12:00:00-03:00", holdId: "h2" };
-  const saved = saveRequest(original, input({ handle: "5551234567", offered: [updatedOffer] }), T0 + HOUR, "r_2");
+  const saved = saveRequest(original, input({ handle: "+1 (555) 123-4567", offered: [updatedOffer] }), T0 + HOUR, "r_2");
   assert.equal(saved.requests.length, 1);
   assert.equal(saved.requests[0]!.id, "r_1");
   assert.equal(saved.requests[0]!.chatUid, "chat_1");
@@ -80,7 +82,7 @@ test("find by chat and sender resolves a replacement offer without a chat link",
   let l = addRequest(empty(), input({ chatUid: "c1" }), T0, "r_1");
   l = updateRequest(l, "r_1", { status: "dropped" }, T0 + HOUR);
   const nextOffer = { ...offer, start: "2026-09-29T12:30:00-03:00", end: "2026-09-29T13:00:00-03:00", holdId: "h2" };
-  l = addRequest(l, input({ handle: "5551234567", offered: [nextOffer] }), T0 + 2 * HOUR, "r_2");
+  l = addRequest(l, input({ handle: "+1 (555) 123-4567", offered: [nextOffer] }), T0 + 2 * HOUR, "r_2");
 
   // The unqualified chat lookup sees closed A; sender-aware lookup must pick B.
   assert.equal(findByChat(l, "c1")?.id, "r_1");
@@ -163,7 +165,7 @@ test("save as asked records the request with no offer, holds or chat", () => {
 
 test("find by handle returns an asked request; asking again changes nothing; no chat resolves to it", () => {
   const l = saveRequest(empty(), asked(), T0, "r_1");
-  assert.equal(findOpenByHandle(l, "(555) 123-4567")?.id, "r_1");
+  assert.equal(findOpenByHandle(l, "+1 (555) 123-4567")?.id, "r_1");
   assert.equal(saveRequest(l, asked({ handle: "+15551234567", topic: "lunch" }), T0 + HOUR, "r_2"), l);
   assert.equal(findByChat(l, "c1", "+15551234567"), undefined);
 });
@@ -276,7 +278,7 @@ test("CLI saves an asked request, finds it by handle but never by chat", () => {
   const saved = cli("ledger.ts", ["save", "--json", JSON.stringify(asked())], env);
   assert.equal(saved.status, 0, saved.stderr);
   assert.equal(saved.json.request.status, "asked");
-  assert.equal(cli("ledger.ts", ["find", "--handle", "5551234567"], env).json.request.id, saved.json.request.id);
+  assert.equal(cli("ledger.ts", ["find", "--handle", "+1 (555) 123-4567"], env).json.request.id, saved.json.request.id);
   assert.deepEqual(cli("ledger.ts", ["find", "--chat", "c1", "--handle", "+15551234567"], env).json, { request: null });
   const again = cli("ledger.ts", ["save", "--json", JSON.stringify(asked({ topic: "lunch" }))], env);
   assert.deepEqual([again.json.request.id, again.json.request.topic], [saved.json.request.id, "coffee"]);
@@ -324,7 +326,7 @@ test("CLI add, find, update, expired and cleanup round-trip", () => {
   assert.equal(added.status, 0, added.stderr);
   const id = added.json.request.id;
   assert.match(id, /^r_[0-9a-f]{8}$/);
-  assert.equal(cli("ledger.ts", ["find", "--handle", "5551234567"], env).json.request.id, id);
+  assert.equal(cli("ledger.ts", ["find", "--handle", "+1 (555) 123-4567"], env).json.request.id, id);
   assert.deepEqual(cli("ledger.ts", ["find", "--handle", "+15550000000"], env).json, { request: null });
   const patch = join(home, "patch.json");
   writeFileSync(patch, JSON.stringify({ chatUid: "chat_1" }));
@@ -372,4 +374,17 @@ test("public ledger updates cannot bypass calendar or reminder commits", () => {
     assert.match(result.stderr, /managed by/);
   }
   assert.deepEqual(cli("ledger.ts", ["find", "--handle", saved.handle], env).json.request, saved);
+});
+
+for (const save of [addRequest, saveRequest]) test(`${save.name} persists only canonical phone or email handles`, () => {
+  for (const [handle, expected] of [[' +1 (555) 123-4567 ', '+15551234567'], [' Guest@Example.COM ', 'guest@example.com']]) {
+    assert.equal(save(empty(), input({ handle }), T0, 'canonical').requests[0]!.handle, expected);
+  }
+});
+
+test('saving a canonical suffix collision creates a separate request without replacing the original', () => {
+  const original = addRequest(empty(), input(), T0, 'r_1');
+  const saved = saveRequest(original, input({ handle: '+115551234567' }), T0, 'r_2');
+  assert.equal(saved.requests.length, 2);
+  assert.deepEqual(saved.requests[0], original.requests[0]);
 });

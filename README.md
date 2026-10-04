@@ -186,7 +186,7 @@ message is skipped.
   cursor, the request ledger, busy/free-slot math in your time zone, cron
   registration and the owner-DM lookup. Guest tools use the same request-locked
   calendar writer as owner and poll flows. Guest identity uses exact canonical
-  phone/email and chat matching; contact lookup can still match phone suffixes.
+  phone/email and chat matching; contact lookup also requires exact canonical phone/email matching.
   The model decides; the scripts count.
 - **State.** `/var/lib/plow/meetly`: `config.json` (your setup),
   `cursor.json` (last message read), `ledger.json` (requests, offered times,
