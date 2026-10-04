@@ -449,3 +449,18 @@ test("a fresh start reservation tells the caller to send, and a duplicate explic
   assert.equal(next.status, 0, next.stderr);
   assert.equal(next.json.delivery.sendNow, true);
 });
+
+test("DM name lookup finds only an unambiguous open request", () => {
+  const home = tmpHome();
+  const ledger = addRequest(empty(), input({ name: "Bo", origin: "owner-group", chatUid: "bo-chat" }), T0, "bo");
+  ledger.requests.push({ ...ledger.requests[0]!, id: "closed", status: "booked" });
+  writeJson(join(home, "ledger.json"), ledger);
+  const find = (name: string) => cli("ledger.ts", ["find", "--name", name], { MEETLY_HOME: home });
+  assert.equal(find(" BO ").json?.request?.id, "bo");
+  assert.equal(find("Boris").json?.request, null);
+  ledger.requests.push({ ...ledger.requests[0]!, id: "other", handle: "+15557654321" });
+  writeJson(join(home, "ledger.json"), ledger);
+  const ambiguous = find("Bo");
+  assert.equal(ambiguous.status, 1);
+  assert.match(ambiguous.stderr, /ambiguous/i);
+});

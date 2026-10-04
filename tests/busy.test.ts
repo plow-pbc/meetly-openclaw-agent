@@ -141,3 +141,18 @@ test("the CLI's --fetch writes tmp/busy.json for slots.ts and prints only a shor
   assert.deepEqual(r.json, { file: join(home, "tmp", "busy.json"), busy: 0, degraded: ["owner@example.com"] });
   assert.deepEqual(JSON.parse(readFileSync(join(home, "tmp", "busy.json"), "utf8")), { busy: [], degraded: ["owner@example.com"] });
 });
+
+test("overlap titles match Latch-wrapped summaries exactly and keep account identity", async () => {
+  const wrapped = (title: string, endId = "023275dd5cf61fcd") =>
+    `<<<EXTERNAL_UNTRUSTED_CONTENT id="023275dd5cf61fcd">>>\nSource: google_api\n---\n${title}\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="${endId}">>>`;
+  const events = [
+    ["approved", wrapped("QA conflict block")],
+    ["extra", wrapped("QA conflict block extra")],
+    ["malformed", wrapped("QA conflict block", "different")],
+    ["plain", " QA conflict block "],
+  ].map(([id, summary]) => ({ ...gogEvent(id!, range.from, range.to), summary }));
+  const result = await fetchBusy({ timezone: TZ, calendars: [{ account: "owner@example.com", id: "primary" }] }, range,
+    { token: "tok", allowOverlapTitles: ["qa conflict block"], fetch: macBridge(() => JSON.stringify({ events })) });
+  assert.deepEqual(result.allowOverlap, ["approved", "plain"].map(id => ({ account: "owner@example.com", id })));
+  assert.equal(result.busy.length, 4);
+});

@@ -10,7 +10,7 @@ import { findOpenByHandle, intersectConstraints, normalizeHandle, sameHandle, ty
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "topic" | "constraints" | "proposed" | "format" | "location" | "locale" | "durationMin">;
+type GroupRequest = Pick<OfferInput, "topic" | "constraints" | "proposed" | "format" | "location" | "locale" | "name">;
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, options: CalendarOptions = {}): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -39,13 +39,14 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
       const contact = await lookupContact(handle);
       if (contact.found) name = contact.name?.trim() || undefined;
     }
+    name = args.name?.trim() || name;
     const existing = findOpenByHandle(readJson<Ledger>(file("ledger.json"), { requests: [] }), handle);
     if (existing && existing.chatUid !== chat && !(existing.status === "asked" && existing.chatUid === undefined)) {
       throw new Error("request belongs to another conversation");
     }
     const config = loadConfig(), now = (options.now ?? Date.now)();
     const { topic, format, location } = args;
-    const durationMin = args.durationMin ?? existing?.durationMin ?? config.durationMin;
+    const durationMin = existing?.durationMin ?? config.durationMin;
     const locale = args.locale ?? existing?.locale;
     const constraints = args.constraints ? intersectConstraints(existing?.constraints, args.constraints) : existing?.constraints;
     const proposed = args.proposed ?? (existing?.status === "asked" ? existing.proposed : undefined);

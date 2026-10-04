@@ -37,9 +37,9 @@ free there.
 ## Offer times
 
 1. In the current group, call `meetly_offer_owner_group` with `topic`, `constraints`,
-   `proposed`, explicit `durationMin`, `format`, `location` and `locale` as known.
+   `proposed`, `name` as given by the owner in this thread, `format`, `location` and `locale` as known.
    It resolves the guest and chat, searches within the owner's conditions and
-   holds times itself; never supply `offered` intervals. On error, stop. Otherwise
+   holds times itself using the saved or configured duration; never supply `durationMin` or `offered` intervals. On error, stop. Otherwise
    continue at step 6 with its returned offer; if `preferencesUnavailable` is true,
    explain that the preferred times do not work and offer the returned alternatives.
    In the owner's DM, resolve one E.164 phone before any calendar read or hold. If none is
@@ -115,7 +115,9 @@ is not a scheduling request. Reply only with a short introduction, such as
 actual request. Do not ask the guest or group what, when, format or place;
 do not search the calendar or create a request from this introduction.
 
-Resolve the recipient from Contacts in the owner's DM; ask if ambiguous.
+In the owner's DM, first run `ledger.ts find --name <guest name>` for a named meeting.
+Reuse the matched open request's handle and chat. If ambiguous, ask which meeting;
+only when no request matches, resolve the recipient from Contacts and ask if ambiguous.
 In a group, let `meetly_offer_owner_group` resolve the recipient; do not look up
 Contacts or ask for a phone. Read
 `ledger.ts find --chat <this chat uid>` first, including booked or closed requests;

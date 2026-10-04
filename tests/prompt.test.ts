@@ -128,12 +128,13 @@ test("DM recipient selection precedes calendar access while current groups use r
   const offer = group.slice(group.indexOf("## Offer times"), group.indexOf("## Owner request"));
   assert.ok(offer.includes("In the owner's DM, resolve one E.164 phone before any calendar read or hold"));
   assert.ok(offer.includes("In the current group, call `meetly_offer_owner_group`"));
-  assert.ok(offer.includes("never supply `offered` intervals"));
+  assert.ok(offer.includes("never supply `durationMin` or `offered` intervals"));
   assert.doesNotMatch(offer, /`--allow-overlap`/);
   assert.ok(group.includes("slots.ts --at <pendingOwner.start> --request <id>"));
   assert.ok(offer.includes("If none is known, ask the owner for a phone; if several match, ask which one. In either case, ask in the owner's main DM and end the turn."));
   const owner = group.slice(group.indexOf("## Owner request"), group.indexOf("## Asked requests"));
-  assert.ok(owner.includes("Resolve the recipient from Contacts in the owner's DM; ask if ambiguous"));
+  assert.ok(owner.includes("first run `ledger.ts find --name <guest name>`"));
+  assert.ok(owner.includes("only when no request matches, resolve the recipient from Contacts"));
   assert.doesNotMatch(group, /An iMessage email is a valid recipient|Use their email when there is no phone/);
 });
 
@@ -300,6 +301,6 @@ test("an owner introduction waits without asking the group to plan a meeting", (
   const group = groupSkill();
   assert.ok(group.includes("Adding Alder, my scheduling agent, to find us a time"));
   assert.ok(group.includes("Do not ask the guest or group what, when, format or place"));
-  assert.ok(group.indexOf("An introduction alone") < group.indexOf("Resolve the recipient"));
+  assert.ok(group.indexOf("An introduction alone") < group.indexOf("first run `ledger.ts find --name"));
   assert.ok(flat(prompt).includes("only a short Meetly introduction and wait"));
 });

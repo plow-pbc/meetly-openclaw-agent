@@ -117,6 +117,12 @@ function listingOf(output: string): unknown {
   return JSON.parse(output.slice(start));
 }
 
+// Latch wraps fetched text as data. Remove only a complete, matching envelope.
+function eventTitle(summary = ""): string {
+  const wrapped = summary.match(/^<<<EXTERNAL_UNTRUSTED_CONTENT id="([^"\r\n]+)">>>\r?\nSource: google_api\r?\n---\r?\n([\s\S]*)\r?\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="\1">>>$/);
+  return (wrapped?.[2] ?? summary).trim().toLowerCase();
+}
+
 const FETCH_MAX = 100;
 
 // Reads every configured account on the Mac directly (mac.ts), one
@@ -149,7 +155,7 @@ export async function fetchBusy(
       degraded.push(account);
       continue;
     }
-    allowOverlap.push(...events.filter(e => e.id && !skipped(e) && titles.has(e.summary?.trim().toLowerCase() ?? "")).map(e => ({ account, id: e.id! })));
+    allowOverlap.push(...events.filter(e => e.id && !skipped(e) && titles.has(eventTitle(e.summary))).map(e => ({ account, id: e.id! })));
     results.push({ events: events.map((e) => ({ ...e, account })) });
   }
   const out = toBusy(results, { tz: config.timezone, max: FETCH_MAX });

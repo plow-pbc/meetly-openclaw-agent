@@ -639,7 +639,7 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory(ctx); } }, offerOwnerGroup);
   assert.equal(tool.parameters.properties.chatUid, undefined);
   assert.equal(tool.parameters.properties.handle, undefined);
-  assert.equal(tool.parameters.properties.name, undefined);
+  assert.equal(tool.parameters.properties.name.type, "string");
   const args = { handle: context.requesterSenderId, topic: "Planning", name: "", format: "", location: "", locale: "", durationMin: "", offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
   const result = await tool.execute("offer", args);
   assert.equal(result.isError, false, JSON.stringify(result));
@@ -814,7 +814,7 @@ for (const [display, contact, expected] of [
   f.events.clear();
   f.participants[2]!.display_name = display;
   if (contact === "unavailable") f.fail.add("-c");
-  const args = { handle: "+15557654321", name: "Alder", topic: "Lunch", offered: offers };
+  const args = { handle: "+15557654321", topic: "Lunch", offered: offers };
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, args);
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().handle, context.requesterSenderId);
@@ -860,4 +860,23 @@ test("a pending time approval suppresses detail questions without consuming the 
   const result = await guestAction(context, "view");
   assert.equal("askDetails" in result && result.askDetails, false);
   assert.equal(f.request().detailsAskedAt, undefined);
+});
+
+test("owner-group ignores model duration and saves the owner's guest name for DM lookup", async t => {
+  const f = fixture(t, "");
+  f.save({ requests: [] });
+  f.events.clear();
+  f.participants[2]!.display_name = "unnamed member";
+  let tool: any;
+  registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
+  const result = await tool.execute("offer", { topic: "call", name: "Bo", durationMin: 1 });
+  assert.equal(result.isError, false, JSON.stringify(result));
+  assert.equal(f.request().durationMin, DEFAULTS.durationMin);
+  assert.equal(tool.parameters.properties.durationMin, undefined);
+  assert.equal(f.request().name, "Bo");
+  assert.ok(f.request().offered.every(slot => Date.parse(slot.end) - Date.parse(slot.start) === DEFAULTS.durationMin * 60_000));
+  const found = cli("ledger.ts", ["find", "--name", " bo "], { MEETLY_HOME: f.home });
+  assert.equal(found.status, 0, found.stderr);
+  assert.equal(found.json.request.id, f.request().id);
+  assert.equal(found.json.request.chatUid, "chat-one");
 });

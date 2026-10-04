@@ -383,6 +383,7 @@ if (isMain(import.meta.url)) {
       args: rest,
       options: {
         handle: { type: "string" },
+        name: { type: "string" },
         chat: { type: "string" },
         id: { type: "string" },
         json: { type: "string" },
@@ -405,7 +406,13 @@ if (isMain(import.meta.url)) {
           if (values.status !== undefined && !OPEN.includes(values.status as Status)) throw new Error(`--status must be ${OPEN.join(" or ")}`);
           return { request: findOpenByHandle(ledger, values.handle, values.status ? [values.status as Status] : OPEN) ?? null };
         }
-        throw new Error("usage: ledger.ts find --handle H [--status asked|offered] | --chat U");
+        if (values.name !== undefined) {
+          const name = values.name.trim().toLowerCase();
+          const matches = ledger.requests.filter(r => OPEN.includes(r.status) && name && r.name?.trim().toLowerCase() === name);
+          if (matches.length > 1) throw new Error("Ambiguous guest name; ask the owner which meeting they mean.");
+          return { request: matches[0] ?? null };
+        }
+        throw new Error("usage: ledger.ts find --handle H [--status asked|offered] | --chat U | --name N");
       }
       case "add": {
         const input = jsonArg(values);
