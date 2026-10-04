@@ -132,6 +132,19 @@ test("the CLI reads busy.ts output and the stored config", () => {
   assert.equal(cli("slots.ts", ["--in", busyFile, "--locale", "??"], env).status, 1);
   assert.equal(cli("slots.ts", ["--in", busyFile, "--days", "someday"], env).status, 1);
   assert.equal(cli("slots.ts", ["--in", busyFile, "--from", "5/10"], env).status, 1);
+  const boundedArgs = ["--in", busyFile, ...now, "--duration", "30", "--days", "mon",
+    "--from", "2026-09-28", "--to", "2026-09-28", "--after", "10:00", "--before", "14:00"];
+  const nearCases: [string, string[] | null][] = [
+    ["2026-09-28T10:30:00-03:00", ["11:00", "11:30", "12:00"]],
+    ["2026-09-28T13:30:00-03:00", ["13:30", "13:00", "12:30"]],
+    ["tomorrow", null],
+  ];
+  for (const [near, expected] of nearCases) {
+    const result = cli("slots.ts", [...boundedArgs, "--near", near], env);
+    assert.equal(result.status, expected ? 0 : 1, result.stderr);
+    if (expected) assert.deepEqual(result.json.slots.map((s: { start: string }) => s.start),
+      expected.map(time => `2026-09-28T${time}:00-03:00`));
+  }
 });
 
 test("checkTime: a time the person insists on", () => {

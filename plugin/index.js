@@ -8,6 +8,7 @@
 // and preboot copies it into the state volume's plugin root on every boot.
 import { execFile } from "node:child_process";
 import { registerGuestTools } from "./guest-tools.js";
+import { registerOwnerTools } from "./owner-tools.js";
 
 export const OWNER_DM_SESSION = "agent:main:main";
 export const SETUP_STATUS = "/opt/plow/skills/meetly/scripts/setup-status.ts";
@@ -92,6 +93,7 @@ export default {
   description: "Guest scheduling tools and the owner DM setup check.",
   register(api) {
     registerGuestTools(api);
+    registerOwnerTools(api);
     api.on("before_prompt_build", async (_event, ctx) => {
       if (!isOwnerDmTurn(ctx)) return undefined;
       let context;

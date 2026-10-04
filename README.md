@@ -56,8 +56,8 @@ signed as Meetly.
 - **Offers only free time, inside your hours.** Your calendar shows up as free
   slots within the days and hours you set. Anything else is "an existing
   commitment" — never an event name or detail. If the other person can only
-  do a time outside your hours, Meetly asks you in that group and books it only on
-  your yes there. A yes in your DM does not approve the group request.
+  do a time outside your hours, Meetly asks you privately and books it only on
+  your yes, then confirms in the group. Unresolved meeting questions also go to your DM.
 - **Holds expire.** No answer in 48 hours: the holds are deleted and the
   group is told the times were released.
 - **Overlaps only with your word.** Meetly books over an existing event only
@@ -180,13 +180,20 @@ message is skipped.
   scheduling tools in `PLOW_GUEST_TOOLS`; owner turns keep full tools. An uncertain
   delivery is recorded without a chat and never retried automatically; Meetly
   may retry after the owner explicitly clears the recorded attempt. Meeting
-  confirmations and approval asks stay in that group; the owner is a participant.
+  confirmations stay in the group. `meetly_ask_owner` sends meeting questions
+  to the owner's DM; `meetly_other_times(start)` sends time-approval requests.
+  `meetly_answer_owner` returns
+  the owner's answer to that request's recorded group; time approvals use the
+  calendar writer. The answer tool is owner-only and is not in `PLOW_GUEST_TOOLS`.
+  The private send stays inside Meetly over the public `sendDurableMessageBatch`
+  SDK: exposing a general owner-DM tool to guests would let them bypass the
+  request scope and one-pending-question gate.
 - **Scripts.** Small TypeScript CLIs in `skills/meetly/scripts/`, run directly
   by the image's Node (`node <script>.ts`, no build): setup, the message
   cursor, the request ledger, busy/free-slot math in your time zone, cron
   registration and the owner-DM lookup. Guest tools use the same request-locked
   calendar writer as owner and poll flows. Guest identity uses exact canonical
-  phone/email and chat matching; contact lookup can still match phone suffixes.
+  phone/email and chat matching; contact lookup also requires exact canonical phone/email matching.
   The model decides; the scripts count.
 - **State.** `/var/lib/plow/meetly`: `config.json` (your setup),
   `cursor.json` (last message read), `ledger.json` (requests, offered times,
