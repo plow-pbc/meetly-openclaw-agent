@@ -24,7 +24,9 @@ export function recordBooking(ledger: Ledger, id: string, event: EventInfo, acco
   };
   // A reminder belongs to one start time: a moved meeting gets a new one.
   if (request.booked && Date.parse(request.booked.start) !== Date.parse(event.start)) patch.reminder = null;
-  // Keep an owner approval linked until its answer is delivered to the group.
+  // Keep only the booked time's approval linked until its answer is delivered.
+  if (request.pendingOwner && "start" in request.pendingOwner
+    && Date.parse(request.pendingOwner.start) !== Date.parse(event.start)) patch.pendingOwner = null;
   const next = updateRequest(ledger, id, patch, now);
   const meetUrl = (next.requests.find((r) => r.id === id) as Request).meetUrl ?? null;
   return { ledger: next, meetUrl, ...(isMeet && !meetUrl ? { warning: "no-meet-link" as const } : {}) };

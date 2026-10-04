@@ -38,11 +38,7 @@ function fixture(t: TestContext) {
   return { path, ledger, read: () => readJson<Ledger>(path, { requests: [] }) };
 }
 
-test("the owner answer sends once to the matched group, clears its question, and permits the next ask", async t => {
-  const f = fixture(t);
-  f.ledger = updateRequest(f.ledger, "mia", { status: "booked" }, Date.now());
-  writeJson(f.path, f.ledger);
-  const deliveries: any[] = [];
+function ownerTool(sendDurableMessageBatch: (input: any) => Promise<any>) {
   let tool: any;
   const route = { agentId: "main", sessionKey: "agent:main:plow:group:group-mia" };
   registerOwnerTools({ registerTool(factory: any) { tool = factory(ctx); }, runtime: { channel: {
@@ -51,12 +47,20 @@ test("the owner answer sends once to the matched group, clears its question, and
     } },
     session: { resolveStorePath: () => "/sessions", updateLastRoute: async () => {} },
   } } }, answerOwner, async () => ({
-    buildOutboundSessionContext: (input: any) => input,
-    sendDurableMessageBatch: async (input: any) => {
-      assert.ok(f.read().requests[0]!.pendingOwner?.answerAttemptedAt, "persist the attempt before delivery");
-      deliveries.push(input); return { status: "sent" };
-    },
+    buildOutboundSessionContext: (input: any) => input, sendDurableMessageBatch,
   }));
+  return { tool, route };
+}
+
+test("the owner answer sends once to the matched group, clears its question, and permits the next ask", async t => {
+  const f = fixture(t);
+  f.ledger = updateRequest(f.ledger, "mia", { status: "booked" }, Date.now());
+  writeJson(f.path, f.ledger);
+  const deliveries: any[] = [];
+  const { tool, route } = ownerTool(async input => {
+    assert.ok(f.read().requests[0]!.pendingOwner?.answerAttemptedAt, "persist the attempt before delivery");
+    deliveries.push(input); return { status: "sent" };
+  });
   const result = await tool.execute("answer", { ...args, chatUid: "intruder" });
   assert.equal(result.isError, false);
   assert.equal(deliveries.length, 1);
@@ -121,16 +125,13 @@ for (const kind of ["question", "denied", "booked"]) for (const status of ["queu
   const calls = [...calendar.calls];
   const answer = { ...args, text: kind === "booked" ? "Booked for Monday at 8pm." : kind === "denied" ? "That time doesn't work for Patrick." : args.text };
   let outcome = status;
-  let tool: any, sends = 0;
-  registerOwnerTools({ registerTool(factory: any) { tool = factory(ctx); }, runtime: { channel: {
-    routing: { resolveAgentRoute: () => ({ agentId: "main", sessionKey: "group-mia" }) },
-    session: { resolveStorePath: () => "/sessions", updateLastRoute: async () => {} },
-  } } }, answerOwner, async () => ({ buildOutboundSessionContext: (input: any) => input, sendDurableMessageBatch: async () => {
+  let sends = 0;
+  const { tool } = ownerTool(async () => {
     sends++;
     assert.ok(f.read().requests[0]!.pendingOwner?.answerAttemptedAt);
     if (outcome === "throw") throw new Error("PRIVATE TRANSPORT ERROR");
     return { status: outcome };
-  } }));
+  });
   const result = await tool.execute("answer", answer);
   assert.match(result.content[0].text, /delivery is unknown/);
   assert.doesNotMatch(result.content[0].text, /PRIVATE/);

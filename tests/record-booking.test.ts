@@ -47,6 +47,14 @@ test("an in-person, phone or unknown meeting never keeps a link, even when the e
   }
 });
 
+for (const [start, retained] of [[offer.start, true], ["2026-10-10T07:00:00Z", true], ["2026-10-10T08:00:00Z", false]] as const)
+test(`booking retains only the approval for its actual start: ${start}`, () => {
+  let l = offered("meet");
+  const pending = { start, end: new Date(Date.parse(start) + 30 * 60_000).toISOString(), askedAt: new Date(T0).toISOString() };
+  l = updateRequest(l, "r_1", { pendingOwner: pending }, T0);
+  assert.deepEqual(recordBooking(l, "r_1", meetEvent(), ACCOUNT, T0).ledger.requests[0]!.pendingOwner, retained ? pending : undefined);
+});
+
 test("a format answered after booking: recording the updated event adds the link", () => {
   let l = recordBooking(offered("unknown"), "r_1", plainEvent(), ACCOUNT, T0).ledger;
   l = updateRequest(l, "r_1", { format: "meet" }, T0);
