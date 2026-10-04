@@ -129,7 +129,9 @@ async function notifyOwner(request: Request, config: Config, change: "moved" | "
 async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number) {
   if (attendees !== undefined && (!Array.isArray(attendees) || (attendees.length > 0 && (request.channel !== "email" || request.status === "booked"
     || attendees.some(email => typeof email !== "string" || !/^[^\s@,]+@[^\s@,]+$/.test(email)))))) return { error: "Additional invitees need email addresses on an unbooked email request." };
-  const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(start));
+  const requested = checkTime({ now: Date.now(), config, busy: [], start,
+    meal: request.meal, durationMin: request.durationMin }).slot.start;
+  const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(requested));
   if (!offer) return { error: "Choose one of the currently offered start times." };
   // Only a replacement held before this run can represent the guest's choice.
   if (request.status === "booked" && !(Number.isFinite(turnStartedAt)

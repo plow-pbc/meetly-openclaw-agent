@@ -159,9 +159,9 @@ export function checkTime(q: {
 }): TimeCheck {
   const tz = q.config.timezone;
   // A wall time with no offset (2026-10-03T10:00) is the owner's clock.
-  const wall = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(q.start);
+  const wall = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(q.start);
   const start = wall
-    ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz)
+    ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz) + Number(wall[6] ?? 0) * 1000
     : Date.parse(q.start);
   if (Number.isNaN(start)) throw new Error(`not a time: ${q.start}`);
   const end = start + durationFor(q) * 60_000;

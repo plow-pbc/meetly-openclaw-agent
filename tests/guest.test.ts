@@ -1479,3 +1479,32 @@ test("no other booked dates leaves the existing event and replacement holds inta
   assert.deepEqual(f.read(), before);
   assert.ok(f.commands.slice(commands).every(c => c[2] === "events"));
 });
+
+function useUtcHost(t: TestContext) {
+  const previous = process.env.TZ;
+  process.env.TZ = "UTC";
+  t.after(() => { if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous; });
+}
+
+for (const start of ["2026-10-05T11:00", "2026-10-05T11:00:00", "2026-10-05T11:00:00-07:00", "2026-10-05T18:00:00Z"])
+test(`guest pick resolves ${start} against the owner's clock`, async t => {
+  useUtcHost(t);
+  const f = fixture(t, undefined, "America/Los_Angeles");
+  const slot = { ...offers[0]!, start: "2026-10-05T11:00:00-07:00", end: "2026-10-05T11:30:00-07:00" };
+  f.ledger.requests[0]!.offered = [slot]; f.save(f.ledger);
+  f.events.clear(); f.events.set(slot.holdId, event(slot.holdId, slot.start, slot.end));
+  const result = await f.act(context, "pick", { start });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().status, "booked");
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse(slot.start));
+});
+
+for (const start of ["2026-10-05T20:00", "2026-10-05T20:00:00"])
+test(`guest other-times resolves zone-less ${start} in the owner's timezone`, async t => {
+  useUtcHost(t);
+  const f = fixture(t, undefined, "America/Los_Angeles");
+  const result = await f.act(context, "other_times", { start });
+  assert.equal("ownerAskSent" in result && result.ownerAskSent, true, JSON.stringify(result));
+  assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T20:00:00-07:00", end: "2026-10-05T20:30:00-07:00", askedAt: new Date(now).toISOString() });
+  assert.deepEqual(f.request().offered, offers);
+});

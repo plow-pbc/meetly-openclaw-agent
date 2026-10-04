@@ -346,8 +346,12 @@ export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, 
   if (args.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
   const config = loadConfig();
   if (config.paused) throw new Error("Scheduling is paused.");
-  const input: NewRequest = { ...args, durationMin: durationFor({ config, meal: args.meal, durationMin: args.durationMin }),
-    offered: args.offered.map(slot => ({ ...slot, account: slot.account ?? config.defaultAccount })) };
+  const durationMin = durationFor({ config, meal: args.meal, durationMin: args.meal ? undefined : args.durationMin });
+  const input: NewRequest = { ...args, durationMin,
+    // Meal defaults govern the actual holds, including their conflict checks.
+    offered: args.offered.map(slot => ({ ...slot,
+      ...(args.meal ? { end: new Date(Date.parse(slot.start) + durationMin * 60_000).toISOString() } : {}),
+      account: slot.account ?? config.defaultAccount })) };
   if (allowOverlapTitles?.length) {
     const busy = await fetchBusy(config, {
       from: new Date(Math.min(...input.offered.map(o => Date.parse(o.start)))).toISOString(),

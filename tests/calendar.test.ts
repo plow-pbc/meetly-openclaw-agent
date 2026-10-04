@@ -597,3 +597,26 @@ for (const collision of [false, true]) test(`overlap approval applies only to it
     assert.equal(f.calls.filter(c => c[2] === "create").length, 1);
   }
 });
+
+for (const [meal, supplied, expected] of [["lunch", 30, 60], ["dinner", 30, 60], ["coffee", 60, 30]] as const)
+test(`a ${meal} offer ignores model duration in both the ledger and calendar hold`, async t => {
+  const f = fixture(t);
+  const { request } = await offerRequest({ ...f.offer, meal, durationMin: supplied,
+    offered: [{ start, end: new Date(Date.parse(start) + supplied * 60_000).toISOString() }],
+  }, f.options);
+  assert.equal(request.durationMin, expected);
+  const slot = request.offered[0]!;
+  assert.equal(Date.parse(slot.end) - Date.parse(slot.start), expected * 60_000);
+  const hold = f.events.get(slot.holdId!)!;
+  assert.equal(Date.parse(hold.end.dateTime) - Date.parse(hold.start.dateTime), expected * 60_000);
+});
+
+test("a meal offer checks conflicts for its full default duration", async t => {
+  const f = fixture(t);
+  f.events.set("later-conflict", calendarEvent("later-conflict", "2026-10-05T10:45:00Z", "2026-10-05T11:00:00Z"));
+  await assert.rejects(offerRequest({ ...f.offer, meal: "lunch", durationMin: 30,
+    offered: [{ start, end }],
+  }, f.options));
+  assert.equal(f.calls.some(c => c[2] === "create"), false);
+  assert.deepEqual(f.read().offered, f.input.offered);
+});
