@@ -12,7 +12,7 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { allowOwnerTools, applyGate, installGate } from "./gate.ts";
+import { applyGate, installGate } from "./gate.ts";
 import { applyRoute, llmRoute } from "./llm.ts";
 import { withMacTimeout } from "./mcp.ts";
 
@@ -43,7 +43,7 @@ try {
   process.env.PLOW_MCP_BRIDGE_TOKEN = randomBytes(32).toString("hex");
   const identity = await identityFromApi(base, process.env.PLOW_AGENT_TOKEN);
   const config = withMacTimeout(renderConfig(identity, base));
-  allowOwnerTools(config);
+  config.tools.alsoAllow.push("meetly_answer_owner", "meetly_offer_owner_group");
   await mkdir("/var/lib/plow/workspace", { recursive: true });
   await writeFile("/var/lib/plow/gateway-password", process.env.OPENCLAW_GATEWAY_PASSWORD + "\n", { mode: 0o600 });
   await chmod("/var/lib/plow/gateway-password", 0o600);

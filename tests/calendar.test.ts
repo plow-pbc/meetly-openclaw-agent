@@ -566,3 +566,22 @@ test("owner DM lookup and exact-time check select the booked record and move its
   assert.equal(Date.parse(f.read().booked!.start), Date.parse("2026-10-05T10:15:00Z"));
   t.diagnostic(`Mock owner DM flow: booked lookup → exact-time check → update ${f.read().eventId} at ${f.read().booked!.start}; no replacement event created.`);
 });
+
+for (const collision of [false, true]) test(`overlap approval applies only to its account (collision=${collision})`, async t => {
+  const f = fixture(t);
+  const configFile = join(f.home, "config.json");
+  const config = readJson<any>(configFile, {});
+  if (collision) config.calendars.push({ account: "other@example.com", id: "primary" });
+  writeJson(configFile, config);
+  const command = async (cmd: MacCommand) => cmd.argv[2] === "events"
+    ? { output: JSON.stringify({ events: [calendarEvent("same-id", start, end)] }) } : f.command(cmd);
+  const action = offerRequest({ ...f.offer, offered: f.offer.offered.slice(0, 1),
+    allowOverlap: [{ account, id: "same-id" }] }, { ...f.options, command });
+  if (collision) {
+    await assert.rejects(action);
+    assert.equal(f.calls.filter(c => c[2] === "create").length, 0);
+  } else {
+    await action;
+    assert.equal(f.calls.filter(c => c[2] === "create").length, 1);
+  }
+});
