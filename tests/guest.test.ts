@@ -128,6 +128,44 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
   assert.deepEqual(hooks, ["before_prompt_build"]);
 });
 
+test("every guest tool drops blank optional arguments and preserves required and nonempty values", async () => {
+  const tools: { parameters: { required: string[] }; execute: (id: string, args: object) => Promise<unknown> }[] = [];
+  let received: object | undefined;
+  registerGuestTools({ registerTool(factory: (ctx: GuestContext) => typeof tools[number]) {
+    tools.push(factory(context));
+  } }, async (ctx: GuestContext, _action: GuestAction, args: object) => {
+    assert.equal(ctx, context);
+    received = args;
+    return {};
+  });
+  const blanks = { next_week: "", from: "", to: "", start: "", question: "", after: "", before: "", location: "", format: "" };
+  const values = { days: [], flag: false, count: 0, nullable: null, whitespace: " ", value: "2026-10-05" };
+  const args = Object.freeze({ ...blanks, ...values });
+  for (const tool of tools) {
+    await tool.execute("call", args);
+    assert.deepEqual(received, { ...values, ...Object.fromEntries(tool.parameters.required.map(key => [key, ""])) });
+  }
+  assert.deepEqual(args, { ...blanks, ...values });
+});
+
+test("blank optional preferences through the guest tool still produce fresh held times", async t => {
+  const f = fixture(t);
+  const result = await f.tools.get("meetly_other_times")!.execute("call", {
+    next_week: "", from: "", to: "", start: "", question: "", after: "", before: "",
+  });
+  const details = JSON.parse(result.content[0]!.text);
+  assert.equal(details.status, "offered", JSON.stringify(details));
+  assert.equal(details.preferencesUnavailable, false);
+  assert.ok(f.request().offered.length > 0);
+  for (const offer of f.request().offered) {
+    assert.ok(["2026-10-05", "2026-10-06"].includes(offer.start.slice(0, 10)));
+    assert.ok(offer.start.slice(11, 16) >= "10:00" && offer.end.slice(11, 16) <= "15:00");
+    assert.ok(!offers.some(old => old.start === offer.start));
+    assert.equal(f.events.get(offer.holdId!)!.status, "confirmed");
+  }
+  assert.ok(offers.every(old => f.events.get(old.holdId)!.status === "cancelled"));
+});
+
 test("pick books the chosen hold with fixed arguments, records the event, and deletes only the other holds", async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.format = "meet"; f.save(f.ledger);

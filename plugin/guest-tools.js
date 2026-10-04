@@ -26,7 +26,8 @@ export function registerGuestTools(api, execute = run) {
     api.registerTool(context => ({
       name, label: name, description, parameters,
       async execute(_id, args) {
-        const result = await execute(context, action, args);
+        const cleaned = Object.fromEntries(Object.entries(args ?? {}).filter(([key, value]) => value !== "" || parameters.required.includes(key)));
+        const result = await execute(context, action, cleaned);
         return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       },
     }));
