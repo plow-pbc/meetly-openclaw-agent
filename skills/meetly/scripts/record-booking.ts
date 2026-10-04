@@ -22,9 +22,9 @@ export function recordBooking(ledger: Ledger, id: string, event: EventInfo, acco
     booked: { start: event.start, end: event.end, account },
     meetUrl: isMeet ? event.meetUrl : null,
   };
-  if (request.pendingOwner && "start" in request.pendingOwner) patch.pendingOwner = null;
   // A reminder belongs to one start time: a moved meeting gets a new one.
   if (request.booked && Date.parse(request.booked.start) !== Date.parse(event.start)) patch.reminder = null;
+  // Keep an owner approval linked until its answer is delivered to the group.
   const next = updateRequest(ledger, id, patch, now);
   const meetUrl = (next.requests.find((r) => r.id === id) as Request).meetUrl ?? null;
   return { ledger: next, meetUrl, ...(isMeet && !meetUrl ? { warning: "no-meet-link" as const } : {}) };

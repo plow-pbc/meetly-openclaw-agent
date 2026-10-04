@@ -634,14 +634,14 @@ test('an open owner question survives booking and format commits through the sea
   assert.equal(f.deliveries.length, 1);
 });
 
-test('an owner-approved time is booked and cleared by the seam', async t => {
+test('an owner-approved time stays pending after booking until its answer is delivered', async t => {
   const f = fixture(t);
   await f.act(context, 'ask_owner', { start: '2026-10-05T20:00' });
   const pending = f.request().pendingOwner!;
   assert.ok('start' in pending);
   await calendarAction('request-one', { action: 'book', start: pending.start, end: pending.end });
   assert.equal(f.request().booked!.start, pending.start);
-  assert.equal(f.request().pendingOwner, undefined);
+  assert.deepEqual(f.request().pendingOwner, pending);
   assert.ok(f.request().calendarRevision);
   assert.equal(f.ownerLines.length, 1);
 });

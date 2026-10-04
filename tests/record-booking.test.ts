@@ -47,11 +47,11 @@ test("an in-person, phone or unknown meeting never keeps a link, even when the e
   }
 });
 
-test("booking clears a pending owner question", () => {
+test("booking retains a pending time approval until its answer is delivered", () => {
   let l = offered("meet");
   const pending = { start: offer.start, end: offer.end, askedAt: new Date(T0).toISOString() };
   l = updateRequest(l, "r_1", { pendingOwner: pending }, T0);
-  assert.equal("pendingOwner" in recordBooking(l, "r_1", meetEvent(), ACCOUNT, T0).ledger.requests[0]!, false);
+  assert.deepEqual(recordBooking(l, "r_1", meetEvent(), ACCOUNT, T0).ledger.requests[0]!.pendingOwner, pending);
 });
 
 test("a format answered after booking: recording the updated event adds the link", () => {

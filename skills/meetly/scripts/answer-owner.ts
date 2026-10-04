@@ -16,13 +16,14 @@ export async function answerOwner(ctx: Context, args: Args, send: (to: string, t
   const ledger = readJson<Ledger>(path, { requests: [] });
   const request = ledger.requests.find(r => r.id === args.requestId);
   let pending = request?.pendingOwner;
-  if (!request?.chatUid || !pending || !("question" in pending) || pending.askedAt !== args.askedAt
+  if (!request?.chatUid || !pending || pending.askedAt !== args.askedAt
     || !["offered", "booked"].includes(request.status)) return { error: "No matching pending meeting question. Read the pending requests again." };
   const inGroup = chat === request.chatUid;
   if (ctx.sessionKey !== "agent:main:main" && !inGroup) {
     return { error: "Answer from the owner's main DM or this request's group." };
   }
-  if (!inGroup) {
+  const alreadyVisible = inGroup && "question" in pending;
+  if (!alreadyVisible) {
     try {
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {
         if (JSON.stringify(latest.requests.find(r => r.id === request.id)) !== JSON.stringify(request)) throw new Error("request changed");
@@ -34,8 +35,8 @@ export async function answerOwner(ctx: Context, args: Args, send: (to: string, t
     }
   }
   try {
-    // In this group, the owner's incoming message already delivered their answer.
-    if (!inGroup) await send(request.chatUid, args.text.trim());
+    // A question answer is already visible in the group; a time decision still needs its booking result.
+    if (!alreadyVisible) await send(request.chatUid, args.text.trim());
   } catch {
     return { error: "Answer delivery is unknown. The question remains pending; do not resend automatically." };
   }
@@ -48,6 +49,6 @@ export async function answerOwner(ctx: Context, args: Args, send: (to: string, t
   } catch {
     return { error: "The answer is in the group, but its pending question could not be cleared. Do not resend; repair the ledger." };
   }
-  return { answered: true, sent: !inGroup, requestId: request.id,
-    ...(inGroup ? { message: "The owner's answer is already visible here and the question is cleared. Acknowledge briefly." } : {}) };
+  return { answered: true, sent: !alreadyVisible, requestId: request.id,
+    ...(alreadyVisible ? { message: "The owner's answer is already visible here and the question is cleared. Acknowledge briefly." } : inGroup ? { silent: true } : {}) };
 }

@@ -307,7 +307,7 @@ test("cleanup lists only requests with pending hold deletes", () => {
 });
 
 for (const [kind, fields, invalid, bookedCount] of [
-  ["time approval", { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T10:30:00-03:00" }, [{ start: "sat" }], 0],
+  ["time approval", { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T10:30:00-03:00" }, [{ start: "sat" }], 1],
   ["question", { question: "Which project?" }, [
     { question: " " }, { question: "x".repeat(501) }, { askedAt: "yesterday" }, { start: new Date(T0).toISOString() },
   ], 1],

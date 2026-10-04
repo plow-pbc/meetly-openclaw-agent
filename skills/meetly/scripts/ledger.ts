@@ -287,8 +287,8 @@ export function recordDelivery(ledger: Ledger, id: string, kind: string, action:
   if (!request) throw new Error(`no request ${id}`);
   if (kind === "answer") {
     const pending = request.pendingOwner;
-    if (!request.chatUid || !["offered", "booked"].includes(request.status) || !pending || !("question" in pending) || action === "complete") {
-      throw new Error("answer delivery needs a pending question and begin or clear");
+    if (!request.chatUid || !["offered", "booked"].includes(request.status) || !pending || action === "complete") {
+      throw new Error("answer delivery needs a pending question or time approval and begin or clear");
     }
     if (action === "begin" && pending.answerAttemptedAt) throw new Error("answer delivery already attempted; only the owner can authorize clearing it");
     const { answerAttemptedAt, ...question } = pending;
@@ -329,7 +329,7 @@ export function askedList(ledger: Ledger, unnotified = false): Request[] {
 // Requests waiting for a question's answer or an out-of-hours approval.
 export function pendingOwnerList(ledger: Ledger): Request[] {
   return ledger.requests.filter((r) => r.pendingOwner !== undefined
-    && (r.status === "offered" || (r.status === "booked" && "question" in r.pendingOwner)));
+    && (r.status === "offered" || r.status === "booked"));
 }
 
 // Booked Meets whose link is due in the group: from `leadMin` before the

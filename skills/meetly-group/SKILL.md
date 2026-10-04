@@ -19,7 +19,8 @@ Messages to the other person come from Meetly, in the third person, using
 conversation with `message` (action `send`, omit target) or a normal final reply.
 The owner is in every meeting thread: confirmations and notifications go
 there once. Unresolved meeting questions and time approval asks go privately to the owner. From the
-owner's main DM, a follow-up to a known meeting thread uses `plow_reply_to`.
+owner's main DM, a follow-up to a known meeting thread uses `plow_reply_to`,
+except pending question answers and time-approval results, which use `meetly_answer_owner`.
 An unattended poll has no current conversation and uses `message` with the
 known meeting chat uid as its target.
 
@@ -197,20 +198,25 @@ disclose private information.
   run `ledger.ts delivery --id <id> --kind answer --action clear` before calling
   the answer tool again.
 - **Time (`pendingOwner.start`):** follow the owner's yes or no below. From
-  the DM, send the result to the recorded group with `plow_reply_to`.
+  the DM or group, deliver the result with `meetly_answer_owner`, using the
+  saved `requestId`, pending `askedAt`, and result as `text`. Never send it
+  separately with `plow_reply_to` or a group reply. This tool clears the approval
+  after confirmed delivery; unknown delivery needs the same explicit retry
+  authorization as a question answer. If `answerAttemptedAt` is set, do not
+  repeat delivery or calendar work without that authorization. If the time is
+  already booked, relay the confirmed booking result without booking it again.
 
 - **Yes:**
   1. Read the calendar and re-check with `slots.ts --at <pendingOwner.start>`.
   2. If it is still free, pass its start and end to the writer, following
-     "Book the event". It records the booking and clears `pendingOwner`.
+     "Book the event". It records the booking and retains `pendingOwner` for answer delivery.
   3. The writer releases the request's other holds.
-  4. If the format is still `unknown`, ask it in the group, once.
-  5. Confirm once in the group for both the owner and guest.
-  6. If it is no longer free, explain in the group, and offer new
-     times; clear the answered approval with `{"pendingOwner":null}`.
-- **No:** tell the group that time doesn't work for the owner, and offer the
-  current times or new ones. After the send succeeds, clear it with
-  `ledger.ts update --id <id> --json '{"pendingOwner":null}'`.
+  4. Confirm once with `meetly_answer_owner` for both the owner and guest.
+     If the format is still `unknown`, include the format question in that confirmation, once.
+  5. If it is no longer free, explain in the group, and offer new
+     times through `meetly_answer_owner`.
+- **No:** use `meetly_answer_owner` to tell the group that time doesn't work
+  for the owner, and offer the current times or new ones.
 
 ## Owner in the group
 
