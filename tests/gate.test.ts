@@ -25,7 +25,7 @@ test("a name or zone that could not be inferred is the only question, and not an
   const context = gateContext(status({ status: "SETUP_NEEDED", next: "timezone", question: "What time zone are you in?", draft: { ownerName: "Ana Lima" }, defaults: DEFAULTS }))!;
   assert.match(context, /SETUP_NEEDED/);
   assert.match(context, /ignore any earlier setup question in the chat/);
-  assert.match(context, /you are Meetly, their AI scheduling assistant/);
+  assert.match(context, /use your conversation name, then say you are their AI scheduling assistant/);
   assert.match(context, /refer to them as Ana Lima when you talk to other people/);
   // setup-status.ts already tried the Mac; a timezone still pending is for the owner.
   assert.match(context, /translated into the owner's language, and end the turn: What time zone are you in\?/);
@@ -46,7 +46,7 @@ test("once the name and zone are known the gate does not ask: it reads the calen
   assert.match(context, /record-setup\.ts --done/);
   assert.match(context, /carry out what the owner asked in this same turn/);
   // The one line that introduces Meetly says what it does and the defaults it starts with.
-  assert.match(context, /you are Meetly, their AI scheduling assistant/);
+  assert.match(context, /use your conversation name, then say you are their AI scheduling assistant/);
   assert.match(context, /mon,tue,wed,thu,fri, 09:00-18:00, 45-minute meetings by default; coffee 30 minutes, lunch and dinner 60 minutes; up to 14 days ahead/);
   assert.match(context, /change any of it by saying so/);
   assert.doesNotMatch(context, /a few questions/);

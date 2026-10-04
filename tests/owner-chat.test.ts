@@ -62,3 +62,10 @@ test("ownerDisplayName reads the owner's profile name from their DM", async () =
   assert.equal(await ownerDisplayName(opts(identity([]))), undefined);
 });
 
+
+test("phone-number profile fallbacks are not owner names", async () => {
+  for (const display_name of ["+15557654321", "(555) 765-4321", "555.765.4321", "  +44 20 7946 0123  "]) {
+    const body = identity([chat("dm", [self, { ...owner, display_name }])]);
+    assert.equal(await ownerDisplayName({ fetch: fakeFetch(200, body), base: "https://api.plow.test", token: "tok" }), undefined);
+  }
+});

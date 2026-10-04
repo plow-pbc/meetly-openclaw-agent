@@ -41,6 +41,7 @@ try {
   process.env.OPENCLAW_GATEWAY_PASSWORD = randomBytes(32).toString("hex");
   process.env.PLOW_MCP_BRIDGE_TOKEN = randomBytes(32).toString("hex");
   const identity = await identityFromApi(base, process.env.PLOW_AGENT_TOKEN);
+  identity.agent = { ...identity.agent, name: identity.line.display_name?.trim() || identity.agent?.name };
   const config = withMacTimeout(renderConfig(identity, base));
   config.tools.alsoAllow.push("meetly_answer_owner", "meetly_offer_owner_group");
   await mkdir("/var/lib/plow/workspace", { recursive: true });
@@ -50,7 +51,8 @@ try {
     await rm(`/var/lib/plow/workspace/${name}`, { force: true });
   }
   const prompt = await readFile("/opt/plow/prompt/AGENTS.md", "utf8");
-  await writeFile("/var/lib/plow/workspace/AGENTS.md", await renderPrompt(prompt, identity.mcp_url, process.env.PLOW_AGENT_TOKEN, config.channels.plow.threadTrust, identity.agent?.web_url));
+  const namedPrompt = prompt.replaceAll("{{agentName}}", () => JSON.stringify(identity.agent.name));
+  await writeFile("/var/lib/plow/workspace/AGENTS.md", await renderPrompt(namedPrompt, identity.mcp_url, process.env.PLOW_AGENT_TOKEN, config.channels.plow.threadTrust, identity.agent?.web_url));
 
   const JSON5 = createRequire("/opt/plow/package.json")("json5");
   let owner: Record<string, unknown>;

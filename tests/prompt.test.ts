@@ -34,8 +34,8 @@ const BASE_CONTRACT = [
   "act with those tools within the room's purpose.",
 ];
 
-test("AGENTS.md opens as Meetly and keeps the base's tool and authority contract", () => {
-  assert.match(prompt, /^# Meetly\n\nYou are \*\*Meetly\*\*, an AI scheduling assistant\./);
+test("AGENTS.md renders the conversation identity and keeps the base's tool and authority contract", () => {
+  assert.ok(prompt.includes("Your conversation name is {{agentName}}"));
   for (const rule of BASE_CONTRACT) assert.ok(flat(prompt).includes(rule), `missing base rule: ${rule}`);
   // Every one of them is still in the base it came from, so a base bump that rewords one shows here.
   const base = flat(readFileSync(join(ROOT, "tests", "fixtures", "base-AGENTS.md"), "utf8"));
@@ -103,17 +103,17 @@ test("the owner's yes or no in their DM decides an asked request", () => {
 
 
 
-test("Meetly introduces itself as Meetly, never by the configured name, as the owner or as a Plow assistant", () => {
+test("introductions use the rendered conversation name, never the owner or a generic assistant", () => {
   const text = flat(prompt);
-  assert.ok(text.includes("Your name is Meetly, whatever name the configuration or the Plow line shows."));
+  assert.ok(text.includes("Your conversation name is {{agentName}}, from your Plow identity."));
   assert.ok(text.includes("You are not the owner, not \"a Plow assistant\""));
   assert.ok(text.includes("Never ask what you should be called."));
-  assert.ok(text.includes("introduce yourself in one short line as Meetly"));
+  assert.ok(text.includes("introduce yourself in one short line using your conversation name"));
   assert.ok(!/You are a Plow assistant|using your configured name/.test(text));
   // Other people deploy Meetly too: the prompt names no owner.
   assert.ok(!/Jean/.test(prompt));
   const setup = readFileSync(join(SKILLS, "meetly-setup", "SKILL.md"), "utf8");
-  assert.match(setup, /opens with one\s+line saying you\s+are Meetly/);
+  assert.match(setup, /opens with one\s+line using your conversation name/);
   assert.ok(text.includes("only its output says what to ask now"));
 });
 
@@ -297,6 +297,27 @@ test("meeting confirmations stay in the group while pending questions route priv
   assert.ok(flat(prompt).includes("Unresolved meeting questions go privately through `meetly_ask_owner`"));
 });
 
+test("owner-started groups introduce Meetly and name the owner in the first reply or offer", () => {
+  const group = groupSkill();
+  const identity = "<agentName>, <ownerName>'s scheduling assistant";
+  const offer = group.slice(group.indexOf("## Offer times"), group.indexOf("## Owner request"));
+  const owner = group.slice(group.indexOf("## Existing meetings"), group.indexOf("## Holds"));
+  assert.ok(offer.includes(`If this is your first reply in an owner-started group, introduce yourself as "${identity}"`));
+  assert.ok(owner.includes(`Without an owner scheduling ask, on your first reply introduce yourself as "${identity}"`));
+  registerOwnerGroupTool({ registerTool(factory: (ctx: object) => { description: string }) {
+    assert.ok(factory({}).description.includes(`If this is your first reply in this group, introduce yourself as \"${identity}\"`));
+  } });
+});
+
+test("owner group turns keep the script flow and answers use the recorded thread", () => {
+  const group = groupSkill();
+  assert.ok(flat(prompt).includes('**Owner in a group:** use `meetly-group`, "Owner request"'));
+  assert.ok(group.includes('`ledger.ts find --chat <runtime chat uid>` first, including booked or closed requests'));
+  assert.ok(group.includes("verify its `chatUid` is this chat before acting"));
+  assert.ok(group.includes("In the owner's DM, run `ledger.ts pending`"));
+  assert.ok(group.includes("The owner can authorize a time outside the meeting window; conflict overrides require their DM"));
+});
+
 test("a Meet link is never pasted at booking and never taken from a message", () => {
   const group = groupSkill();
   assert.ok(group.includes("the link will be posted here 10 minutes before. Do not paste the link now"));
@@ -325,7 +346,7 @@ test("an owner introduction waits without asking the group to plan a meeting", (
   assert.ok(group.includes("Adding Alder, my scheduling agent, to find us a time"));
   assert.ok(group.includes("Do not ask the guest or group what, when, format or place"));
   assert.ok(group.indexOf("An introduction alone") < group.indexOf("first run `ledger.ts find --name"));
-  assert.ok(flat(prompt).includes("only a short Meetly introduction and wait"));
+  assert.ok(flat(prompt).includes("only a short introduction using your conversation name and wait"));
 });
 
 test("unnamed owner-group follow-ups disambiguate from ledger candidates and retain exact chat ids", () => {
@@ -340,6 +361,12 @@ test("guest-proposed terms are never repeated publicly for owner confirmation", 
   assert.ok(p.includes("Never repeat a guest's proposed terms in the group to ask the owner to confirm"));
   assert.ok(p.includes("Use the private scheduling approval tools for an existing request, or ignore the proposal"));
 });
+test("the agent display name is its conversation identity, never another person", () => {
+  const p = flat(prompt);
+  assert.ok(p.includes("The owner's name for you and the agent line display name refer to you, never another person"));
+  assert.ok(p.includes('Never tell anyone to ask, contact or wait for that name'));
+});
+
 test("other-times instructions distinguish rejected slots from named excluded days", () => {
   let tool: any;
   registerGuestTools({ registerTool(factory: any) {
@@ -350,4 +377,11 @@ test("other-times instructions distinguish rejected slots from named excluded da
   assert.ok(tool.parameters.properties.excludedDays.description.includes("Only days the guest explicitly names as unavailable"));
   assert.deepEqual(tool.parameters.properties.start.anyOf[1].required, ["weekday"]);
   assert.ok(flat(prompt).includes("Never infer excluded weekdays from rejected offered slots"));
+});
+
+test("intro-only group replies end after the guest-facing introduction", () => {
+  const group = groupSkill();
+  assert.ok(group.includes('Do not append an owner-addressed line such as "Patrick, just let me know"'));
+  assert.ok(group.includes("End the reply after the guest-facing introduction"));
+  assert.ok(flat(prompt).includes("Do not address the owner or invite them to provide scheduling instructions in the group"));
 });
