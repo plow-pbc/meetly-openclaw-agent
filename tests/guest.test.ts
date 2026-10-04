@@ -278,7 +278,8 @@ test("other times intersect guest preferences with owner conditions and replace 
 test("decline drops the open request, clears approval, deletes holds and queues failed deletes", async t => {
   const f = fixture(t); f.fail.add("hold-two");
   f.ledger.requests[0]!.pendingOwner = { start: "2026-10-05T20:00:00Z", end: "2026-10-05T20:30:00Z", askedAt: new Date(now).toISOString() }; f.save(f.ledger);
-  await guestAction(context, "decline");
+  const result = await guestAction(context, "decline");
+  assert.equal("message" in result && result.message, "I've cancelled this scheduling request.");
   assert.equal(f.request().status, "dropped"); assert.equal(f.request().pendingOwner, undefined);
   assert.deepEqual(f.request().holdCleanup, [{ holdId: "hold-two", account: "owner@example.com" }]);
   assert.equal(f.commands.filter(c => c[2] === "delete").length, 2);
