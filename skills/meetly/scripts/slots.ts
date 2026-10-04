@@ -143,7 +143,7 @@ export function findSlots(q: SlotQuery): SlotResult {
   if (q.asap !== undefined && typeof q.asap !== "boolean") throw new Error("asap must be a boolean");
   if (q.asap && q.near) throw new Error("asap searches earliest first; omit near");
   const duration = requireDuration(q.durationMin ?? q.config.durationMin);
-  const count = q.count ?? SLOT_COUNT;
+  const count = Math.min(q.count ?? SLOT_COUNT, SLOT_COUNT);
   const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, durationMin: duration, busy: [], start: q.near }).slot.start);
 
   let [startMin, endMin] = windowFor(config, q.meal, q.ownerStartTime, duration);
