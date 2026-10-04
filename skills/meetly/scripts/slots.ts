@@ -1,16 +1,16 @@
-// Free times to offer: the owner's days and window, in the owner's zone,
+// Free times to offer: the owner's days and the meeting's window, in the owner's zone,
 // clear of busy time, at least MIN_NOTICE_MIN ahead, spread across days.
 // The label and weekday come from here so the agent never computes a weekday.
-// A request only narrows the owner's days and window. A time outside them is
-// never offered: when the other person can only do such a time, --at checks
-// it and the owner must confirm it before anything is held or booked.
+// Lunch and dinner use their own windows; request preferences only narrow them. Outside
+// that window or the owner's days, --at requires owner confirmation.
 // With a locale (the other person's, e.g. pt-BR or en-US) the label follows
 // that locale's date and time conventions; without one it is "tue 29/9 12:00".
+import { travelRange, type TravelInput } from "./travel.ts";
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
 import { allowsOverlap, uniqueEvents, type EventRef, type Busy } from "./busy.ts";
-import { intersectConstraints, requireDuration, type Ledger } from "./ledger.ts";
+import { requestEvents, intersectConstraints, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { addDays, DAYS, localIso, wallParts, zonedToUtc, type Day } from "./time.ts";
@@ -19,18 +19,31 @@ export type Slot = { start: string; end: string; dayOfWeek: Day; label: string }
 
 export type Constraints = { days?: string[]; after?: string; before?: string; from?: string; to?: string };
 
-export type SlotQuery = Constraints & {
+export type SlotQuery = Constraints & TravelInput & {
   now: number;
   config: Config;
   busy: Busy[];
   unknownAfter?: string;
   durationMin?: number;
+  meal?: Meal;
   allowOverlap?: EventRef[];
   exclude?: string[];
+  excludeDates?: string[];
   count?: number;
   near?: string;
   locale?: string;
 };
+
+const MEAL_WINDOWS: Partial<Record<Meal, [string, string]>> = {
+  lunch: ["11:30", "13:30"], dinner: ["18:00", "21:00"],
+};
+
+function windowFor(config: Config, meal?: Meal): [number, number] {
+  const window = meal ? MEAL_WINDOWS[meal] : undefined;
+  const [start, end] = window ?? [config.windowStart, config.windowEnd];
+  return [minutes(start!), minutes(end!)];
+}
+
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -70,15 +83,15 @@ export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}
   return { slots, preferencesUnavailable };
 }
 
-export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string } {
+export function findSlots(q: SlotQuery): { slots: Slot[]; durationMin: number; unknownAfter?: string } {
   const { config, now } = q;
   const tz = config.timezone;
   const duration = requireDuration(q.durationMin);
-  const count = q.count ?? SLOT_COUNT;
-  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], durationMin: duration, start: q.near }).slot.start);
+  const count = Math.min(q.count ?? SLOT_COUNT, SLOT_COUNT);
+  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, durationMin: duration, busy: [], travel: { beforeMin: 0, afterMin: 0 }, start: q.near }).slot.start);
 
-  const startMin = Math.ceil(minutes(config.windowStart) / STEP_MIN) * STEP_MIN;
-  const endMin = minutes(config.windowEnd);
+  let [startMin, endMin] = windowFor(config, q.meal);
+  startMin = Math.ceil(startMin / STEP_MIN) * STEP_MIN;
 
   const earliest = now + MIN_NOTICE_MIN * 60_000;
   const excluded = new Set((q.exclude ?? []).map((e) => Date.parse(e)));
@@ -91,18 +104,20 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string 
   const perDay: { start: number; end: number; day: Day }[][] = [];
   scan: for (let i = 0; i <= config.horizonDays; i++) {
     const { y, m, d } = addDays(today.y, today.m, today.d, i);
+    if (q.excludeDates?.includes(`${y}-${pad(m)}-${pad(d)}`)) continue;
     const day = wallParts(zonedToUtc(y, m, d, 12, 0, tz), tz).weekday;
     if (!config.days.includes(day)) continue;
     const found: { start: number; end: number; day: Day }[] = [];
     for (let t = startMin; t + duration <= endMin; t += STEP_MIN) {
       const start = zonedToUtc(y, m, d, Math.floor(t / 60), t % 60, tz);
       const end = start + duration * 60_000;
-      if (unknownAfter !== undefined && end > unknownAfter) {
+      const range = travelRange(start, end, q);
+      if (unknownAfter !== undefined && Date.parse(range.to) > unknownAfter) {
         perDay.push(found);
         break scan;
       }
       if (start < earliest || excluded.has(start) || !withinConstraints(start, end, tz, q)) continue;
-      if (busy.some((b) => b.start < end && b.end > start)) continue;
+      if (busy.some((b) => b.start < Date.parse(range.to) && b.end > Date.parse(range.from))) continue;
       found.push({ start, end, day });
     }
     perDay.push(found);
@@ -129,7 +144,7 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string 
     dayOfWeek: c.day,
     label: label(c.start, tz, format),
   }));
-  return q.unknownAfter !== undefined ? { slots, unknownAfter: q.unknownAfter } : { slots };
+  return { slots, durationMin: duration, ...(q.unknownAfter !== undefined ? { unknownAfter: q.unknownAfter } : {}) };
 }
 
 export type TimeCheck = {
@@ -143,33 +158,36 @@ export type TimeCheck = {
 // (except allowOverlap), with enough notice, and inside what was read.
 // outsideHours: not on the owner's days or not inside the window, so the
 // owner must confirm before it is held or booked.
-export function checkTime(q: {
+export function checkTime(q: TravelInput & {
   now: number;
   config: Config;
   busy: Busy[];
   start: string;
   unknownAfter?: string;
   durationMin?: number;
+  meal?: Meal;
   allowOverlap?: EventRef[];
   locale?: string;
 }): TimeCheck {
   const tz = q.config.timezone;
   // A wall time with no offset (2026-10-03T10:00) is the owner's clock.
-  const wall = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(q.start);
+  const wall = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(q.start);
   const start = wall
-    ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz)
+    ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz) + Number(wall[6] ?? 0) * 1000
     : Date.parse(q.start);
   if (Number.isNaN(start)) throw new Error(`not a time: ${q.start}`);
   const end = start + requireDuration(q.durationMin) * 60_000;
   const s = wallParts(start, tz);
   const e = wallParts(end, tz);
   const sameDay = s.y === e.y && s.m === e.m && s.d === e.d;
+  const [windowStart, windowEnd] = windowFor(q.config, q.meal);
   const outsideHours = !q.config.days.includes(s.weekday) || !sameDay ||
-    s.hh * 60 + s.mm < minutes(q.config.windowStart) || e.hh * 60 + e.mm > minutes(q.config.windowEnd);
+    s.hh * 60 + s.mm < windowStart || e.hh * 60 + e.mm > windowEnd;
+  const range = travelRange(start, end, q);
   let reason: TimeCheck["reason"];
-  if (q.unknownAfter !== undefined && end > Date.parse(q.unknownAfter)) reason = "unknown";
+  if (q.unknownAfter !== undefined && Date.parse(range.to) > Date.parse(q.unknownAfter)) reason = "unknown";
   else if (start < q.now + MIN_NOTICE_MIN * 60_000) reason = "too-soon";
-  else if (q.busy.some((b) => (!allowsOverlap(b, q.allowOverlap)) && Date.parse(b.start) < end && Date.parse(b.end) > start)) {
+  else if (q.busy.some((b) => (!allowsOverlap(b, q.allowOverlap)) && Date.parse(b.start) < Date.parse(range.to) && Date.parse(b.end) > Date.parse(range.from))) {
     reason = "busy";
   }
   const format = q.locale !== undefined ? localeFormatter(q.locale, tz) : undefined;
@@ -194,12 +212,16 @@ if (isMain(import.meta.url)) {
         in: { type: "string" },
         request: { type: "string" },
         duration: { type: "string" },
+        meal: { type: "string" },
+        format: { type: "string" },
+        travel: { type: "string" },
         days: { type: "string" },
         after: { type: "string" },
         before: { type: "string" },
         from: { type: "string" },
         to: { type: "string" },
         "allow-overlap": { type: "string", multiple: true },
+        "no-overlap": { type: "boolean", default: false },
         exclude: { type: "string", multiple: true },
         count: { type: "string" },
         at: { type: "string" },
@@ -209,6 +231,8 @@ if (isMain(import.meta.url)) {
       },
     });
     const config = loadConfig();
+    if (values.meal !== undefined && !["lunch", "dinner", "coffee"].includes(values.meal)) throw new Error("--meal must be lunch, dinner or coffee");
+    const meal = values.meal as Meal | undefined;
     const input = JSON.parse(readInput(values.in !== undefined ? [values.in] : [])[0]!) as {
       busy?: Busy[];
       allowOverlap?: EventRef[];
@@ -219,7 +243,11 @@ if (isMain(import.meta.url)) {
     const now = values.now !== undefined ? Date.parse(values.now) : Date.now();
     if (Number.isNaN(now)) throw new Error(`--now is not a time: ${values.now}`);
     const degraded = input.degraded ?? [];
-    const q: SlotQuery = { now, config, busy: input.busy, allowOverlap: input.allowOverlap };
+    const request = values.request === undefined ? undefined
+      : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
+    if (values.request !== undefined && (!request || !["offered", "booked"].includes(request.status))) throw new Error("--request needs an offered or booked request");
+    if (request) input.busy = input.busy.filter(b => !requestEvents(request).some(o => o.holdId === b.id && o.account === b.account));
+    const q: SlotQuery = { format: values.format as SlotQuery["format"], travel: values.travel ? JSON.parse(values.travel) : undefined, now, config, meal, busy: input.busy, allowOverlap: input.allowOverlap };
     if (input.unknownAfter !== undefined) q.unknownAfter = input.unknownAfter;
     if (values.duration !== undefined) q.durationMin = positiveInt(values.duration, "--duration");
     if (values.count !== undefined) q.count = positiveInt(values.count, "--count");
@@ -241,16 +269,18 @@ if (isMain(import.meta.url)) {
       for (const e of values.exclude) if (Number.isNaN(Date.parse(e))) throw new Error(`--exclude is not a time: ${e}`);
       q.exclude = values.exclude;
     }
-    if (values.request !== undefined) {
-      const request = readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
-      if (!request || request.status !== "offered") throw new Error("--request needs an offered request");
+    if (request) {
       const narrowed = intersectConstraints(request.constraints, q);
       Object.assign(q, narrowed);
+      q.meal ??= request.meal;
+      q.format ??= request.format;
+      q.travel = request.travel?.override && q.format !== "meet" && q.format !== "phone" ? request.travel : q.travel ?? request.travel;
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
       q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);
-      q.busy = q.busy.filter(b => !request.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
+      if (request.booked) q.exclude = [...(q.exclude ?? []), request.booked.start];
     }
+    if (values["no-overlap"]) q.allowOverlap = [];
     if (values.at !== undefined) {
       for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);

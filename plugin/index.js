@@ -7,8 +7,10 @@
 // Plain JavaScript on purpose: the image ships it as is, with no build step,
 // and preboot copies it into the state volume's plugin root on every boot.
 import { execFile } from "node:child_process";
+import { registerPipelineHooks } from "./pipeline.js";
+import { guestTurns } from "./guest-turn.js";
 import { registerGuestTools } from "./guest-tools.js";
-import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool } from "./owner-tools.js";
+import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool, registerMovableTool } from "./owner-tools.js";
 
 export const OWNER_DM_SESSION = "agent:main:main";
 export const SETUP_STATUS = "/opt/plow/skills/meetly/scripts/setup-status.ts";
@@ -66,9 +68,9 @@ export function gateContext(stdout) {
     ...latch,
     ...(asking
       ? [
+        `- First check whether the owner's latest message answers ${status.next}. A bare name is a complete answer to ownerName; it does not need a "call me" prefix. If answered, save it with record-setup.ts (see meetly-setup) before replying, then continue from the returned next field. Do not ask the answered question again.`,
         "- If the owner asked for something else, such as reaching someone, say you will do it as soon as this is answered.",
-        `- Then ask this question, translated into the owner's language, and end the turn: ${status.question}`,
-        `If the owner's message answers the ${status.next} question, record it first with record-setup.ts (see meetly-setup) and carry on from the status it returns.`,
+        `- Only if the latest message does not answer ${status.next}, ask this question, translated into the owner's language, and end the turn: ${status.question}`,
       ]
       : [
         ...(status.next === "calendars"
@@ -92,11 +94,14 @@ export default {
   name: "Meetly",
   description: "Guest scheduling tools and the owner DM setup check.",
   register(api) {
+    registerPipelineHooks(api);
     registerGuestTools(api);
     registerOwnerTools(api);
     registerOwnerGroupTool(api);
     registerOwnerDmTool(api);
+    registerMovableTool(api);
     api.on("before_prompt_build", async (_event, ctx) => {
+      guestTurns.begin(ctx);
       if (!isOwnerDmTurn(ctx)) return undefined;
       let context;
       try {
@@ -109,5 +114,7 @@ export default {
       api.logger.info(context ? `meetly setup gate prepended: ${context.split("\n")[0]}` : "meetly setup gate: unreadable status; prompt fallback applies");
       return context ? { prependContext: context } : undefined;
     });
+    api.on("before_tool_call", guestTurns.beforeTool);
+    api.on("agent_end", guestTurns.end);
   },
 };

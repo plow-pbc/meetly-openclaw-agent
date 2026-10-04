@@ -6,7 +6,6 @@ import { answerOwner } from "../skills/meetly/scripts/answer-owner.ts";
 import { calendarAction } from "../skills/meetly/scripts/calendar.ts";
 import { recordBooking } from "../skills/meetly/scripts/record-booking.ts";
 import { guestAction } from "../skills/meetly/scripts/guest.ts";
-import { sendPlowMessage } from "../plugin/guest-tools.js";
 import { registerOwnerTools } from "../plugin/owner-tools.js";
 import { addRequest, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
@@ -29,7 +28,7 @@ function fixture(t: TestContext) {
   const path = join(home, "ledger.json");
   let ledger: Ledger = { requests: [] };
   for (const name of ["mia", "lev"]) {
-    ledger = addRequest(ledger, { origin: "owner", name, handle: `${name}@example.com`, topic: "Call", chatUid: `group-${name}`,
+    ledger = addRequest(ledger, { travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", name, handle: `${name}@example.com`, topic: "Call", chatUid: `group-${name}`,
       durationMin: 30, offered: [{ start: "2026-10-05T10:00:00Z", end: "2026-10-05T10:30:00Z", account: "owner@example.com" }] }, Date.now(), name);
     ledger = updateRequest(ledger, name, { pendingOwner: { question: "Should I bring the budget numbers?", askedAt: args.askedAt } }, Date.now());
   }
@@ -178,14 +177,31 @@ test("concurrent sends and stale clears cannot consume another question", async 
   assert.deepEqual(f.read().requests[0]!.pendingOwner, newer);
 });
 
+for (const time of [false, true]) test(`email answers reserve the send, use the base tool and clear only after its receipt: time=${time}`, async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.channel = "email";
+  if (time) f.ledger = updateRequest(f.ledger, "mia", { pendingOwner: { askedAt: args.askedAt, start: "2026-10-05T20:00:00Z", end: "2026-10-05T20:30:00Z" } }, Date.now());
+  writeJson(f.path, f.ledger);
+  const noPhone = async () => assert.fail("email answers must use plow_send_email");
+  assert.ok("error" in await answerOwner(ctx, { ...args, emailSent: true }, noPhone));
+  const result = await answerOwner(ctx, args, noPhone);
+  assert.ok("email" in result);
+  assert.deepEqual(result.email, { to: "group-mia", body: args.text });
+  assert.ok(f.read().requests[0]!.pendingOwner?.answerAttemptedAt);
+  assert.ok("error" in await answerOwner(ctx, args, noPhone), "an unknown send must not retry");
+  assert.ok("error" in await answerOwner(ctx, { ...args, askedAt: "stale", emailSent: true }, noPhone));
+  const completed = await answerOwner(ctx, { ...args, emailSent: true }, noPhone);
+  assert.deepEqual(completed, { answered: true, sent: true, requestId: "mia" });
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+  assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
+});
 
-test("unknown Plow delivery explicitly forbids retrying", async () => {
-  const api = { runtime: { channel: {
-    routing: { resolveAgentRoute: () => ({ agentId: "main", sessionKey: "agent:main:main" }) },
-    session: { resolveStorePath: () => "/sessions", updateLastRoute: async () => {} },
-  } } };
-  await assert.rejects(sendPlowMessage(api, ctx, "plow-owner", "Question", "direct", async () => ({
-    buildOutboundSessionContext: (input: object) => input,
-    sendDurableMessageBatch: async () => ({ status: "queued" }),
-  })), { message: "Plow delivery is unknown; not replaying this send. Do NOT retry; check the thread." });
+test("an owner answer in its own email thread clears without another email or silence hook", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.channel = "email";
+  writeJson(f.path, f.ledger);
+  const result = await answerOwner({ ...ctx, agentAccountId: "email", nativeChannelId: "group-mia", sessionKey: "email-mia" }, args,
+    async () => assert.fail("answer is already visible"));
+  assert.deepEqual(result, { answered: true, sent: false, requestId: "mia" });
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
 });

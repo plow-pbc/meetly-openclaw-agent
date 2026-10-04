@@ -1,16 +1,23 @@
+import { TravelBaseRequired } from "./travel.ts";
 import { fetchBusy } from "./busy.ts";
-import { offerRequest, type OfferInput } from "./calendar.ts";
+import { calendarAction, offerRequest, type OfferInput } from "./calendar.ts";
 import { lookupContact } from "./contact.ts";
 import { loadConfig } from "./config.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { findPreferredSlots } from "./slots.ts";
 import { view } from "./request-view.ts";
-import { findOpenByHandle, intersectConstraints, normalizeHandle, sameHandle, type Ledger } from "./ledger.ts";
+import { checkContact, ContactConfirmationRequired, requireDuration, findOpenByHandle, intersectConstraints, normalizeHandle, sameHandle, type Ledger, type Constraints } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "topic" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & { durationMin: number };
+type GroupRequest = Pick<OfferInput, "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & { durationMin: number };
+
+// Tool callers may fill unused optional fields with empty values.
+function conditions(value?: Constraints): Constraints | undefined {
+  const entries = Object.entries(value ?? {}).filter(([, v]) => Array.isArray(v) ? v.length > 0 : typeof v === "string" && v.trim());
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -43,29 +50,41 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
       if (contact.found) name = contact.name?.trim() || undefined;
     }
     name = args.name?.trim() || name;
-    const existing = findOpenByHandle(readJson<Ledger>(file("ledger.json"), { requests: [] }), handle);
+    const ledger = readJson<Ledger>(file("ledger.json"), { requests: [] });
+    checkContact(ledger, handle);
+    const existing = findOpenByHandle(ledger, handle);
     if (existing && existing.chatUid !== chat && !(existing.status === "asked" && existing.chatUid === undefined)) {
       throw new Error("request belongs to another conversation");
     }
     const config = loadConfig(), now = Date.now();
+    if (config.paused) throw new Error("Scheduling is paused.");
     const { topic, format, location } = args;
-    const durationMin = args.durationMin;
+    const meal = args.meal ?? existing?.meal;
+    const durationMin = requireDuration(args.durationMin);
     const locale = args.locale ?? existing?.locale;
-    const constraints = args.constraints ? intersectConstraints(existing?.constraints, args.constraints) : existing?.constraints;
-    const proposed = args.proposed ?? (existing?.status === "asked" ? existing.proposed : undefined);
+    const hard = conditions(args.constraints);
+    const constraints = hard ? intersectConstraints(existing?.constraints, hard) : existing?.constraints;
+    const proposed = conditions(args.proposed) ?? (existing?.status === "asked" ? existing.proposed : undefined);
     const busy = await fetchBusy(config, { from: new Date(now).toISOString(), to: new Date(now + (config.horizonDays + 1) * 86_400_000).toISOString() });
     if (busy.degraded.length) throw new Error("calendar unavailable");
     busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
-    const query = { ...busy, ...constraints, now, config, durationMin, locale, allowOverlap: existing?.allowOverlap };
+    const travel = existing?.travel?.override ? existing.travel : args.travel ?? existing?.travel;
+    const query = { travel, format: format ?? existing?.format, ...busy, ...constraints, now, config, meal, durationMin, locale, allowOverlap: existing?.allowOverlap };
     const near = proposed?.from && proposed.from === proposed.to
       ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
     const { slots, preferencesUnavailable } = findPreferredSlots(query, proposed, [{ ...query, near }]);
     if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
-    const { request } = await offerRequest({ handle, name, topic, durationMin, constraints, proposed, format, location, locale,
-      offered: slots.map(({ start, end }) => ({ start, end })),
-      origin: "owner-group", chatUid: chat, askDetails: false });
+    const input = { travel, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
+      offered: slots.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),
+      origin: "owner-group" as const, chatUid: chat, askDetails: false };
+    // Existing requests use the saved duration, including explicit owner steering.
+    const { request } = existing
+      ? await calendarAction(existing.id, { action: "offer", request: input })
+      : await offerRequest(input);
     return { ...view(request, config), preferencesUnavailable };
-  } catch {
+  } catch (error) {
+    if (error instanceof TravelBaseRequired) return { error: "Provide your travel base in your private DM before offering in-person times.", code: "TRAVEL_BASE_REQUIRED" };
+    if (error instanceof ContactConfirmationRequired) return { error: error.message, doNotContact: true };
     return { error: "The scheduling action could not be completed. Check the request before trying again." };
   }
 }

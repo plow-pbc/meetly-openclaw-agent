@@ -58,6 +58,48 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Check out pinned replay tooling
+        if: github.ref == 'refs/heads/preview/meetly-v4'
+        uses: actions/checkout@v4
+        with:
+          ref: 442936c45e1b82dd48215dd35ab00084bcec81ba
+          path: .preview-replay
+          sparse-checkout: evals/replay
+
+      - name: Capture the published image on native amd64
+        if: github.ref == 'refs/heads/preview/meetly-v4'
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ env.PACKAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          docker pull "$IMAGE"
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          p = Path('.preview-replay/evals/replay/capture.mjs')
+          s = p.read_text().replace('http://host.docker.internal:', 'http://127.0.0.1:')
+          s = s.replace('"--add-host", "host.docker.internal:host-gateway",', '"--network", "host",')
+          s = s.replace('"run", "-d", "--name", name', '"create", "--name", name')
+          s = s.replace('    "-v", `${state}:/var/lib/plow`, opt.image], { stdio: "ignore" });',
+            '    opt.image], { stdio: "ignore" });\n  execFileSync("docker", ["cp", `${state}/meetly`, `${name}:/var/lib/plow/meetly`]);\n  execFileSync("docker", ["start", name], { stdio: "ignore" });')
+          p.write_text(s)
+          PYTHON
+          node .preview-replay/evals/replay/capture.mjs --image "$IMAGE" --out preview-capture --keep
+
+      - name: Save preview capture and runtime logs
+        if: always() && github.ref == 'refs/heads/preview/meetly-v4'
+        run: |
+          mkdir -p preview-capture
+          for container in $(docker ps -aq --filter name=meetly-replay-capture); do
+            docker logs "$container" > "preview-capture/runtime-$container.log" 2>&1
+            docker rm -f "$container"
+          done
+
+      - name: Upload preview smoke evidence
+        if: always() && github.ref == 'refs/heads/preview/meetly-v4'
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-capture
+          path: preview-capture
+
       - name: Summary
         env:
           OWNER: ${{ github.repository_owner }}

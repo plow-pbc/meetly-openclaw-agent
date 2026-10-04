@@ -1,5 +1,4 @@
 // The owner's scheduling config: types, answer parsing and validation.
-import type { Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { DAYS, type Day } from "./time.ts";
@@ -9,6 +8,8 @@ export { DAYS, type Day };
 export type Calendar = { account: string; id: string };
 
 export type Config = {
+  overlapDecisions?: Record<string, { allowed: boolean; at: string }>;
+  travelBase?: string;
   ownerName: string;
   timezone: string;
   days: Day[];
@@ -23,7 +24,7 @@ export type Config = {
 };
 
 // Every setting the owner can change.
-export const FIELDS = ["ownerName", "timezone", "days", "window", "durationMin", "horizonDays", "calendars"] as const;
+export const FIELDS = ["travelBase", "ownerName", "timezone", "days", "window", "durationMin", "horizonDays", "calendars"] as const;
 export type Field = (typeof FIELDS)[number];
 
 // What setup cannot start without, in the order it asks: nobody but the owner,
@@ -39,10 +40,6 @@ export const DEFAULTS = {
   durationMin: 30,
   horizonDays: 14,
 };
-
-export function durationFor(q: { config: Config; meal?: Meal; durationMin?: number }): number {
-  return q.durationMin ?? (q.meal === "lunch" || q.meal === "dinner" ? 60 : q.meal === "coffee" ? 30 : q.config.durationMin);
-}
 
 export const QUESTIONS: Record<RequiredField, string> = {
   ownerName: "When I talk to other people for you, I write about you by name, like \"Ana is free at 3pm\". What name should I use?",
@@ -114,6 +111,11 @@ export function readableCalendars(calendars: Calendar[], defaultAccount: string)
 
 export function parseField(field: string, value: string): Partial<Config> {
   switch (field) {
+    case "travelBase": {
+      const travelBase = value.trim();
+      if (!travelBase || travelBase.length > 300) throw new Error("travel base must be 1 to 300 characters");
+      return { travelBase };
+    }
     case "ownerName": {
       const name = value.trim();
       if (name.length < 1 || name.length > 60) throw new Error("the name must be 1 to 60 characters");
@@ -203,14 +205,22 @@ export function validateConfig(partial: Partial<Config>): Config {
     calendars: readableCalendars(p.calendars, p.defaultAccount),
     defaultAccount: p.defaultAccount,
   };
+  if (p.overlapDecisions !== undefined) config.overlapDecisions = p.overlapDecisions;
+  if (p.travelBase !== undefined) config.travelBase = parseField("travelBase", p.travelBase).travelBase;
   if (p.setupDoneAt !== undefined) config.setupDoneAt = p.setupDoneAt;
   if (p.paused !== undefined) config.paused = p.paused;
   return config;
+}
+
+// Event-title memory is exposed only by the private owner-DM action.
+export function schedulingConfig(config: Config): Config {
+  const { overlapDecisions: _private, ...settings } = config;
+  return settings;
 }
 
 export function loadConfig(): Config {
   const config = readJson<Config | null>(file("config.json"), null);
   if (!config?.setupDoneAt) throw new Error("Meetly is not set up yet");
   // A config saved before readableCalendars may still list `primary`.
-  return { ...config, calendars: readableCalendars(config.calendars, config.defaultAccount) };
+  return { ...schedulingConfig(config), calendars: readableCalendars(config.calendars, config.defaultAccount) };
 }

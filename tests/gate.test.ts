@@ -38,6 +38,13 @@ test("without a name from Plow the gate does not invent one", () => {
   assert.match(asking, /and end the turn: What name should I use\?/);
 });
 
+test("setup records a bare name answer before considering another question", () => {
+  const context = gateContext(status({ status: "SETUP_NEEDED", next: "ownerName", question: "What name should I use?", draft: {}, defaults: DEFAULTS }))!;
+  assert.ok(context.indexOf("record-setup.ts") < context.indexOf("end the turn"), "saving the current answer takes precedence over asking again");
+  assert.match(context, /bare name.*complete answer/i);
+  assert.match(context, /Only if.*does not answer/);
+});
+
 test("once the name and zone are known the gate does not ask: it reads the calendars, finishes and does the owner's request", () => {
   const context = gateContext(status({ status: "SETUP_NEEDED", next: "calendars", question: "Which of your calendars should count as busy?", draft: { ownerName: "Ana" }, defaults: { ...DEFAULTS, durationMin: 45 }, mac: { connected: true } }))!;
   assert.doesNotMatch(context, /and end the turn: Which of your calendars/);
@@ -67,7 +74,7 @@ test("a finished setup is passed along, and output that is not a status adds not
 test("the plugin registers one before_prompt_build hook that skips other turns", async () => {
   const hooks: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
   gate.register({ registerTool() {}, on: (name: string, fn: (event: unknown, ctx: unknown) => unknown) => { hooks[name] = fn; }, logger: { info() {} } });
-  assert.deepEqual(Object.keys(hooks), ["before_prompt_build"]);
+  assert.deepEqual(Object.keys(hooks), ["message_received", "before_prompt_build", "before_tool_call", "agent_end"]);
   assert.equal(await hooks.before_prompt_build!({}, { channel: "plow", sessionKey: "agent:main:plow:group:x" }), undefined);
 });
 
