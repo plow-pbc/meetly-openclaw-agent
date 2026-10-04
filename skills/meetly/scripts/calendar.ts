@@ -151,6 +151,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const before = ledger();
         const validated = saveRequest(before, input.request, now(), id);
         input.request.allowOverlap = validated.requests.find(r => r.id === id)!.allowOverlap;
+        input.request.name = validated.requests.find(r => r.id === id)!.name;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
         for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"]);
       } else {

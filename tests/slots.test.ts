@@ -191,9 +191,9 @@ test("checkTime: a time the person insists on", () => {
 test("replacement slot search keeps saved and newly resolved overlap authorizations private", () => {
   const home = tmpHome(), env = { MEETLY_HOME: home };
   writeJson(join(home, "config.json"), CONFIG);
-  const start = "2026-09-28T10:00:00-03:00", end = "2026-09-28T10:30:00-03:00";
+  const start = "2026-09-28T10:00:00-03:00", end = "2026-09-28T11:00:00-03:00";
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
-    origin: "owner", chatUid: "group", handle: "+15551234567", topic: "Lunch", durationMin: 30,
+    origin: "owner", chatUid: "group", handle: "+15551234567", topic: "Lunch", durationMin: 60,
     allowOverlap: [{ account: "jean@example.com", id: "saved" }], offered: [{ start, end, holdId: "own-hold", account: "jean@example.com" }],
   }, Date.parse(start), "r_one"));
   const busyFile = join(home, "busy.json");
@@ -202,4 +202,15 @@ test("replacement slot search keeps saved and newly resolved overlap authorizati
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.json.slots[0].start, start);
   assert.doesNotMatch(result.stdout, /saved|new|own-hold|allowOverlap/);
+  const args = ["--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--at", start];
+  const checked = cli("slots.ts", args, env);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.equal(checked.json.free, true);
+  assert.equal(checked.json.slot.end, end);
+  assert.doesNotMatch(checked.stdout, /saved|new|own-hold|allowOverlap/);
+  writeJson(busyFile, { busy: [{ id: "saved", start, end, account: "other@example.com" }] });
+  const blocked = cli("slots.ts", args, env);
+  assert.equal(blocked.status, 0, blocked.stderr);
+  assert.equal(blocked.json.reason, "busy");
+  assert.notEqual(cli("slots.ts", args.map(a => a === "r_one" ? "missing" : a), env).status, 0);
 });

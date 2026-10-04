@@ -36,8 +36,12 @@ free there.
 
 ## Offer times
 
-1. In the current group, skip recipient resolution and continue at step 2;
-   `meetly_offer_owner_group` resolves the guest and chat from runtime participants.
+1. In the current group, call `meetly_offer_owner_group` with `topic`, `constraints`,
+   `proposed`, explicit `durationMin`, `format`, `location` and `locale` as known.
+   It resolves the guest and chat, searches within the owner's conditions and
+   holds times itself; never supply `offered` intervals. On error, stop. Otherwise
+   continue at step 6 with its returned offer; if `preferencesUnavailable` is true,
+   explain that the preferred times do not work and offer the returned alternatives.
    In the owner's DM, resolve one E.164 phone before any calendar read or hold. If none is
    known, ask the owner for a phone; if several match, ask which one. In
    either case, ask in the owner's main DM and end the turn.
@@ -52,7 +56,7 @@ free there.
    exclude this request's own holds. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
    first offer, its `proposed` times: `--days`, `--after`, `--before`,
-   `--from`/`--to`, `--duration`, `--allow-overlap`. Slots stay inside the
+   `--from`/`--to`, `--duration`. Slots stay inside the
    owner's days and window; constraints only narrow them.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
@@ -66,9 +70,7 @@ free there.
    `constraints` (the owner's conditions), `proposed`, `allowOverlapTitles`, `format`,
    `locale`, and `offered[]` with each slot's `start`/`end`. The writer supplies
    the configured duration/account and resolves only owner-authorized overlap titles.
-   In the current group, use `meetly_offer_owner_group` with those same fields
-   except identity, `origin`, `chatUid`, account and `allowOverlapTitles`; it supplies
-   the guest and chat. Overlap permission is available only from the owner's DM.
+   Overlap permission is available only from the owner's DM.
    Do not supply hold ids.
 5. The writer creates the holds and saves the offer under the existing request
    id, preserving its chat link. It re-keys an inbound request with the same
@@ -227,7 +229,7 @@ disclose private information.
   already booked, relay the confirmed booking result without booking it again.
 
 - **Yes:**
-  1. Read the calendar and re-check with `slots.ts --at <pendingOwner.start>`.
+  1. Read the calendar and re-check with `slots.ts --at <pendingOwner.start> --request <id>`.
   2. If it is still free, pass its start and end to the writer, following
      "Book the event". It records the booking and retains `pendingOwner` for answer delivery.
   3. The writer releases the request's other holds.

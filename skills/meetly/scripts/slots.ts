@@ -209,17 +209,6 @@ if (isMain(import.meta.url)) {
     const now = values.now !== undefined ? Date.parse(values.now) : Date.now();
     if (Number.isNaN(now)) throw new Error(`--now is not a time: ${values.now}`);
     const degraded = input.degraded ?? [];
-    if (values.at !== undefined) {
-      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "request"] as const) {
-        if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
-      }
-      const check: Parameters<typeof checkTime>[0] = { now, config, busy: input.busy, start: values.at, allowOverlap: input.allowOverlap };
-      if (input.unknownAfter !== undefined) check.unknownAfter = input.unknownAfter;
-      if (values.duration !== undefined) check.durationMin = positiveInt(values.duration, "--duration");
-      if (values["allow-overlap"]) check.allowOverlap = values["allow-overlap"].map(value => JSON.parse(value));
-      if (values.locale !== undefined) check.locale = values.locale;
-      return { ...checkTime(check), degraded };
-    }
     const q: SlotQuery = { now, config, busy: input.busy, allowOverlap: input.allowOverlap };
     if (input.unknownAfter !== undefined) q.unknownAfter = input.unknownAfter;
     if (values.duration !== undefined) q.durationMin = positiveInt(values.duration, "--duration");
@@ -251,6 +240,12 @@ if (isMain(import.meta.url)) {
       q.locale ??= request.locale;
       q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);
       q.busy = q.busy.filter(b => !request.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
+    }
+    if (values.at !== undefined) {
+      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near"] as const) {
+        if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
+      }
+      return { ...checkTime({ ...q, start: values.at }), degraded };
     }
     return { ...findSlots(q), degraded };
   });

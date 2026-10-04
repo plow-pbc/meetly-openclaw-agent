@@ -230,7 +230,7 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
 
   // Reuse addRequest's validation and timestamp behavior, then apply its new
   // offer to the existing record. An absent chatUid must not erase the link.
-  input = { ...input, origin: existing.origin, chatUid: input.chatUid ?? existing.chatUid,
+  input = { ...input, name: input.name ?? existing.name, origin: existing.origin, chatUid: input.chatUid ?? existing.chatUid,
     askDetails: input.askDetails ?? existing.askDetails,
     allowOverlap: uniqueEvents([...(existing.allowOverlap ?? []), ...(input.allowOverlap ?? [])]) };
   if (existing.chatUid && input.chatUid !== existing.chatUid) throw new Error("a request cannot move to another chat");
