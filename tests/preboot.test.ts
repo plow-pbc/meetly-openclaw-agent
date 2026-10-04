@@ -17,7 +17,7 @@ for (const failure of ["plugin", "model", "config"]) test(`boot requires plugin 
     const fakeBase = 'data:text/javascript,' + encodeURIComponent(\`
       export const installBootLog = () => () => {};
       export const startAgentIndex = () => {};
-      export const renderConfig = () => ({channels:{plow:{threadTrust:'untrusted'}}});
+      export const renderConfig = () => ({tools:{alsoAllow:[]},channels:{plow:{threadTrust:'untrusted'}}});
       export const syncConfig = async () => {};
       export const identityFromApi = async () => ({line:{uid:'fixture'}});
       export const renderPrompt = async () => '';
