@@ -137,7 +137,8 @@ test("other-times files a free outside-window approval without replacing holds",
   const tool = f.tools.get("meetly_other_times")!;
   const result = JSON.parse((await tool.execute("ask", args)).content[0]!.text);
   assert.equal(result.ownerAskSent, true);
-  assert.match(result.message, /asked Alex/);
+  assert.equal(result.message, "I've asked Alex and will get back to you here when Alex replies.");
+  assert.equal(result.askDetails, false);
   assert.deepEqual(f.request().offered, offers);
   assert.equal(f.request().status, "offered");
   assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T20:00:00+00:00", end: "2026-10-05T20:30:00+00:00", askedAt: new Date(now).toISOString() });

@@ -168,7 +168,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   } catch {
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
   }
-  return { ownerName: config.ownerName, ownerAskSent: true, message: `I've asked ${config.ownerName} and will get back to you here when they reply.` };
+  return { ownerName: config.ownerName, ownerAskSent: true, askDetails: false, message: `I've asked ${config.ownerName} and will get back to you here when ${config.ownerName} replies.` };
 }
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
