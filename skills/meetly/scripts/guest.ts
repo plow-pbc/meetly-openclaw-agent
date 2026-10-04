@@ -12,7 +12,7 @@ import { view } from "./request-view.ts";
 
 export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
-export type GuestArgs = Constraints & { next_week?: string; start?: string; question?: string; format?: Format; location?: string };
+export type GuestArgs = Constraints & { excludedDays?: string[]; next_week?: string; start?: string; question?: string; format?: Format; location?: string };
 type SendOwner = (text: string) => Promise<void>;
 const EMPTY: Ledger = { requests: [] };
 
@@ -89,10 +89,16 @@ async function pick(request: Request, config: Config, start: string) {
 
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
   const preferred = preferences(args, config.timezone);
+  const excludedDays = preferences({ days: args.excludedDays }, config.timezone).days ?? [];
+  const availableDays = { days: DAYS.filter(day => !excludedDays.includes(day)) };
+  const bounds = intersectConstraints(request.constraints, availableDays);
   const start = args.start;
   let exact: Slot | undefined;
   if (start) {
     const checked = await check(request, config, start);
+    if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) {
+      return { error: "That weekday was ruled out. Choose a different day." };
+    }
     if (checked.free && checked.outsideHours) return askOwner(request, config, { start }, sendOwner);
     if (checked.free && withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) exact = checked.slot;
     preferred.from = preferred.to = checked.slot.start.slice(0, 10);
@@ -101,13 +107,13 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   const now = Date.now();
   const busy = await busyFor(request, config, localIso(now, config.timezone), localIso(now + (config.horizonDays + 1) * 86_400_000, config.timezone));
-  const narrowed = intersectConstraints(request.constraints, preferred);
+  const narrowed = intersectConstraints(bounds, preferred);
   const query: SlotQuery = { ...busy, ...narrowed, days: narrowed.days as Day[] | undefined, now, config,
     meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
   let { slots } = exact ? { slots: [exact] } : findSlots(query);
   const preferencesUnavailable = slots.length === 0;
   if (preferencesUnavailable) {
-    const fallback = { ...query, ...intersectConstraints(request.constraints), days: request.constraints?.days as Day[] | undefined };
+    const fallback = { ...query, ...bounds, days: bounds.days as Day[] };
     if (preferred.from && preferred.to && preferred.from < preferred.to) {
       slots = findSlots({ ...fallback, from: narrowed.from, to: narrowed.to }).slots;
     }

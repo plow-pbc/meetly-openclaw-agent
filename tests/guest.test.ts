@@ -253,6 +253,38 @@ test("every guest tool drops blank optional arguments and preserves required and
   assert.deepEqual(args, { ...blanks, ...values });
 });
 
+for (const preferences of [
+  {},
+  { from: "2026-10-05", to: "2026-10-07", after: "20:00" },
+  { days: ["thu"], after: "20:00" },
+]) test(`ruled-out Tuesdays stay excluded from replacement searches: ${JSON.stringify(preferences)}`, async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-07", after: "10:00", before: "15:00" };
+  f.save(f.ledger);
+  f.events.set("monday", event("monday", "2026-10-05T00:00:00Z", "2026-10-06T00:00:00Z"));
+  const result = await f.tools.get("meetly_other_times")!.execute("call", { ...preferences, excludedDays: ["tue"] });
+  const details = JSON.parse(result.content[0]!.text);
+  assert.equal(details.error, undefined, JSON.stringify(details));
+  assert.ok(details.offered.length > 0);
+  assert.ok(details.offered.every((o: { start: string }) => o.start.startsWith("2026-10-07")), JSON.stringify(details.offered));
+  assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-07")));
+  t.diagnostic(`Replacement offer: ${JSON.stringify(details.offered)}`);
+});
+
+for (const args of [
+  { excludedDays: ["funday"] },
+  { excludedDays: ["mon", "tue"] },
+  { excludedDays: ["tue"], start: offers[1]!.start },
+]) test(`excluded weekdays cannot be bypassed: ${JSON.stringify(args)}`, async t => {
+  const f = fixture(t);
+  const before = f.read();
+  const result = await f.tools.get("meetly_other_times")!.execute("call", args);
+  assert.ok(JSON.parse(result.content[0]!.text).error);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.ownerLines.length, 0);
+  assert.ok(f.commands.every(c => c[2] === "events"));
+});
+
 test("blank optional preferences through the guest tool still produce fresh held times", async t => {
   const f = fixture(t);
   const result = await f.tools.get("meetly_other_times")!.execute("call", {

@@ -46,8 +46,10 @@ never hold the owner's request waiting for them.
 5. On a script error, say the problem in one line and ask again.
 6. When the output has `next: null`, run `record-setup.ts --done`, then carry
    out what the owner asked in this same turn. Confirm in one line that
-   Meetly is on, and which calendars count as busy. If `--done` fails, show its
-   error line.
+   Meetly is on: "These calendars count as busy: <config.calendars>." The saved
+   list contains included busy calendars, not excluded holiday subscriptions.
+   Mention excluded calendars only if the Mac's calendar listing confirmed them.
+   If `--done` fails, show its error line.
 
 Never invent the name, the time zone or the calendars: they come from the
 owner, Plow or the Mac. The other settings start at their defaults and are
