@@ -11,7 +11,7 @@ import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateR
 import { view } from "./request-view.ts";
 import { plowApi } from "./owner-chat.ts";
 
-export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string; senderIsOwner?: boolean;
+export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string; senderIsOwner?: boolean;
   config?: { channels?: { plow?: { apiBase?: string; emailLineUid?: string } } } };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
 export type GuestArgs = Constraints & { excludedDays?: string[]; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string; attendees?: string[] };
@@ -126,11 +126,16 @@ async function notifyOwner(request: Request, config: Config, change: "moved" | "
   }
 }
 
-async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner) {
+async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number) {
   if (attendees !== undefined && (!Array.isArray(attendees) || (attendees.length > 0 && (request.channel !== "email" || request.status === "booked"
     || attendees.some(email => typeof email !== "string" || !/^[^\s@,]+@[^\s@,]+$/.test(email)))))) return { error: "Additional invitees need email addresses on an unbooked email request." };
   const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(start));
   if (!offer) return { error: "Choose one of the currently offered start times." };
+  // Only a replacement held before this run can represent the guest's choice.
+  if (request.status === "booked" && !(Number.isFinite(turnStartedAt)
+    && Date.parse(request.reoffer!.offeredAt) < turnStartedAt!)) {
+    return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
+  }
   const checked = await check(request, config, offer.start);
   if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available. Ask for other times." };
   if (request.status === "booked") {
@@ -267,7 +272,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
-    if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner);
+    if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt);
     return { error: "Unknown scheduling action." };
   } catch (error) {
     if (error instanceof WeekdayDateRequired) return { error: error.message };

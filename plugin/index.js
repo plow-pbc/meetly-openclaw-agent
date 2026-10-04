@@ -8,6 +8,7 @@
 // and preboot copies it into the state volume's plugin root on every boot.
 import { execFile } from "node:child_process";
 import { registerPipelineHooks } from "./pipeline.js";
+import { guestTurns } from "./guest-turn.js";
 import { registerGuestTools } from "./guest-tools.js";
 import { registerOwnerTools, registerOwnerGroupTool } from "./owner-tools.js";
 import { getReplySilencer } from "./reply-silence.js";
@@ -101,6 +102,7 @@ export default {
     registerOwnerGroupTool(api);
     api.on("before_prompt_build", async (_event, ctx) => {
       silence.begin(ctx);
+      guestTurns.begin(ctx);
       if (!isOwnerDmTurn(ctx)) return undefined;
       let context;
       try {
@@ -113,10 +115,11 @@ export default {
       api.logger.info(context ? `meetly setup gate prepended: ${context.split("\n")[0]}` : "meetly setup gate: unreadable status; prompt fallback applies");
       return context ? { prependContext: context } : undefined;
     });
+    api.on("before_tool_call", guestTurns.beforeTool);
     api.on("after_tool_call", silence.afterTool);
     api.on("message_sending", silence.sending);
     api.on("reply_payload_sending", silence.sendingReply);
-    api.on("agent_end", silence.endTurn);
+    api.on("agent_end", (event, ctx) => { silence.endTurn(event, ctx); guestTurns.end(event, ctx); });
     api.on("session_end", silence.end);
   },
 };
