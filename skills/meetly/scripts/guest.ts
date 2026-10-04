@@ -165,7 +165,11 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   const askedAt = new Date(Date.now()).toISOString();
   if (args.question !== undefined) {
     if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
-    question = args.question.replace(/\s+/g, " ").trim().slice(0, OWNER_QUESTION_LIMIT);
+    question = args.question.replace(/\s+/g, " ").trim();
+    const closingQuote: Record<string, string> = { '"': '"', "'": "'", "“": "”", "‘": "’" };
+    while (question.length >= 2 && closingQuote[question[0]!] === question.at(-1)) question = question.slice(1, -1).trim();
+    if (!question) return { error: "Provide a question about this meeting." };
+    question = question.slice(0, OWNER_QUESTION_LIMIT);
     pendingOwner = { question, askedAt };
   } else {
     const checked = await check(request, config, args.start!);
@@ -182,18 +186,21 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   // Keep the slot on an uncertain send so another turn cannot duplicate it.
   try {
     const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
-    await sendOwner(`${label(request.name ?? "Your guest")} in your ${label(request.topic)} group asks: ${JSON.stringify(question)} — what should I tell them?`);
+    await sendOwner("question" in pendingOwner
+      ? `${label(request.name ?? "Your guest")} asked in your ${label(meetingTopic(request))} thread. Guest question: ${JSON.stringify(question)}. Reply there, or tell me what to say.`
+      : `${label(request.name ?? "Your guest")} in your ${label(meetingTopic(request))} group asks: ${JSON.stringify(question)} — what should I tell them?`);
   } catch {
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
   }
-  return { ownerName: config.ownerName, ownerAskSent: true, askDetails: false, message: `I've asked ${config.ownerName} and will get back to you here when ${config.ownerName} replies.` };
+  return { ownerName: config.ownerName, ownerAskSent: true, askDetails: false,
+    ...("question" in pendingOwner ? { silent: true } : { message: `I've asked ${config.ownerName} and will get back to you here when ${config.ownerName} replies.` }) };
 }
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
   try {
     let request = current(readJson<Ledger>(file("ledger.json"), EMPTY), ctx);
-    if (!request) return { error: "No scheduling request matches you in this conversation." };
     const config = loadConfig();
+    if (!request) return { ownerName: config.ownerName, error: `${config.ownerName} will confirm.` };
     if (action === "view") return view(request, config);
     if (config.paused) return { error: "Scheduling is paused. The owner can resume it." };
     if (action === "format") {
@@ -206,7 +213,8 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (action === "ask_owner" && ["offered", "booked"].includes(request.status)) {
       if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
-      return await askOwner(request, config, { question: args.question }, sendOwner);
+      const result = await askOwner(request, config, { question: args.question }, sendOwner);
+      return { ...result, silent: true };
     }
     if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
     if (action === "decline") {

@@ -168,15 +168,23 @@ End the reply after the guest-facing introduction.
 Do not append an owner-addressed line such as "Patrick, just let me know"
 or invite the owner to supply scheduling instructions in the group.
 
-In the owner's DM, first run `ledger.ts find --name <guest name>` for a named meeting.
-Reuse the matched open request's handle and chat. If ambiguous, ask which meeting.
-If the name has no match and `candidates` lists open owner-group offers, ask which meeting
-using their guest name or handle and topic; wait for the owner's selection. Do not guess
-another contact or ask them to resend the request in the group.
+In the owner's DM, choose the request path from the owner's message:
+- A scheduling request with a phone or email handle is a new request. Use that handle
+  to resolve the recipient and follow "Offer times". Do not search by name, list existing
+  requests or ask whether this is new, even if an old request has the same guest name.
+- Only when the owner refers to someone without a handle, first run
+  `ledger.ts find --name <guest name>`. Reuse the matched open request's handle and chat.
+  If ambiguous, ask which meeting. If that name has no match and `candidates` lists open
+  owner-group offers, ask which meeting using their guest name or handle and topic;
+  wait for the owner's selection. Do not guess another contact or ask them to resend
+  the request in the group. Only when no request matches and no candidates remain,
+  resolve the recipient from Contacts and ask if ambiguous.
+
+Save the guest name the owner gave in `name`, even when they also supplied a phone
+and Contacts has no card. Keep that name separate from `topic`; do not drop it
+when saving or replacing the DM request.
 Copy the selected request's exact `handle` and `chatUid` from the ledger for reads,
 writes and delivery; never invent or retype an id from memory or a session slug.
-Only when no request matches and no candidates remain, resolve the recipient from
-Contacts and ask if ambiguous.
 In a group, let `meetly_offer_owner_group` resolve the recipient; do not look up
 Contacts or ask for a phone. Read
 `ledger.ts find --chat <runtime chat uid>` first, including booked or closed requests;
@@ -194,7 +202,6 @@ before delivering any times. Do not update duration when the owner did not state
 
 Extract the topic, proposed times, hard conditions, explicit duration, format,
 place. Extract owner-authorized overlap titles only in the owner's DM.
-Reuse an open request and its chat.
 Follow "Offer times" with `origin: owner` in the DM or the group entry tool here.
 If a requested time is busy, say there is an existing commitment and
 immediately find and offer the nearest available times; do not ask whether
@@ -286,7 +293,10 @@ disclose private information.
   `requestId`, `askedAt` from that pending question, and `text` phrased as Meetly
   relaying the owner's answer. From the DM, it sends to the recorded group and
   clears that question only after the send succeeds. In the same group, the
-  owner's answer is already visible: it clears without sending; acknowledge briefly.
+  owner's answer is already visible: it clears silently without sending or acknowledging.
+  After `silent: true`, output nothing, including commentary or a "(Silent — …)" note.
+  If the owner answers a different question already visible in the group, leave the
+  unrelated pending question open and output nothing; never clear it as answered.
   Never send the answer separately. If delivery is unknown, tell the owner;
   do not resend automatically. Only if the owner explicitly authorizes a retry,
   run `ledger.ts delivery --id <id> --kind answer --action clear` before calling

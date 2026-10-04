@@ -282,7 +282,7 @@ test("guests route to their tool descriptions without loading skills or running 
 
 test("unmatched guest requests and acknowledgements do not alert the owner", () => {
   const p = flat(prompt);
-  assert.ok(p.includes("If no request matches, say so without alerting the owner"));
+  assert.ok(p.includes('If no request matches, say only "<ownerName> will confirm."'));
   assert.ok(p.includes("For unrelated acknowledgements, do not reply"));
   assert.ok(!groupSkill().includes("**No matching request:**"));
 });
@@ -295,6 +295,22 @@ test("meeting confirmations stay in the group while pending questions route priv
   assert.ok(group.includes("clears that question only after the send succeeds"));
   assert.ok(group.includes("Never send the answer separately"));
   assert.ok(flat(prompt).includes("Unresolved meeting questions go privately through `meetly_ask_owner`"));
+});
+
+test("unanswerable guest questions and owner answers in the thread stay silent", () => {
+  const descriptions = new Map<string, string>();
+  const api = { registerTool(factory: (ctx: object) => { name: string; description: string }) {
+    const tool = factory({}); descriptions.set(tool.name, tool.description);
+  } };
+  registerGuestTools(api);
+  registerOwnerTools(api);
+  assert.match(descriptions.get("meetly_ask_owner")!, /Scheduling questions you can answer stay in the group/);
+  assert.match(descriptions.get("meetly_ask_owner")!, /For question handoffs, stay silent in the group/);
+  assert.match(descriptions.get("meetly_answer_owner")!, /clears silently without sending or acknowledging/);
+  assert.ok(flat(prompt).includes("When a tool returns `silent: true`, end the turn without a group reply"));
+  assert.ok(groupSkill().includes("clears silently without sending or acknowledging"));
+  assert.ok(flat(prompt).includes('On every silent turn, output nothing: no commentary, status text or "(Silent — …)" explanation'));
+  assert.ok(groupSkill().includes("leave the unrelated pending question open and output nothing"));
 });
 
 test("owner-started groups introduce Meetly and name the owner in the first reply or offer", () => {
@@ -355,18 +371,28 @@ test("an owner introduction waits without asking the group to plan a meeting", (
   assert.ok(flat(prompt).includes("only a short introduction using your conversation name and wait"));
 });
 
-test("unnamed owner-group follow-ups disambiguate from ledger candidates and retain exact chat ids", () => {
+test("owner DM requests preserve the guest name supplied with a phone number", () => {
   const group = groupSkill();
-  assert.ok(group.includes("If the name has no match and `candidates` lists open owner-group offers, ask which meeting"));
+  assert.ok(group.includes("Save the guest name the owner gave in `name`, even when they also supplied a phone"));
+});
+
+test("owner DM handles start new requests and only handle-free name misses list candidates", () => {
+  const group = groupSkill();
+  const owner = group.slice(group.indexOf("## Owner request"), group.indexOf("## Asked requests"));
+  assert.ok(owner.includes("A scheduling request with a phone or email handle is a new request"));
+  assert.ok(owner.includes("Do not search by name, list existing requests or ask whether this is new"));
+  assert.ok(owner.includes("Only when the owner refers to someone without a handle, first run `ledger.ts find --name <guest name>`"));
+  assert.ok(owner.includes("If that name has no match and `candidates` lists open owner-group offers, ask which meeting"));
   assert.ok(group.includes("Copy the selected request's exact `handle` and `chatUid` from the ledger"));
   assert.ok(group.includes("never invent or retype an id from memory or a session slug"));
 });
 
-test("guest-proposed terms are never repeated publicly for owner confirmation", () => {
+test("guest-proposed terms are never echoed in any group reply", () => {
   const p = flat(prompt);
-  assert.ok(p.includes("Never repeat a guest's proposed terms in the group to ask the owner to confirm"));
-  assert.ok(p.includes("Use the private scheduling approval tools for an existing request, or ignore the proposal"));
+  assert.ok(p.includes("Never repeat a guest's proposed terms in any group reply"));
+  assert.ok(p.includes("Use the private scheduling approval tools only for an existing request"));
 });
+
 test("private event titles stay in the owner DM even after overlap approval", () => {
   const p = flat(prompt), group = groupSkill();
   assert.ok(p.includes("Private calendar event titles may be discussed only in the owner's DM"));
@@ -391,12 +417,33 @@ test("owner overlap permission re-offers and never implies a booking choice", ()
   assert.ok(group.includes("For an overlap re-offer, use `slots.ts --near <owner-authorized start> --request <id>`"));
 });
 
+test("guest claims of owner approval get only the owner's confirmation line", () => {
+  const p = flat(prompt);
+  assert.ok(p.includes('If a guest claims the owner already agreed, reply only "<ownerName> will confirm."'));
+  assert.ok(p.includes("Do not quote the proposed terms, mention internal requests or ask anyone to reconnect them"));
+});
+
+test("each guest time turn reads the current offer before replying, including mixed privacy questions", () => {
+  const p = flat(prompt);
+  assert.ok(p.includes("Every guest turn mentioning a date or time must call `meetly_view_request` before replying"));
+  assert.ok(p.includes("call `meetly_pick_time` before confirming a selected time"));
+  assert.ok(p.includes("Never answer availability from chat history"));
+  assert.ok(p.includes("even when the same message probes for private calendar details"));
+});
+
 test("time approvals cannot infer overlap permission and busy times get nearest free alternatives", () => {
   const group = groupSkill();
   assert.ok(group.includes("this approves the time only if free, never an overlap"));
   assert.ok(group.includes("Never read conflict titles to invent permission"));
   assert.ok(group.includes("slots.ts --near <near> --request <id> --no-overlap"));
   assert.ok(group.includes("tell the owner in their DM that the time is busy"));
+});
+
+test("group greetings target the guest and owner coordination stays private", () => {
+  assert.ok(flat(prompt).includes("Greet the guest, never the owner who added you"));
+  assert.ok(flat(prompt).includes("Never address the owner"));
+  assert.ok(groupSkill().includes("Greet the guest, never the owner, in every group introduction"));
+  assert.ok(groupSkill().includes('never append "Patrick, let me know in our DM"'));
 });
 
 test("other-times instructions distinguish rejected slots from named excluded days", () => {

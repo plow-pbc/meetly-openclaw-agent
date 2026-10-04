@@ -49,5 +49,5 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     return { error: "The answer is in the group, but its pending question could not be cleared. Do not resend; repair the ledger." };
   }
   return { answered: true, sent: !alreadyVisible, requestId: request.id,
-    ...(alreadyVisible ? { message: "The owner's answer is already visible here and the question is cleared. Acknowledge briefly." } : inGroup ? { silent: true } : {}) };
+    ...(inGroup ? { silent: true } : {}) };
 }
