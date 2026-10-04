@@ -464,3 +464,32 @@ test("DM name lookup finds only an unambiguous open request", () => {
   assert.equal(ambiguous.status, 1);
   assert.match(ambiguous.stderr, /ambiguous/i);
 });
+
+test("a DM name miss lists offered owner groups, including unnamed guests, with canonical chat ids", () => {
+  const home = tmpHome();
+  const ledger = addRequest(empty(), input({ origin: "owner-group", chatUid: "cht_MiXeD" }), T0, "unnamed");
+  const request = ledger.requests[0]!;
+  ledger.requests.push({ ...request, id: "dm", origin: "owner", chatUid: "dm-group" },
+    { ...request, id: "booked", status: "booked" }, { ...request, id: "asked", status: "asked" });
+  writeJson(join(home, "ledger.json"), ledger);
+  const result = cli("ledger.ts", ["find", "--name", "Bo"], { MEETLY_HOME: home });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.json.request, null);
+  assert.deepEqual(result.json.candidates, [request]);
+  const found = cli("ledger.ts", ["find", "--chat", "plow:cht_mixed"], { MEETLY_HOME: home });
+  assert.equal(found.status, 0, found.stderr);
+  assert.equal(found.json.request.id, "unnamed");
+  assert.equal(found.json.request.chatUid, "cht_MiXeD");
+  assert.equal(findByChat(ledger, "cht_mixed"), undefined, "guest authorization still requires the exact runtime chat id");
+});
+
+test("owner chat lookup refuses normalization collisions instead of choosing a meeting", () => {
+  const home = tmpHome();
+  const ledger = addRequest(empty(), input({ origin: "owner-group", chatUid: "cht_MiXeD" }), T0, "first");
+  ledger.requests.push({ ...ledger.requests[0]!, id: "second", chatUid: "cht_mixed", handle: "+15557654321" });
+  writeJson(join(home, "ledger.json"), ledger);
+  const ambiguous = cli("ledger.ts", ["find", "--chat", "cht_MIXED"], { MEETLY_HOME: home });
+  assert.equal(ambiguous.status, 1);
+  assert.match(ambiguous.stderr, /ambiguous/i);
+  assert.equal(cli("ledger.ts", ["find", "--chat", "cht_MiXeD"], { MEETLY_HOME: home }).json.request.id, "first");
+});

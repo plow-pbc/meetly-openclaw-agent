@@ -401,7 +401,13 @@ if (isMain(import.meta.url)) {
     switch (cmd) {
       case "find": {
         const ledger = readJson<Ledger>(path, EMPTY);
-        if (values.chat !== undefined) return { request: findByChat(ledger, values.chat, values.handle) ?? null };
+        if (values.chat !== undefined) {
+          const supplied = values.chat.trim().replace(/^plow:/, "");
+          const ids = [...new Set(ledger.requests.flatMap(r => r.chatUid ? [r.chatUid] : []))];
+          const matches = ids.includes(supplied) ? [supplied] : ids.filter(id => id.toLowerCase() === supplied.toLowerCase());
+          if (matches.length > 1) throw new Error("Ambiguous chat id; select the exact chatUid from the ledger.");
+          return { request: findByChat(ledger, matches[0] ?? supplied, values.handle) ?? null };
+        }
         if (values.handle !== undefined) {
           if (values.status !== undefined && !OPEN.includes(values.status as Status)) throw new Error(`--status must be ${OPEN.join(" or ")}`);
           return { request: findOpenByHandle(ledger, values.handle, values.status ? [values.status as Status] : OPEN) ?? null };
@@ -410,7 +416,10 @@ if (isMain(import.meta.url)) {
           const name = values.name.trim().toLowerCase();
           const matches = ledger.requests.filter(r => OPEN.includes(r.status) && name && r.name?.trim().toLowerCase() === name);
           if (matches.length > 1) throw new Error("Ambiguous guest name; ask the owner which meeting they mean.");
-          return { request: matches[0] ?? null };
+          return matches[0] ? { request: matches[0] } : {
+            request: null,
+            candidates: ledger.requests.filter(r => r.origin === "owner-group" && r.status === "offered"),
+          };
         }
         throw new Error("usage: ledger.ts find --handle H [--status asked|offered] | --chat U | --name N");
       }

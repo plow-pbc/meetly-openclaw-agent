@@ -56,7 +56,11 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
     const query = { ...busy, now, config, durationMin, locale, allowOverlap: existing?.allowOverlap };
     let { slots } = findSlots({ ...query, ...intersectConstraints(constraints, proposed) });
     const preferencesUnavailable = slots.length === 0;
-    if (preferencesUnavailable) slots = findSlots({ ...query, ...constraints }).slots;
+    if (preferencesUnavailable) {
+      const near = proposed?.from && proposed.from === proposed.to
+        ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
+      slots = findSlots({ ...query, ...constraints, near }).slots;
+    }
     if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
     const { request } = await offerRequest({ handle, name, topic, durationMin, constraints, proposed, format, location, locale,
       offered: slots.map(({ start, end }) => ({ start, end })),

@@ -41,7 +41,9 @@ free there.
    It resolves the guest and chat, searches within the owner's conditions and
    holds times itself using the saved or configured duration; never supply `durationMin` or `offered` intervals. On error, stop. Otherwise
    continue at step 6 with its returned offer; if `preferencesUnavailable` is true,
-   explain that the preferred times do not work and offer the returned alternatives.
+   explain that the preferred times do not work and offer the returned alternatives
+   in their returned order. For a busy requested date/time, the tool uses the same
+   nearest-time ranking as `slots.ts --near`, keeping all hard conditions.
    In the owner's DM, resolve one E.164 phone before any calendar read or hold. If none is
    known, ask the owner for a phone; if several match, ask which one. In
    either case, ask in the owner's main DM and end the turn.
@@ -116,11 +118,18 @@ actual request. Do not ask the guest or group what, when, format or place;
 do not search the calendar or create a request from this introduction.
 
 In the owner's DM, first run `ledger.ts find --name <guest name>` for a named meeting.
-Reuse the matched open request's handle and chat. If ambiguous, ask which meeting;
-only when no request matches, resolve the recipient from Contacts and ask if ambiguous.
+Reuse the matched open request's handle and chat. If ambiguous, ask which meeting.
+If the name has no match and `candidates` lists open owner-group offers, ask which meeting
+using their guest name or handle and topic; wait for the owner's selection. Do not guess
+another contact or ask them to resend the request in the group.
+Copy the selected request's exact `handle` and `chatUid` from the ledger for reads,
+writes and delivery; never invent or retype an id from memory or a session slug.
+Only when no request matches and no candidates remain, resolve the recipient from
+Contacts and ask if ambiguous.
 In a group, let `meetly_offer_owner_group` resolve the recipient; do not look up
 Contacts or ask for a phone. Read
-`ledger.ts find --chat <this chat uid>` first, including booked or closed requests;
+`ledger.ts find --chat <runtime chat uid>` first, including booked or closed requests;
+use the runtime chat id and the canonical `chatUid` returned by the ledger;
 for a pending question or time approval follow "Owner confirms". No match means
 offer only after the owner makes a scheduling request. The group tool reuses a
 same-handle unlinked `asked` request and binds it to this chat.

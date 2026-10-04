@@ -880,3 +880,15 @@ test("owner-group ignores model duration and saves the owner's guest name for DM
   assert.equal(found.json.request.id, f.request().id);
   assert.equal(found.json.request.chatUid, "chat-one");
 });
+
+test("owner-group busy requested times rank nearby alternatives while retaining hard bounds", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] }); f.events.clear();
+  f.events.set("busy", event("busy", "2026-10-13T12:00:00Z", "2026-10-13T13:00:00Z"));
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+    topic: "call", constraints: { days: ["tue"], from: "2026-10-06", to: "2026-10-13", after: "11:00", before: "15:00" },
+    proposed: { from: "2026-10-13", to: "2026-10-13", after: "12:00", before: "12:30" },
+  });
+  assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true, JSON.stringify(result));
+  assert.deepEqual(f.request().offered.map(o => o.start), ["2026-10-13T11:30:00+00:00", "2026-10-13T11:00:00+00:00", "2026-10-13T13:00:00+00:00"]);
+});
