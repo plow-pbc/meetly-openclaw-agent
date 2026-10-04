@@ -102,7 +102,7 @@ test("uncertain answer delivery is waiting on Meetly and nudges once for that at
   assert.equal(reserveNudges(batch.ledger, T0 + 2 * HOUR).text, null);
 });
 
-for (const accountId of ["chat", "email"] as const) test(`${accountId} guest reply observation uses runtime chat, sender and time, including tool-free acknowledgements`, async () => {
+for (const [accountId, senderId] of [["chat", input.handle], ["email", "alex@example.net"], ["email", "ea@example.net"]] as const) test(`${accountId} reply from ${senderId} uses runtime chat, sender and time, including tool-free acknowledgements`, async () => {
   const handle = accountId === "email" ? "alex@example.net" : input.handle;
   let ledger = addRequest(empty(), { ...input, channel: accountId === "email" ? "email" : "text", handle }, T0, "offer");
   let handler!: (event: any, ctx: any) => Promise<void>;
@@ -110,8 +110,9 @@ for (const accountId of ["chat", "email"] as const) test(`${accountId} guest rep
   registerPipelineHooks({ on(name: string, callback: typeof handler) { assert.equal(name, "message_received"); handler = callback; }, logger: { info(text: string) { errors.push(text); } } }, async (event, ctx) => {
     ledger = recordGuestReply(ledger, ctx.conversationId, ctx.senderId ?? event.senderId ?? event.from, event.timestamp);
   });
-  const ctx = { channelId: "plow", accountId, conversationId: "Chat-A", senderId: handle };
-  for (const context of [{ ...ctx, channelId: "other" }, { ...ctx, accountId: "other" }, { ...ctx, conversationId: "" }, { ...ctx, conversationId: "chat-a" }, { ...ctx, senderId: "plow-owner" }]) {
+  const ctx = { channelId: "plow", accountId, conversationId: "Chat-A", senderId };
+  for (const context of [{ ...ctx, channelId: "other" }, { ...ctx, accountId: "other" }, { ...ctx, conversationId: "" }, { ...ctx, conversationId: "chat-a" }, { ...ctx, senderId: "plow-owner" }, { ...ctx, senderId: "" },
+    ...(accountId === "chat" ? [{ ...ctx, senderId: "+15557654321" }] : [])]) {
     await handler({ content: "Thanks!", timestamp: T0 + HOUR }, context);
     assert.equal(request(ledger).lastGuestReplyAt, undefined);
   }

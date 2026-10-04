@@ -218,7 +218,7 @@ export function sameRequest(a: Request | undefined, b: Request | undefined): boo
 export function recordGuestReply(ledger: Ledger, chat: string, sender: string, at: number): Ledger {
   if (!Number.isFinite(at)) return ledger;
   const request = findByChat(ledger, chat);
-  if (!request || !sameHandle(request.handle, sender) || !["offered", "booked"].includes(request.status)
+  if (!request || (request.channel === "email" ? !sender || sender === "plow-owner" : !sameHandle(request.handle, sender)) || !["offered", "booked"].includes(request.status)
     || (request.lastGuestReplyAt !== undefined && at <= Date.parse(request.lastGuestReplyAt)) || at < Date.parse(request.reoffer?.offeredAt ?? request.offeredAt ?? request.createdAt)) return ledger;
   return { requests: ledger.requests.map(r => r.id === request.id
     ? appendLog({ ...r, lastGuestReplyAt: new Date(at).toISOString() }, "Guest replied", at) : r) };
