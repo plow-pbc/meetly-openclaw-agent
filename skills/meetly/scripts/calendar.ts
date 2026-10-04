@@ -11,6 +11,7 @@ import { holdHours, loadConfig } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
 import { expiredRequests, findOpenByHandle, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
+import { formatMeetingTime } from "./time.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
 import { readJson, updateJson, withLock, writeJson } from "./store.ts";
@@ -310,7 +311,10 @@ export async function calendarAction(id: string, input: CalendarAction, options:
     await cleanup();
     request = requestById(id);
     return { request, invitationSent: completed.input.action === "book" && !!completed.input.attendees, meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
-  });
+  }).then(result => ({
+    ...result,
+    ...(result.request.booked ? { confirmationTime: formatMeetingTime(result.request.booked.start, loadConfig().timezone, result.request.locale) } : {}),
+  }));
 }
 
 export type OfferInput = Omit<NewRequest, "durationMin" | "offered"> & {

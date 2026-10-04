@@ -33,10 +33,11 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `drop\|expire\|cancel\|cleanup\|resume --id X` | `{request, skipped?}`: close an offer, cancel a booked event, retry cleanup, or reconcile an unresolved write |
 | `reminder-check.ts` | `--id X --event-file F [--lead-min N]` | `{action:"send"\|"wait"\|"cancelled"\|"no-link"\|"skip", send?:{chatUid, meetUrl, name, locale, time, minutesToStart}}` |
 | | `--id X --sent` | `{request}`: the reminder went out; refused if already handled |
-| `busy.ts` | `--fetch [--allow-overlap-title <owner-supplied name>]` (reads the Mac, writes `tmp/busy.json`) | `{file, busy:<count>, degraded, unknownAfter?}` |
+| `busy.ts` | `--fetch [--from ISO --to ISO] [--allow-overlap-title <owner-supplied name>]` (reads the Mac, writes `tmp/busy.json`) | `{file, busy:<count>, degraded, unknownAfter?}` |
 | | `--in F [--in F2…] [--max 100]` | `{busy:[{start,end,id,account}], unknownAfter?, degraded}` |
-| `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], unknownAfter?, degraded}` |
-| | `--in busy.json --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
+| `time.ts` | `next_week --anchor ISO` | `{from,to}` in the owner's timezone, anchored to the source message timestamp; pass weekdays separately |
+| `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--meal lunch\|dinner\|coffee] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--week this\|next] [--asap] [--start-time HH:MM] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], durationMin, resolvedConstraints, incomplete?, unknownAfter?, degraded}` |
+| | `--in busy.json --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
 | `owner-chat.ts` | | `{chatUid}`: the owner's DM |
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
 
@@ -52,8 +53,8 @@ Notes:
   persists each write's identity, and commits the ledger from the actual result.
   An unresolved write must be resumed, never replayed or bypassed. Reminders
   read the event from a saved calendar read; never copy an id, time or link by hand.
-- `slots.ts` only offers times inside the owner's days and window. Requests
-  only narrow them.
+- `slots.ts` keeps the owner's days; `--meal` replaces their window with the
+  meal window. Save `meal` with the request for re-offers and guest booking.
 - Use each slot's `label` and `dayOfWeek` as printed; never work out a
   weekday yourself. Pass `--locale` for whoever reads the message (the other
   person's locale, like `pt-BR` or `en-US`, from their language or their

@@ -28,9 +28,9 @@ const labels = (over: Partial<SlotQuery> = {}) => findSlots(q(over)).slots.map((
 test("no busy: spread over the first days, after the minimum notice", () => {
   const { slots, unknownAfter } = findSlots(q());
   assert.deepEqual(slots, [
-    { start: "2026-09-28T10:00:00-03:00", end: "2026-09-28T10:30:00-03:00", dayOfWeek: "mon", label: "mon 28/9 10:00" },
-    { start: "2026-09-29T09:00:00-03:00", end: "2026-09-29T09:30:00-03:00", dayOfWeek: "tue", label: "tue 29/9 09:00" },
-    { start: "2026-09-30T09:00:00-03:00", end: "2026-09-30T09:30:00-03:00", dayOfWeek: "wed", label: "wed 30/9 09:00" },
+    { start: "2026-09-28T10:00:00-03:00", end: "2026-09-28T10:30:00-03:00", dayOfWeek: "mon", label: "mon 28/9 10:00 America/Sao_Paulo" },
+    { start: "2026-09-29T09:00:00-03:00", end: "2026-09-29T09:30:00-03:00", dayOfWeek: "tue", label: "tue 29/9 09:00 America/Sao_Paulo" },
+    { start: "2026-09-30T09:00:00-03:00", end: "2026-09-30T09:30:00-03:00", dayOfWeek: "wed", label: "wed 30/9 09:00 America/Sao_Paulo" },
   ]);
   assert.equal(unknownAfter, undefined);
 });
@@ -48,18 +48,18 @@ test("busy time is skipped unless its event may be overlapped", () => {
 });
 
 test("weekends and after-hours are skipped", () => {
-  assert.deepEqual(labels({ now: Date.parse("2026-10-02T17:00:00-03:00") }), ["mon 5/10 09:00", "tue 6/10 09:00", "wed 7/10 09:00"]);
+  assert.deepEqual(labels({ now: Date.parse("2026-10-02T17:00:00-03:00") }), ["mon 5/10 09:00 America/Sao_Paulo", "tue 6/10 09:00 America/Sao_Paulo", "wed 7/10 09:00 America/Sao_Paulo"]);
 });
 
 test("request days intersect the config days and after narrows the window", () => {
-  assert.deepEqual(labels({ days: ["thu"], after: "13:00" }), ["thu 1/10 13:00", "thu 1/10 13:30", "thu 1/10 14:00"]);
-  assert.deepEqual(labels({ days: ["thu"], after: "13:10", before: "14:00" }), ["thu 1/10 13:30"]);
+  assert.deepEqual(labels({ days: ["thu"], after: "13:00" }), ["thu 1/10 13:00 America/Sao_Paulo", "thu 1/10 13:30 America/Sao_Paulo", "thu 1/10 14:00 America/Sao_Paulo"]);
+  assert.deepEqual(labels({ days: ["thu"], after: "13:10", before: "14:00" }), ["thu 1/10 13:30 America/Sao_Paulo"]);
 });
 
 test("requests only narrow the configured days and window", () => {
   assert.deepEqual(starts({ days: ["sat"] }), []);
   assert.deepEqual(starts({ days: ["mon"], after: "19:00", before: "21:00" }), []);
-  assert.deepEqual(labels({ after: "07:00", before: "09:30", count: 2 }), ["tue 29/9 09:00", "wed 30/9 09:00"]);
+  assert.deepEqual(labels({ after: "07:00", before: "09:30", count: 2 }), ["tue 29/9 09:00 America/Sao_Paulo", "wed 30/9 09:00 America/Sao_Paulo"]);
 });
 
 test("excluded starts are not offered", () => {
@@ -68,14 +68,14 @@ test("excluded starts are not offered", () => {
 
 test("nothing is offered past the end of what was read", () => {
   const r = findSlots(q({ unknownAfter: "2026-09-29T09:15:00-03:00" }));
-  assert.deepEqual(r.slots.map((s) => s.label), ["mon 28/9 10:00", "mon 28/9 10:30", "mon 28/9 11:00"]);
+  assert.deepEqual(r.slots.map((s) => s.label), ["mon 28/9 10:00 America/Sao_Paulo", "mon 28/9 10:30 America/Sao_Paulo", "mon 28/9 11:00 America/Sao_Paulo"]);
   assert.equal(r.unknownAfter, "2026-09-29T09:15:00-03:00");
 });
 
 test("a date range narrows a longer horizon", () => {
   const config = { ...CONFIG, horizonDays: 14 };
   const r = findSlots(q({ config, from: "2026-10-05", to: "2026-10-06" }));
-  assert.deepEqual(r.slots.map((s) => s.label), ["mon 5/10 09:00", "mon 5/10 09:30", "tue 6/10 09:00"]);
+  assert.deepEqual(r.slots.map((s) => s.label), ["mon 5/10 09:00 America/Sao_Paulo", "mon 5/10 09:30 America/Sao_Paulo", "tue 6/10 09:00 America/Sao_Paulo"]);
 });
 
 test("a long meeting must end inside the window", () => {
@@ -101,9 +101,9 @@ test("daylight saving ends: 09:00 stays 09:00 local", () => {
 });
 
 test("labels follow the other person's locale", () => {
-  assert.deepEqual(labels({ locale: "pt-BR" }), ["seg., 28/09, 10:00", "ter., 29/09, 09:00", "qua., 30/09, 09:00"]);
-  assert.deepEqual(labels({ locale: "en-US", count: 1 }), ["Mon, 9/28, 10:00 AM"]);
-  assert.deepEqual(labels({ locale: "de-DE", count: 1 }), ["Mo., 28.9., 10:00"]);
+  assert.deepEqual(labels({ locale: "pt-BR" }), ["seg., 28/09, 10:00 BRT", "ter., 29/09, 09:00 BRT", "qua., 30/09, 09:00 BRT"]);
+  assert.deepEqual(labels({ locale: "en-US", count: 1 }), ["Mon, 9/28, 10:00 AM GMT-3"]);
+  assert.deepEqual(labels({ locale: "de-DE", count: 1 }), ["Mo., 28.9., 10:00 GMT-3"]);
   assert.equal(findSlots(q({ locale: "en-US" })).slots[0]!.dayOfWeek, "mon");
   assert.throws(() => findSlots(q({ locale: "not a locale!" })), /unknown locale/);
 });
@@ -123,11 +123,11 @@ test("the CLI reads busy.ts output and the stored config", () => {
   assert.equal(r.json.slots[0].start, "2026-09-28T11:00:00-03:00");
   assert.deepEqual(r.json.degraded, ["other@example.com"]);
   const allowed = cli("slots.ts", ["--in", busyFile, ...now, "--allow-overlap", '{"account":"jean@example.com","id":"weekly"}', "--count", "1"], env);
-  assert.deepEqual(allowed.json.slots.map((s: { label: string }) => s.label), ["mon 28/9 10:00"]);
+  assert.deepEqual(allowed.json.slots.map((s: { label: string }) => s.label), ["mon 28/9 10:00 America/Sao_Paulo"]);
   const at = cli("slots.ts", ["--in", busyFile, ...now.slice(0, 2), "--at", "2026-10-03T10:00:00-03:00", "--duration", "60", "--locale", "pt-BR"], env);
   assert.equal(at.status, 0, at.stderr);
   assert.deepEqual(at.json, {
-    slot: { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T11:00:00-03:00", dayOfWeek: "sat", label: "sáb., 03/10, 10:00" },
+    slot: { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T11:00:00-03:00", dayOfWeek: "sat", label: "sáb., 03/10, 10:00 BRT" },
     free: true,
     outsideHours: true,
     degraded: ["other@example.com"],
@@ -141,7 +141,7 @@ test("the CLI reads busy.ts output and the stored config", () => {
   assert.equal(cli("slots.ts", ["--in", authorizedFile, ...now, "--at", "2026-09-28T10:00:00-03:00"], env).json.free, true);
   assert.doesNotMatch(authorized.stdout, /weekly|allowOverlap/);
   const us = cli("slots.ts", ["--in", busyFile, ...now, "--locale", "en-US", "--count", "1"], env);
-  assert.deepEqual(us.json.slots.map((s: { label: string }) => s.label), ["Mon, 9/28, 11:00 AM"]);
+  assert.deepEqual(us.json.slots.map((s: { label: string }) => s.label), ["Mon, 9/28, 11:00 AM GMT-3"]);
   assert.equal(cli("slots.ts", ["--in", busyFile, "--locale", "??"], env).status, 1);
   assert.equal(cli("slots.ts", ["--in", busyFile, "--days", "someday"], env).status, 1);
   assert.equal(cli("slots.ts", ["--in", busyFile, "--from", "5/10"], env).status, 1);
@@ -160,11 +160,42 @@ test("the CLI reads busy.ts output and the stored config", () => {
   }
 });
 
+test("owner re-offer uses saved week bounds and ignores only its own holds", () => {
+  const home = tmpHome();
+  const account = CONFIG.defaultAccount;
+  writeJson(join(home, "config.json"), { ...CONFIG, horizonDays: 21 });
+  const offered = [
+    { start: "2026-10-06T11:30:00-03:00", end: "2026-10-06T12:00:00-03:00", holdId: "hold-1", account },
+    { start: "2026-10-06T12:00:00-03:00", end: "2026-10-06T12:30:00-03:00", holdId: "hold-2", account },
+  ];
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
+    origin: "owner", handle: "+15550107812", topic: "lunch", durationMin: 30, offered,
+    constraints: { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-11", after: "11:30", before: "14:00" },
+  }, NOW, "lunch"));
+  const busyFile = join(home, "busy.json");
+  const busy = offered.map(o => ({ start: o.start, end: o.end, id: o.holdId, account }));
+  const args = ["--in", busyFile, "--request", "lunch", "--now", "2026-10-02T20:00:00-03:00", "--duration", "60", "--days", "tue", "--from", "2026-10-01", "--to", "2026-10-20"];
+  const run = (extra: object[] = []) => {
+    writeJson(busyFile, { busy: [...busy, ...extra], degraded: [] });
+    return cli("slots.ts", args, { MEETLY_HOME: home });
+  };
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.json.slots[0].start, offered[0]!.start);
+  assert.equal(result.json.slots[0].end, offered[1]!.end);
+  assert.ok(result.json.slots.every((s: { start: string; end: string }) => s.start.startsWith("2026-10-06") && s.end.slice(11, 16) <= "14:00"));
+  const blocked = run([{ id: "hold-1", account: "another@example.com", start: "2026-10-06T11:30:00-03:00", end: "2026-10-06T14:00:00-03:00" }]);
+  assert.equal(blocked.status, 0, blocked.stderr);
+  assert.deepEqual(blocked.json.slots, []);
+  const unknown = cli("slots.ts", args.map(a => a === "lunch" ? "missing" : a), { MEETLY_HOME: home });
+  assert.notEqual(unknown.status, 0);
+});
+
 test("checkTime: a time the person insists on", () => {
   const check = (start: string, over: Partial<Parameters<typeof checkTime>[0]> = {}) =>
     checkTime({ now: NOW, config: CONFIG, durationMin: 30, busy: [], start, ...over });
   assert.deepEqual(check("2026-09-28T10:00:00-03:00"), {
-    slot: { start: "2026-09-28T10:00:00-03:00", end: "2026-09-28T10:30:00-03:00", dayOfWeek: "mon", label: "mon 28/9 10:00" },
+    slot: { start: "2026-09-28T10:00:00-03:00", end: "2026-09-28T10:30:00-03:00", dayOfWeek: "mon", label: "mon 28/9 10:00 America/Sao_Paulo" },
     free: true,
     outsideHours: false,
   });
@@ -183,7 +214,7 @@ test("checkTime: a time the person insists on", () => {
   assert.equal(check("2026-10-03T10:00:00-03:00", { busy, allowOverlap: [{ account: "jean@example.com", id: "gym" }] }).free, true);
   assert.equal(check("2026-09-28T09:00:00-03:00").reason, "too-soon");
   assert.equal(check("2026-10-03T10:00:00-03:00", { unknownAfter: "2026-10-02T00:00:00-03:00" }).reason, "unknown");
-  assert.equal(check("2026-10-03T10:00:00-03:00", { locale: "en-US" }).slot.label, "Sat, 10/3, 10:00 AM");
+  assert.equal(check("2026-10-03T10:00:00-03:00", { locale: "en-US" }).slot.label, "Sat, 10/3, 10:00 AM GMT-3");
   assert.equal(check("2026-10-03T10:00").slot.start, "2026-10-03T10:00:00-03:00");
   assert.throws(() => check("someday"), /not a time/);
 });
@@ -221,4 +252,56 @@ test("slot planning uses the owner's configured duration when omitted", () => {
   assert.equal(Date.parse(slot.end) - Date.parse(slot.start), 45 * 60_000);
   const checked = checkTime({ ...query, start: slot.start });
   assert.equal(Date.parse(checked.slot.end) - Date.parse(checked.slot.start), 45 * 60_000);
+});
+
+test("explicit dates beyond the default horizon are searched", () => {
+  assert.deepEqual(starts({ from: "2026-10-29", to: "2026-10-29" }), [
+    "2026-10-29T09:00:00-03:00", "2026-10-29T09:30:00-03:00", "2026-10-29T10:00:00-03:00",
+  ]);
+  assert.equal(starts({ from: "2026-10-29" })[0], "2026-10-29T09:00:00-03:00");
+});
+
+test("unread explicit dates return incomplete coverage, not apparent unavailability", () => {
+  const result = findSlots(q({ from: "2026-10-29", to: "2026-10-29",
+    coverage: { from: "2026-09-28T00:00:00Z", to: "2026-10-12T00:00:00Z" } }));
+  assert.deepEqual(result.slots, []);
+  assert.ok(result.incomplete);
+  assert.equal(result.incomplete.reason, "calendar-coverage");
+  assert.equal(result.incomplete.requiredCoverage.from, "2026-10-29T03:00:00.000Z");
+  assert.equal(result.incomplete.requiredCoverage.to, "2026-10-30T03:00:00.000Z");
+});
+
+test("typed weeks resolve in the owner's zone on Sunday and cannot carry substituted dates", () => {
+  const query = q({ config: { ...CONFIG, timezone: "America/Los_Angeles" }, now: Date.parse("2026-10-05T02:12:33Z") });
+  const result = findSlots({ ...query, week: "next", days: ["mon", "tue", "wed"] });
+  assert.deepEqual(result.resolvedConstraints, { from: "2026-10-05", to: "2026-10-11", days: ["mon", "tue", "wed"] });
+  assert.deepEqual(result.slots.map(s => s.start.slice(0, 10)), ["2026-10-05", "2026-10-06", "2026-10-07"]);
+  assert.throws(() => findSlots({ ...query, week: "next", from: "2026-10-12", to: "2026-10-14" }), /week.*from.*to/i);
+  assert.throws(() => findSlots({ ...query, week: "later" } as any), /week/);
+  const current = findSlots({ ...query, week: "this" });
+  assert.deepEqual(current.resolvedConstraints, { from: "2026-09-28", to: "2026-10-04" });
+  assert.deepEqual(current.slots, []);
+});
+
+test("ASAP ranks consecutive earliest starts today, retaining minimum notice and conflicts", () => {
+  const query = q({ busy: [{ start: "2026-09-28T10:00:00-03:00", end: "2026-09-28T10:30:00-03:00" }] });
+  const result = findSlots({ ...query, asap: true });
+  assert.deepEqual(result.slots.map(s => s.start), [
+    "2026-09-28T10:30:00-03:00", "2026-09-28T11:00:00-03:00", "2026-09-28T11:30:00-03:00",
+  ]);
+  for (const slot of result.slots) assert.equal(checkTime({ ...query, start: slot.start }).free, true);
+});
+
+test("CLI searches an asked request using a typed next week", () => {
+  const home = tmpHome();
+  writeJson(join(home, "config.json"), { ...CONFIG, timezone: "America/Los_Angeles" });
+  writeJson(join(home, "busy.json"), { busy: [], coverage: { from: "2026-10-05T07:00:00Z", to: "2026-10-12T07:00:00Z" } });
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
+    status: "asked", origin: "owner", handle: "+15550107812", topic: "call", durationMin: 30,
+    constraints: { days: ["mon", "tue", "wed"] }, offered: [],
+  }, Date.parse("2026-10-05T02:12:33Z"), "asked-week"));
+  const result = cli("slots.ts", ["--in", join(home, "busy.json"), "--request", "asked-week", "--week", "next", "--now", "2026-10-05T02:12:33Z"], { MEETLY_HOME: home });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.json.slots[0].start, "2026-10-05T09:00:00-07:00");
+  assert.equal(result.json.resolvedConstraints.to, "2026-10-11");
 });

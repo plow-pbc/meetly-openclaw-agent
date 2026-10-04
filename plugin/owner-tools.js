@@ -35,10 +35,12 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
-    description: "Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals, guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread; participants determine identity. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless the owner requests a change. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Reply here using the returned askDetails flag. Owner only.",
+    description: "Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group. For this/next week supply week, not computed dates. For earliest available starts supply asap:true. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals, guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread; participants determine identity. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless the owner requests a change. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Reply here using the returned askDetails flag. Owner only.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
+      week: { type: "string", enum: ["this", "next"] },
+      asap: { type: "boolean" },
       durationMin: { type: "integer", minimum: 1, description: "Your chosen meeting duration in minutes, recorded on the request." },
-      topic: string, name: { type: "string", description: "Guest name explicitly given by the owner in this thread, if known." },
+      topic: string, meal: { type: "string", enum: ["lunch", "dinner", "coffee"] }, name: { type: "string", description: "Guest name explicitly given by the owner in this thread, if known." },
       constraints, proposed: constraints, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
       location: string, locale: string,
     } },

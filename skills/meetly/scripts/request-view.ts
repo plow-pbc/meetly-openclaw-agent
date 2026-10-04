@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
 import { loadConfig, type Config } from "./config.ts";
 import type { Ledger, Request } from "./ledger.ts";
+import { formatMeetingTime } from "./time.ts";
 import { file } from "./paths.ts";
 import { localeFormatter } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -26,9 +27,9 @@ export function view(request: Request, config: Config) {
   const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });
   return {
     askDetails, status: request.status, origin: request.origin, ownerName: config.ownerName, timezone: config.timezone,
-    topic: request.topic, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
+    topic: request.topic, meal: request.meal, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
     offered: request.status === "offered" ? request.offered.map(time) : [],
-    ...(request.booked ? { booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
+    ...(request.booked ? { confirmationTime: formatMeetingTime(request.booked.start, config.timezone, request.locale), booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
     ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
     ...(request.holdCleanup?.length ? { cleanupPending: true } : {}),
   };
