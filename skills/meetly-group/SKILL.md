@@ -70,10 +70,13 @@ free there.
    - **`unknownAfter` is set:** offer only what came back.
 4. Save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,
    `name`, `sourceRowid`, known `chatUid`, `topic`, `location`, optional `durationMin`,
-   `constraints` (the owner's conditions), `proposed`, `allowOverlapTitles`, `format`,
+   `constraints` (the owner's conditions), `proposed`, `format`,
    `locale`, and `offered[]` with each slot's `start`/`end`. The writer supplies
-   the configured duration/account and resolves only owner-authorized overlap titles.
-   Overlap permission is available only from the owner's DM.
+   the configured duration/account. To authorize an overlap explicitly requested in
+   the owner's main DM, call `meetly_offer_owner_dm` with these same fields plus
+   `allowOverlapTitles` instead of the raw command. The registered tool checks the
+   runtime owner and main-DM session and resolves event titles internally.
+   Raw calendar commands reject `allowOverlap` and `allowOverlapTitles`.
    Do not supply hold ids.
 5. The writer creates the holds and saves the offer under the existing request
    id, preserving its chat link. It re-keys an inbound request with the same
@@ -120,27 +123,26 @@ do not search the calendar or create a request from this introduction.
 
 In the owner's DM, first run `ledger.ts find --name <guest name>` for a named meeting.
 Reuse the matched open request's handle and chat. If ambiguous, ask which meeting.
-If the name has no match and `candidates` lists open owner-group offers, ask which meeting
-using their guest name or handle and topic; wait for the owner's selection. Do not guess
-another contact or ask them to resend the request in the group.
-Copy the selected request's exact `handle` and `chatUid` from the ledger for reads,
-writes and delivery; never invent or retype an id from memory or a session slug.
-Only when no request matches and no candidates remain, resolve the recipient from
-Contacts and ask if ambiguous.
+When no request matches, resolve the recipient from Contacts and ask if ambiguous.
+Unnamed owner-group requests stay in their originating group.
 In a group, let `meetly_offer_owner_group` resolve the recipient; do not look up
 Contacts or ask for a phone. Read
 `ledger.ts find --chat <runtime chat uid>` first, including booked or closed requests;
-use the runtime chat id and the canonical `chatUid` returned by the ledger;
+use the exact runtime chat uid;
 for a pending question or time approval follow "Owner confirms". No match means
 offer only after the owner makes a scheduling request. The group tool reuses a
 same-handle unlinked `asked` request and binds it to this chat.
 
-For an explicit owner-stated length, update the open request with
-`ledger.ts update --id <saved id> --json '{"durationMin":<minutes>,"topic":"<matching topic>"}'`,
-then re-offer through `meetly_offer_owner_group`. Keep duration wording in `topic`
-consistent. If this is a new group request, create its initial offer without replying,
-find its saved id using the runtime chat uid, apply the duration update, and re-offer
-before delivering any times. Do not update duration when the owner did not state one.
+For an explicit owner-stated length on an open request, read busy times and run
+`slots.ts --request <saved id> --duration <minutes>` with the busy file and saved
+conditions as in "Offer times". Then run
+`calendar.ts duration --id <saved id> --json '{"durationMin":<minutes>,"topic":"<matching topic>","offered":[{"start":"<slot.start>","end":"<slot.end>"}]}'`
+with the returned slots. This operation commits duration, topic and replacement
+holds together under the calendar lock; use only its returned request for delivery.
+Keep duration wording in `topic` consistent. For a new group request, create its
+initial offer without replying, find its saved id using the exact runtime chat uid,
+and run this operation before delivering times. Do not change duration when the
+owner did not state one. Never patch duration with `ledger.ts update`.
 
 Extract the topic, proposed times, hard conditions, explicit duration, format,
 place. Extract owner-authorized overlap titles only in the owner's DM.

@@ -90,7 +90,7 @@ export type NewRequest = Omit<Request,
   | "notifyAttemptedAt" | "notifiedAt" | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
-  "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale" | "durationMin">> & {
+  "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale">> & {
   pendingOwner?: PendingOwner | null;
   booked?: Booked | null;
   meetUrl?: string | null;
@@ -103,7 +103,7 @@ const FORMATS: readonly Format[] = ["meet", "in_person", "phone", "unknown"];
 const OUTCOMES: readonly Reminder["outcome"][] = ["sent", "cancelled", "no-link"];
 const PATCH_KEYS = [
   "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "topic", "pendingOwner",
-  "format", "locale", "durationMin", "booked", "meetUrl", "reminder",
+  "format", "locale", "booked", "meetUrl", "reminder",
 ];
 // Keys a patch can clear with null.
 const NULLABLE = ["pendingOwner", "booked", "meetUrl", "reminder"] as const;
@@ -269,9 +269,6 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
       throw new Error("pendingOwner needs askedAt and either a short question or valid start and end");
     }
   }
-  if (patch.durationMin !== undefined && (!Number.isInteger(patch.durationMin) || patch.durationMin <= 0)) {
-    throw new Error("durationMin must be a positive whole number");
-  }
   if (patch.format !== undefined) checkFormat(patch.format);
   if (patch.locale !== undefined) checkLocale(patch.locale);
   if (patch.booked) checkBooked(patch.booked);
@@ -283,7 +280,6 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   if (index < 0) throw new Error(`no request ${id}`);
   const at = new Date(now).toISOString();
   const updated: Request = { ...ledger.requests[index]!, updatedAt: at };
-  if (patch.durationMin !== undefined && !OPEN.includes(updated.status)) throw new Error("duration can only be changed on an open request");
   if (updated.status === "asked" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
   if (updated.chatUid && patch.chatUid !== undefined && patch.chatUid !== updated.chatUid) throw new Error("a request cannot move to another chat");
   for (const [key, value] of Object.entries(patch)) {
@@ -406,11 +402,8 @@ if (isMain(import.meta.url)) {
       case "find": {
         const ledger = readJson<Ledger>(path, EMPTY);
         if (values.chat !== undefined) {
-          const supplied = values.chat.trim().replace(/^plow:/, "");
-          const ids = [...new Set(ledger.requests.flatMap(r => r.chatUid ? [r.chatUid] : []))];
-          const matches = ids.includes(supplied) ? [supplied] : ids.filter(id => id.toLowerCase() === supplied.toLowerCase());
-          if (matches.length > 1) throw new Error("Ambiguous chat id; select the exact chatUid from the ledger.");
-          return { request: findByChat(ledger, matches[0] ?? supplied, values.handle) ?? null };
+          const chat = values.chat.trim().replace(/^plow:/, "");
+          return { request: findByChat(ledger, chat, values.handle) ?? null };
         }
         if (values.handle !== undefined) {
           if (values.status !== undefined && !OPEN.includes(values.status as Status)) throw new Error(`--status must be ${OPEN.join(" or ")}`);
@@ -420,21 +413,20 @@ if (isMain(import.meta.url)) {
           const name = values.name.trim().toLowerCase();
           const matches = ledger.requests.filter(r => OPEN.includes(r.status) && name && r.name?.trim().toLowerCase() === name);
           if (matches.length > 1) throw new Error("Ambiguous guest name; ask the owner which meeting they mean.");
-          return matches[0] ? { request: matches[0] } : {
-            request: null,
-            candidates: ledger.requests.filter(r => r.origin === "owner-group" && r.status === "offered"),
-          };
+          return { request: matches[0] ?? null };
         }
         throw new Error("usage: ledger.ts find --handle H [--status asked|offered] | --chat U | --name N");
       }
       case "add": {
         const input = jsonArg(values);
+        if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => addRequest(l, input, now, id));
         return { request: ledger.requests.find((r) => r.id === id) };
       }
       case "save": {
         const input = jsonArg(values);
+        if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
         return { request: findOpenByHandle(ledger, input.handle) ?? findOpenBySource(ledger, input) };
@@ -442,7 +434,7 @@ if (isMain(import.meta.url)) {
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
         const patch = jsonArg(values);
-        for (const key of ["status", "eventId", "offered", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location"]) {
+        for (const key of ["status", "eventId", "offered", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location", "durationMin", "allowOverlap"]) {
           if (key in patch) throw new Error(`${key} is managed by calendar.ts or reminder-check.ts`);
         }
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => updateRequest(l, values.id!, patch, now));

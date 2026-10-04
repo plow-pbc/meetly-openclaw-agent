@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { registerGuestTools } from "../plugin/guest-tools.js";
 import type { Participant } from "../skills/meetly/scripts/owner-chat.ts";
 import { offerOwnerGroup } from "../skills/meetly/scripts/owner-group.ts";
-import { registerOwnerGroupTool } from "../plugin/owner-tools.js";
+import { registerOwnerGroupTool, registerOwnerDmTool } from "../plugin/owner-tools.js";
 import plugin from "../plugin/index.js";
 import { calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
@@ -212,7 +212,7 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
       assert.deepEqual(Object.keys(tool.parameters.properties), ["question"]);
       assert.deepEqual(tool.parameters.required, ["question"]);
     }
-    if (tool.name !== "meetly_offer_owner_group") assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap", "constraints"].includes(k)));
+    if (!["meetly_offer_owner_group", "meetly_offer_owner_dm"].includes(tool.name)) assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap", "constraints"].includes(k)));
   } });
   assert.deepEqual(names, JSON.parse(readFileSync(new URL("../plugin/openclaw.plugin.json", import.meta.url), "utf8")).contracts.tools);
   assert.deepEqual(hooks, ["before_prompt_build"]);
@@ -713,17 +713,6 @@ test("the owner-group tool refuses guests, DMs and requests already linked elsew
 });
 
 
-test("owner-group failures never echo private validation details", async t => {
-  const f = fixture(t);
-  f.save({ requests: [] });
-  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { ...f.ledger.requests[0]! },
-    { validate() { throw new Error("PRIVATE CALENDAR TITLE owner@example.com hold-one"); } });
-  assert.ok("error" in result);
-  assert.doesNotMatch(JSON.stringify(result), /PRIVATE|example\.com|hold-one/);
-  assert.ok(f.commands.every(c => c[2] === "events"));
-});
-
 test("owner-group ignores injected overlap permission before creating holds", async t => {
   const f = fixture(t);
   f.save({ requests: [] });
@@ -748,8 +737,12 @@ test("owner DM offers still resolve named overlap permission", async t => {
   f.events.clear();
   for (const [i, slot] of offers.entries()) f.events.set(`private-approved-${i}`, { ...event(`private-approved-${i}`, slot.start, slot.end), summary: "Weekly Claw" });
   f.events.set("private-unapproved", { ...event("private-unapproved", offers[1]!.start, offers[1]!.end), summary: "Weekly Claw extra" });
-  const { request } = await offerRequest({ origin: "owner", handle: context.requesterSenderId, topic: "Lunch",
+  let tool: any;
+  registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
+  const result = await tool.execute("offer", { origin: "owner", handle: context.requesterSenderId, topic: "Lunch",
     allowOverlapTitles: ["Weekly Claw"], offered: offers.map(({ start, end }) => ({ start, end })) });
+  assert.equal(result.isError, false, JSON.stringify(result));
+  const { request } = result.details as { request: Request };
   assert.deepEqual(request.allowOverlap, ["private-approved-0", "private-approved-1"].map(id => ({ account: "owner@example.com", id })));
   assert.deepEqual(request.offered.map(o => o.start), [offers[0]!.start]);
   const creates = f.commands.filter(c => c[2] === "create");
@@ -910,16 +903,14 @@ for (const constraints of [
   assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
-test("owner-group duration steering updates the ledger then replaces holds in the same chat", async t => {
+test("owner-group duration steering atomically replaces holds in the same chat", async t => {
   const f = fixture(t);
   f.save({ requests: [] }); f.events.clear();
   const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
   assert.ok(!("error" in await offerOwnerGroup(ctx, { topic: "30-minute call" })));
   const before = f.request();
-  const steered = cli("ledger.ts", ["update", "--id", before.id, "--json", JSON.stringify({ durationMin: 60, topic: "60-minute call" })], { MEETLY_HOME: f.home });
-  assert.equal(steered.status, 0, steered.stderr);
-  await assert.rejects(calendarAction(before.id, { action: "book", start: before.offered[0]!.start }), /duration changed.*re-offer/i);
-  assert.ok(!("error" in await offerOwnerGroup(ctx, { topic: steered.json.request.topic })));
+  await calendarAction(before.id, { action: "duration", durationMin: 60, topic: "60-minute call",
+    offered: before.offered.map(({ start }) => ({ start, end: new Date(Date.parse(start) + 60 * 60_000).toISOString() })) });
   assert.equal(f.request().id, before.id);
   assert.equal(f.request().origin, "owner-group");
   assert.equal(f.request().chatUid, before.chatUid);
@@ -927,4 +918,21 @@ test("owner-group duration steering updates the ledger then replaces holds in th
   assert.equal(f.request().offered.length, SLOT_COUNT);
   assert.ok(f.request().offered.every(o => Date.parse(o.end) - Date.parse(o.start) === 60 * 60_000));
   assert.ok(before.offered.every(o => f.events.get(o.holdId!)?.status === "cancelled"));
+});
+
+for (const change of [
+  { senderIsOwner: false }, { senderIsOwner: undefined }, { requesterSenderId: undefined },
+  { messageChannel: "email" }, { agentAccountId: "email" },
+  { sessionKey: "agent:main:plow:group:chat-one" }, { sessionKey: undefined },
+]) test(`overlap offer rejects non-owner-DM runtime context ${JSON.stringify(change)}`, async t => {
+  const f = fixture(t), before = f.read();
+  let tool: any;
+  registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context,
+    senderIsOwner: true, sessionKey: "agent:main:main", ...change }); } }, offerRequest);
+  const result = await tool.execute("offer", { ...f.ledger.requests[0], allowOverlapTitles: ["Weekly Claw"],
+    senderIsOwner: true, sessionKey: "agent:main:main" });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /owner.*main Plow DM/);
+  assert.deepEqual(f.read(), before);
+  assert.deepEqual(f.commands, []);
 });

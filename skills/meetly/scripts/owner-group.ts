@@ -1,5 +1,5 @@
 import { fetchBusy } from "./busy.ts";
-import { offerRequest, type CalendarOptions, type OfferInput } from "./calendar.ts";
+import { offerRequest, type OfferInput } from "./calendar.ts";
 import { lookupContact } from "./contact.ts";
 import { loadConfig } from "./config.ts";
 import { file } from "./paths.ts";
@@ -12,7 +12,7 @@ import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
 type GroupRequest = Pick<OfferInput, "topic" | "constraints" | "proposed" | "format" | "location" | "locale" | "name">;
 
-export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, options: CalendarOptions = {}): Promise<object> {
+export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Promise<object> {
   const chat = resolveOwnerChat(ctx);
   if (!chat || !ctx.sessionKey?.includes(":plow:group:")) {
     return { error: "Only the owner's own Plow group turn can start this request." };
@@ -44,7 +44,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
     if (existing && existing.chatUid !== chat && !(existing.status === "asked" && existing.chatUid === undefined)) {
       throw new Error("request belongs to another conversation");
     }
-    const config = loadConfig(), now = (options.now ?? Date.now)();
+    const config = loadConfig(), now = Date.now();
     const { topic, format, location } = args;
     const durationMin = existing?.durationMin ?? config.durationMin;
     const locale = args.locale ?? existing?.locale;
@@ -60,7 +60,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
     if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
     const { request } = await offerRequest({ handle, name, topic, durationMin, constraints, proposed, format, location, locale,
       offered: slots.map(({ start, end }) => ({ start, end })),
-      origin: "owner-group", chatUid: chat, askDetails: false }, options);
+      origin: "owner-group", chatUid: chat, askDetails: false });
     return { ...view(request, config), preferencesUnavailable };
   } catch {
     return { error: "The scheduling action could not be completed. Check the request before trying again." };

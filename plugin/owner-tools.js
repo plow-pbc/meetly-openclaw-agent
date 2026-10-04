@@ -47,3 +47,36 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
     },
   }));
 }
+
+const runDm = async args => {
+  const { offerRequest } = await import("/opt/plow/skills/meetly/scripts/calendar.ts");
+  return offerRequest(args);
+};
+
+export function registerOwnerDmTool(api, execute = runDm) {
+  const required = ["origin", "handle", "topic", "offered"];
+  const string = { type: "string" };
+  api.registerTool(context => ({
+    name: "meetly_offer_owner_dm", label: "Offer owner-authorized times",
+    description: "Offer times from the owner's main Plow DM. Only pass allowOverlapTitles for events the owner explicitly authorized overlapping in this DM. Resolves titles internally and holds the supplied times through the calendar writer. Read meetly-group. Never call from a group.",
+    parameters: { type: "object", additionalProperties: false, required, properties: {
+      origin: { type: "string", enum: ["owner", "inbound", "owner-group"] }, handle: string, topic: string,
+      name: string, sourceRowid: { type: "integer" }, chatUid: string, durationMin: { type: "integer", minimum: 1 },
+      constraints, proposed: constraints, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
+      location: string, locale: string, allowOverlapTitles: { type: "array", items: string },
+      offered: { type: "array", minItems: 1, items: { type: "object", additionalProperties: false,
+        required: ["start", "end"], properties: { start: string, end: string } } },
+    } },
+    async execute(_id, args) {
+      let result;
+      if (context.messageChannel !== "plow" || context.agentAccountId !== "chat" || context.senderIsOwner !== true ||
+        !context.requesterSenderId || context.sessionKey !== "agent:main:main") {
+        result = { error: "Only the owner's main Plow DM can authorize an overlap offer." };
+      } else {
+        try { result = await execute(cleanArgs(args, required)); }
+        catch { result = { error: "The offer could not be completed. Check the request before trying again." }; }
+      }
+      return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  }));
+}

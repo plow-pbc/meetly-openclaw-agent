@@ -134,7 +134,7 @@ test("DM recipient selection precedes calendar access while current groups use r
   assert.ok(offer.includes("If none is known, ask the owner for a phone; if several match, ask which one. In either case, ask in the owner's main DM and end the turn."));
   const owner = group.slice(group.indexOf("## Owner request"), group.indexOf("## Asked requests"));
   assert.ok(owner.includes("first run `ledger.ts find --name <guest name>`"));
-  assert.ok(owner.includes("Only when no request matches and no candidates remain, resolve the recipient from Contacts"));
+  assert.ok(owner.includes("When no request matches, resolve the recipient from Contacts"));
   assert.doesNotMatch(group, /An iMessage email is a valid recipient|Use their email when there is no phone/);
 });
 
@@ -303,13 +303,6 @@ test("an owner introduction waits without asking the group to plan a meeting", (
   assert.ok(group.includes("Do not ask the guest or group what, when, format or place"));
   assert.ok(group.indexOf("An introduction alone") < group.indexOf("first run `ledger.ts find --name"));
   assert.ok(flat(prompt).includes("only a short Meetly introduction and wait"));
-});
-
-test("unnamed owner-group follow-ups disambiguate from ledger candidates and retain exact chat ids", () => {
-  const group = groupSkill();
-  assert.ok(group.includes("If the name has no match and `candidates` lists open owner-group offers, ask which meeting"));
-  assert.ok(group.includes("Copy the selected request's exact `handle` and `chatUid` from the ledger"));
-  assert.ok(group.includes("never invent or retype an id from memory or a session slug"));
 });
 
 test("guest-proposed terms are never repeated publicly for owner confirmation", () => {

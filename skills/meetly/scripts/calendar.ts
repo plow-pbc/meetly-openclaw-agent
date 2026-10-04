@@ -17,6 +17,7 @@ import { readJson, updateJson, withLock, writeJson } from "./store.ts";
 
 export type CalendarAction =
   | { action: "offer"; request: NewRequest; provisional?: boolean }
+  | { action: "duration"; durationMin: number; topic: string; offered: OfferInput["offered"] }
   | { action: "book"; start: string; end?: string; attendees?: string }
   | { action: "format"; format: Request["format"]; location?: string }
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
@@ -143,6 +144,18 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         return { request: requestById(id) };
       }
       if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked") throw new Error(`request is ${request.status}`);
+      if (input.action === "duration") {
+        const { origin, handle, name, sourceRowid, chatUid, constraints, proposed, format, location, locale, askDetails } = request;
+        const config = loadConfig();
+        if (config.paused) throw new Error("Scheduling is paused.");
+        const { durationMin } = input;
+        if (input.offered.some(slot => Date.parse(slot.end) - Date.parse(slot.start) !== durationMin * 60_000)) {
+          throw new Error("Replacement slots must match the new duration.");
+        }
+        input = { action: "offer", request: { origin, handle, name, sourceRowid, chatUid, constraints, proposed,
+          format, location, locale, askDetails, durationMin: input.durationMin, topic: input.topic,
+          offered: input.offered.map(slot => ({ ...slot, account: config.defaultAccount })) } };
+      }
       const steps: Step[] = [];
       const add = (verb: Step["verb"], slot: Offer, args: string[]) => steps.push({ verb, account: slot.account, eventId: slot.holdId, start: slot.start, end: slot.end, args, token: randomUUID() });
       if (input.action === "offer") {
@@ -157,9 +170,10 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       } else {
         const config = loadConfig();
         if (input.action === "format") updateRequest(ledger(), id, { format: input.format, location: input.location }, now());
+        const start = input.action === "book" ? input.start : undefined;
         const slot: Offer = input.action === "format"
           ? { start: request.booked!.start, end: request.booked!.end, account: request.booked!.account, holdId: request.eventId }
-          : request.offered.find(o => Date.parse(o.start) === Date.parse(input.start)) ?? { start: input.start, end: input.end!, account: config.defaultAccount };
+          : request.offered.find(o => Date.parse(o.start) === Date.parse(start!)) ?? { start: input.start, end: input.end!, account: config.defaultAccount };
         if (!slot.end || !(Date.parse(slot.end) > Date.parse(slot.start))) throw new Error("booking needs valid start and end");
         if (input.action === "book" && request.offered.includes(slot) && Date.parse(slot.end) - Date.parse(slot.start) !== request.durationMin * 60_000) {
           throw new Error("Meeting duration changed; re-offer before booking an old hold.");
@@ -343,7 +357,8 @@ if (isMain(import.meta.url)) run(async () => {
   const args = values["json-file"] ? JSON.parse(readFileSync(values["json-file"], "utf8")) : JSON.parse(values.json ?? "{}");
   if (action === "resume-pending") return resumePending();
   if (action === "pending") return { ids: pendingCalendarWrites() };
+  if ("allowOverlap" in args || "allowOverlapTitles" in args) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
   if (action === "offer") return offerRequest(args);
-  if (!values.id || !["book", "format", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | book|format|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
+  if (!values.id || !["duration", "book", "format", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | duration|book|format|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
   return calendarAction(values.id, { ...args, action } as CalendarAction);
 });
