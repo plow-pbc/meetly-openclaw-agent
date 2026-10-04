@@ -421,3 +421,31 @@ for (const origin of ["owner", "owner-group", "inbound"] as const) test(`request
   assert.equal(saved.askDetails, false);
   assert.equal(saved.chatUid, "cht_MiXeD");
 });
+
+test("a fresh start reservation tells the caller to send, and a duplicate explicitly forbids sending", () => {
+  const env = { MEETLY_HOME: tmpHome() };
+  const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(input())], env).json.request;
+  const delivery = (action: string) => cli("ledger.ts", ["delivery", "--id", id, "--kind", "start", "--action", action], env);
+  const begin = delivery("begin");
+  assert.equal(begin.status, 0, begin.stderr);
+  assert.equal(begin.json.delivery.sendNow, true);
+  assert.equal(begin.json.delivery.state, "reserved");
+  assert.match(begin.json.delivery.instruction, /Send the opener now/);
+  assert.match(begin.json.delivery.instruction, /Do not begin or clear again/);
+  const duplicate = delivery("begin");
+  assert.equal(duplicate.status, 1);
+  assert.match(duplicate.stderr, /Do not send/);
+  const complete = delivery("complete");
+  assert.equal(complete.json.delivery.sendNow, false);
+  assert.equal(complete.json.delivery.state, "completed");
+  const cleared = delivery("clear");
+  assert.equal(cleared.json.delivery.sendNow, false);
+  assert.equal(cleared.json.delivery.state, "cleared");
+  assert.equal(delivery("begin").json.delivery.sendNow, true);
+  const fresh = cli("ledger.ts", ["save", "--json", JSON.stringify(input({ handle: "+15550108502" }))], env).json.request;
+  assert.notEqual(fresh.id, id);
+  assert.equal(fresh.startedAt, undefined);
+  const next = cli("ledger.ts", ["delivery", "--id", fresh.id, "--kind", "start", "--action", "begin"], env);
+  assert.equal(next.status, 0, next.stderr);
+  assert.equal(next.json.delivery.sendNow, true);
+});

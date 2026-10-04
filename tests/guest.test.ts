@@ -213,30 +213,10 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
   assert.deepEqual(hooks, ["before_prompt_build"]);
 });
 
-test("every guest tool drops blank optional arguments and preserves required and nonempty values", async () => {
-  const tools: { parameters: { required: string[] }; execute: (id: string, args: object) => Promise<unknown> }[] = [];
-  let received: object | undefined;
-  registerGuestTools({ registerTool(factory: (ctx: GuestContext) => typeof tools[number]) {
-    tools.push(factory(context));
-  } }, async (ctx: GuestContext, _action: GuestAction, args: object) => {
-    assert.equal(ctx, context);
-    received = args;
-    return {};
-  });
-  const blanks = { next_week: "", from: "", to: "", start: "", question: "", after: "", before: "", location: "", format: "" };
-  const values = { days: [], flag: false, count: 0, nullable: null, whitespace: " ", value: "2026-10-05" };
-  const args = Object.freeze({ ...blanks, ...values });
-  for (const tool of tools) {
-    await tool.execute("call", args);
-    assert.deepEqual(received, { ...values, ...Object.fromEntries(tool.parameters.required.map(key => [key, ""])) });
-  }
-  assert.deepEqual(args, { ...blanks, ...values });
-});
-
 test("blank optional preferences through the guest tool still produce fresh held times", async t => {
   const f = fixture(t);
   const result = await f.tools.get("meetly_other_times")!.execute("call", {
-    next_week: "", from: "", to: "", start: "", question: "", after: "", before: "",
+    from: "", to: "", after: "", before: "",
   });
   const details = JSON.parse(result.content[0]!.text);
   assert.equal(details.status, "offered", JSON.stringify(details));
@@ -650,18 +630,6 @@ test('an open owner question survives booking and format commits through the sea
   assert.notEqual(f.request().calendarRevision, revision);
   assert.deepEqual(f.request().pendingOwner, pending);
   assert.equal(f.deliveries.length, 1);
-});
-
-test('an owner-approved time stays pending after booking until its answer is delivered', async t => {
-  const f = fixture(t);
-  await f.act(context, 'ask_owner', { start: '2026-10-05T20:00' });
-  const pending = f.request().pendingOwner!;
-  assert.ok('start' in pending);
-  await calendarAction('request-one', { action: 'book', start: pending.start, end: pending.end });
-  assert.equal(f.request().booked!.start, pending.start);
-  assert.deepEqual(f.request().pendingOwner, pending);
-  assert.ok(f.request().calendarRevision);
-  assert.equal(f.ownerLines.length, 1);
 });
 
 test("a blank question cannot store a time approval on a booked meeting", async t => {

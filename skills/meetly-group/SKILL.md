@@ -40,8 +40,10 @@ free there.
    known, ask the owner for a phone; if several match, ask which one. In
    either case, ask in the owner's main DM and end the turn.
    Run `ledger.ts find --handle <resolved phone>`. If it has `startedAt`
-   but no `chatUid`, tell the owner a group start was already attempted and
-   stop. Only if the owner explicitly asks to clear the attempt and retry,
+   but no `chatUid` before this turn begins delivery, tell the owner a group
+   start was already attempted and stop. This check is for an earlier attempt,
+   not the reservation just created by a successful `begin` in step 6.
+   Only if the owner explicitly asks to clear the attempt and retry,
    run `ledger.ts delivery --id <id> --kind start --action clear` before continuing.
 2. Read the calendar.
 3. For a replacement offer, pass `--request <id>` to preserve conditions and
@@ -73,7 +75,11 @@ free there.
 6. Deliver the times:
    - An open request that already has a `chatUid`: post the new times there.
    - Otherwise, in the owner's DM, run `ledger.ts delivery --id <saved request id>
-     --kind start --action begin`. If it fails, tell the owner and stop.
+     --kind start --action begin` exactly once, immediately before sending.
+     Success returns `delivery: {state: "reserved", sendNow: true}`: this is
+     permission to send now, not evidence of an earlier send. Do not re-run the
+     step 1 check, begin again, clear your own reservation, or ask the owner to
+     retry. If begin fails, do not send or clear; tell the owner and stop.
      Then call `plow_start_thread` with `members: ["<resolved phone>"]` and
      the opener as `body`.
    - On success or unknown delivery, run `ledger.ts delivery --id <saved request id>
