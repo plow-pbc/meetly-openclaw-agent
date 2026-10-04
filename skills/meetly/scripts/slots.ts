@@ -25,6 +25,7 @@ export type SlotQuery = Constraints & {
   allowOverlap?: string[];
   exclude?: string[];
   count?: number;
+  near?: string;
   locale?: string;
 };
 
@@ -61,6 +62,7 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string 
   const tz = config.timezone;
   const duration = q.durationMin ?? config.durationMin;
   const count = q.count ?? SLOT_COUNT;
+  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], start: q.near }).slot.start);
 
   const startMin = Math.ceil(minutes(config.windowStart) / STEP_MIN) * STEP_MIN;
   const endMin = minutes(config.windowEnd);
@@ -94,13 +96,19 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string 
     perDay.push(found);
   }
 
-  // One per day first, soonest days first; then fill in time order.
-  const picked = perDay.filter((f) => f.length > 0).map((f) => f[0]!).slice(0, count);
-  if (picked.length < count) {
-    const rest = perDay.flat().filter((c) => !picked.includes(c));
-    picked.push(...rest.slice(0, count - picked.length));
+  let picked: (typeof perDay)[number];
+  if (near !== undefined) {
+    // Rank all eligible starts, not just the first start of each day.
+    picked = perDay.flat().sort((a, b) => Math.abs(a.start - near) - Math.abs(b.start - near) || a.start - b.start).slice(0, count);
+  } else {
+    // One per day first, soonest days first; then fill in time order.
+    picked = perDay.filter((f) => f.length > 0).map((f) => f[0]!).slice(0, count);
+    if (picked.length < count) {
+      const rest = perDay.flat().filter((c) => !picked.includes(c));
+      picked.push(...rest.slice(0, count - picked.length));
+    }
+    picked.sort((a, b) => a.start - b.start);
   }
-  picked.sort((a, b) => a.start - b.start);
 
   const format = q.locale !== undefined ? localeFormatter(q.locale, tz) : undefined;
   const slots = picked.map((c) => ({
@@ -183,6 +191,7 @@ if (isMain(import.meta.url)) {
         exclude: { type: "string", multiple: true },
         count: { type: "string" },
         at: { type: "string" },
+        near: { type: "string" },
         now: { type: "string" },
         locale: { type: "string" },
       },
@@ -198,7 +207,7 @@ if (isMain(import.meta.url)) {
     if (Number.isNaN(now)) throw new Error(`--now is not a time: ${values.now}`);
     const degraded = input.degraded ?? [];
     if (values.at !== undefined) {
-      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count"] as const) {
+      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
       const check: Parameters<typeof checkTime>[0] = { now, config, busy: input.busy, start: values.at };
@@ -212,6 +221,7 @@ if (isMain(import.meta.url)) {
     if (input.unknownAfter !== undefined) q.unknownAfter = input.unknownAfter;
     if (values.duration !== undefined) q.durationMin = positiveInt(values.duration, "--duration");
     if (values.count !== undefined) q.count = positiveInt(values.count, "--count");
+    if (values.near !== undefined) q.near = values.near;
     if (values.days !== undefined) {
       q.days = values.days.split(/[\s,]+/).filter(Boolean).map((d) => {
         const day = d.slice(0, 3).toLowerCase();

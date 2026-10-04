@@ -108,6 +108,15 @@ In the owner's DM:
 4. If `ledger.ts find --handle <handle>` has an open request, reuse its group
    ("Offer times" step 5).
 5. Follow "Offer times" with `origin: owner`.
+   If a requested time is busy, say there is an existing commitment and
+   immediately find and offer the nearest available times; do not ask whether
+   to search or schedule over the conflict. Run `slots.ts --near <requested
+   ISO start>` with the busy file, duration, locale and the owner's saved
+   day/date bounds. Drop only the unavailable preferred clock time from the
+   search, keeping explicit hard conditions (such as "only at 11:30").
+   Use the returned order and follow "Offer times" to hold and deliver the
+   alternatives. If no times meet those conditions, explain which condition
+   blocks them. Only an explicit owner instruction can authorize an overlap.
 6. Reply to the owner in one line: group opened, times offered and held.
 
 ## Asked requests
@@ -197,6 +206,8 @@ mean before changing the calendar. For an out-of-hours approval, follow
 - **Book a time:** read the calendar and select the requested slot, following
   "Book the event". Supply the format or place the owner gave and the person's
   email as an attendee if contacts has one.
+- **A requested time is busy:** follow the "Owner request" nearest-time
+  fallback, keeping this request's conditions and replying in this group.
 - **Other times:** follow "Offer times", carrying the request's conditions
   and any changes the owner gives. The writer keeps the old offer until its
   replacement commits.
