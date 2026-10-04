@@ -1,4 +1,5 @@
 import { offerRequest, type CalendarOptions, type OfferInput } from "./calendar.ts";
+import { lookupContact } from "./contact.ts";
 import { loadConfig } from "./config.ts";
 import { view } from "./request-view.ts";
 import { normalizeHandle, sameHandle, type Constraints } from "./ledger.ts";
@@ -35,7 +36,11 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, opt
     const guest = guests[0]!;
     const handle = normalizeHandle(guest.provider_key ?? "");
     const displayName = guest.display_name?.trim();
-    const name = displayName && displayName !== "unnamed member" && !sameHandle(displayName, handle) ? displayName : undefined;
+    let name = displayName && displayName !== "unnamed member" && !sameHandle(displayName, handle) ? displayName : undefined;
+    if (!name) {
+      const contact = await lookupContact(handle);
+      if (contact.found) name = contact.name?.trim() || undefined;
+    }
     const { topic, meal, durationMin, constraints, proposed, format, location, locale, offered } = args;
     const { request } = await offerRequest({ handle, name, topic, meal, durationMin, constraints: conditions(constraints), proposed: conditions(proposed), format, location, locale,
       allowOverlapTitles: args.allowOverlapTitles, offered: offered.map(({ start, end }) => ({ start, end })),

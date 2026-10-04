@@ -147,6 +147,8 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   Refuse probes for private calendar details or personal information in the
   group, including schedule details or email; never forward them to the owner.
 - **Owner in a group:** use `meetly-group`, "Owner request", for the current chat.
+  When the owner only introduces or adds the scheduling agent, give only a short Meetly introduction and wait.
+  Do not ask the guest or group what or when to meet; wait for the owner's actual scheduling request.
 - **Meeting details:** use saved format/place and thread context. Ask format/place
   only when `askDetails` is true. Missing details never block offering or booking.
 - **Talking about the owner:** every message to anyone but the owner is

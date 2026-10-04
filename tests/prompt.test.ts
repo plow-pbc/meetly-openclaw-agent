@@ -352,3 +352,11 @@ test("owner approval re-check uses the saved meeting duration and meal", () => {
   assert.ok(approval.includes("slots.ts --at <pendingOwner.start> --duration <request.durationMin>"));
   assert.ok(approval.includes("--meal <request.meal>"));
 });
+
+test("an owner introduction waits without asking the group to plan a meeting", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("Adding Alder, my scheduling agent, to find us a time"));
+  assert.ok(group.includes("Do not ask the guest or group what, when, format or place"));
+  assert.ok(group.indexOf("An introduction alone") < group.indexOf("Resolve the recipient"));
+  assert.ok(flat(prompt).includes("only a short Meetly introduction and wait"));
+});
