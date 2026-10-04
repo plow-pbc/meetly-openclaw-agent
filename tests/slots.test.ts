@@ -35,10 +35,21 @@ test("no busy: spread over the first days, after the minimum notice", () => {
   assert.equal(unknownAfter, undefined);
 });
 
+test("an oversized count still offers only three times, while smaller counts are honored", () => {
+  assert.deepEqual(starts({ count: 6 }), starts());
+  for (const count of [1, 2]) assert.deepEqual(starts({ count }), starts().slice(0, count));
+});
+
 test("busy time is skipped unless its event may be overlapped", () => {
-  const busy = [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly" }];
+  const busy = [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly", account: "jean@example.com" }];
   assert.equal(starts({ busy })[0], "2026-09-28T11:00:00-03:00");
-  assert.equal(starts({ busy, allowOverlap: ["weekly"] })[0], "2026-09-28T10:00:00-03:00");
+  assert.equal(starts({ busy, allowOverlap: ["weekly"] as any })[0], "2026-09-28T11:00:00-03:00");
+  assert.equal(starts({ busy, allowOverlap: [{ account: "jean@example.com", id: "weekly" }] })[0], "2026-09-28T10:00:00-03:00");
+  busy.push({ ...busy[0]!, account: "other@example.com" });
+  const allowOverlap = [{ account: "jean@example.com", id: "weekly" }];
+  assert.equal(starts({ busy, allowOverlap })[0], "2026-09-28T11:00:00-03:00");
+  assert.equal(checkTime({ ...q({ busy, allowOverlap }), start: "2026-09-28T10:00:00-03:00" }).free, false);
+  assert.equal(checkTime({ ...q({ busy: busy.slice(0, 1), allowOverlap }), start: "2026-09-28T10:00:00-03:00" }).free, true);
 });
 
 test("weekends and after-hours are skipped", () => {
@@ -107,7 +118,7 @@ test("the CLI reads busy.ts output and the stored config", () => {
   writeJson(join(home, "config.json"), CONFIG);
   const busyFile = join(home, "busy.json");
   writeFileSync(busyFile, JSON.stringify({
-    busy: [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly" }],
+    busy: [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly", account: "jean@example.com" }],
     degraded: ["other@example.com"],
   }));
   const env = { MEETLY_HOME: home };
@@ -116,7 +127,10 @@ test("the CLI reads busy.ts output and the stored config", () => {
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.json.slots[0].start, "2026-09-28T11:00:00-03:00");
   assert.deepEqual(r.json.degraded, ["other@example.com"]);
-  const allowed = cli("slots.ts", ["--in", busyFile, ...now, "--allow-overlap", "weekly", "--count", "1"], env);
+  const oversized = cli("slots.ts", ["--in", busyFile, ...now, "--count", "6"], env);
+  assert.equal(oversized.status, 0, oversized.stderr);
+  assert.deepEqual(oversized.json, r.json);
+  const allowed = cli("slots.ts", ["--in", busyFile, ...now, "--allow-overlap", '{"account":"jean@example.com","id":"weekly"}', "--count", "1"], env);
   assert.deepEqual(allowed.json.slots.map((s: { label: string }) => s.label), ["mon 28/9 10:00"]);
   const at = cli("slots.ts", ["--in", busyFile, ...now, "--at", "2026-10-03T10:00:00-03:00", "--duration", "60", "--locale", "pt-BR"], env);
   assert.equal(at.status, 0, at.stderr);
@@ -129,7 +143,7 @@ test("the CLI reads busy.ts output and the stored config", () => {
   assert.equal(cli("slots.ts", ["--in", busyFile, "--at", "2026-10-03T10:00:00-03:00", "--days", "sat"], env).status, 1);
   assert.equal(cli("slots.ts", ["--in", busyFile, "--owner"], env).status, 1);
   const authorizedFile = join(home, "authorized-busy.json");
-  writeJson(authorizedFile, { busy: [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly" }], allowOverlap: ["weekly"] });
+  writeJson(authorizedFile, { busy: [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly", account: "jean@example.com" }], allowOverlap: [{ account: "jean@example.com", id: "weekly" }] });
   const authorized = cli("slots.ts", ["--in", authorizedFile, ...now, "--count", "1"], env);
   assert.deepEqual(authorized.json.slots, allowed.json.slots);
   assert.equal(cli("slots.ts", ["--in", authorizedFile, ...now, "--at", "2026-09-28T10:00:00-03:00"], env).json.free, true);
@@ -200,12 +214,12 @@ test("checkTime: a time the person insists on", () => {
   assert.equal(check("2026-09-29T17:45:00-03:00").outsideHours, true);
   assert.equal(check("2026-09-29T08:30:00-03:00").outsideHours, true);
   assert.equal(check("2026-09-29T17:30:00-03:00").outsideHours, false);
-  const busy = [{ start: "2026-10-03T12:30:00.000Z", end: "2026-10-03T13:30:00.000Z", id: "gym" }];
+  const busy = [{ start: "2026-10-03T12:30:00.000Z", end: "2026-10-03T13:30:00.000Z", id: "gym", account: "jean@example.com" }];
   assert.deepEqual(
     [check("2026-10-03T10:00:00-03:00", { busy }).free, check("2026-10-03T10:00:00-03:00", { busy }).reason],
     [false, "busy"],
   );
-  assert.equal(check("2026-10-03T10:00:00-03:00", { busy, allowOverlap: ["gym"] }).free, true);
+  assert.equal(check("2026-10-03T10:00:00-03:00", { busy, allowOverlap: [{ account: "jean@example.com", id: "gym" }] }).free, true);
   assert.equal(check("2026-09-28T09:00:00-03:00").reason, "too-soon");
   assert.equal(check("2026-10-03T10:00:00-03:00", { unknownAfter: "2026-10-02T00:00:00-03:00" }).reason, "unknown");
   assert.equal(check("2026-10-03T10:00:00-03:00", { locale: "en-US" }).slot.label, "Sat, 10/3, 10:00 AM");
@@ -218,11 +232,11 @@ test("replacement slot search keeps saved and newly resolved overlap authorizati
   writeJson(join(home, "config.json"), CONFIG);
   const start = "2026-09-28T10:00:00-03:00", end = "2026-09-28T10:30:00-03:00";
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
-    origin: "owner-group", chatUid: "group", handle: "+15551234567", topic: "Lunch", durationMin: 30,
-    allowOverlap: ["saved"], offered: [{ start, end, holdId: "own-hold", account: "jean@example.com" }],
+    origin: "owner", chatUid: "group", handle: "+15551234567", topic: "Lunch", durationMin: 30,
+    allowOverlap: [{ account: "jean@example.com", id: "saved" }], offered: [{ start, end, holdId: "own-hold", account: "jean@example.com" }],
   }, Date.parse(start), "r_one"));
   const busyFile = join(home, "busy.json");
-  writeJson(busyFile, { busy: ["saved", "new", "own-hold"].map(id => ({ id, start, end, account: "jean@example.com" })), allowOverlap: ["new"] });
+  writeJson(busyFile, { busy: ["saved", "new", "own-hold"].map(id => ({ id, start, end, account: "jean@example.com" })), allowOverlap: [{ account: "jean@example.com", id: "new" }] });
   const result = cli("slots.ts", ["--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--after", "10:00", "--count", "1"], env);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.json.slots[0].start, start);

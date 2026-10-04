@@ -84,6 +84,40 @@ export function nextWeek(anchor: string, tz: string): { from: string; to: string
   return { from: date(monday), to: date(monday + 6) };
 }
 
+export type WeekdayTime = { weekday: Day; time: string };
+export class WeekdayDateRequired extends Error {
+  constructor() { super("Provide a calendar date: that weekday is not unique in the current offer's date window."); }
+}
+
+// Bare weekdays belong to the calendar weeks being offered, narrowed by saved date bounds.
+export function offerDateWindow(offered: readonly { start: string }[], tz: string, bounds: { from?: string; to?: string } = {}): { from: string; to: string } {
+  if (!offered.length) throw new WeekdayDateRequired();
+  const mondays = offered.map(({ start }) => {
+    const p = wallParts(Date.parse(start), tz);
+    return Date.UTC(p.y, p.m - 1, p.d - DAYS.indexOf(p.weekday));
+  });
+  const date = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  const from = [date(Math.min(...mondays)), bounds.from].filter(Boolean).sort().at(-1)!;
+  const to = [date(Math.max(...mondays) + 6 * 86_400_000), bounds.to].filter(Boolean).sort()[0]!;
+  if (from > to) throw new WeekdayDateRequired();
+  return { from, to };
+}
+
+export function resolveWeekday(value: WeekdayTime, offered: readonly { start: string }[], tz: string, bounds: { from?: string; to?: string } = {}): string {
+  if (!value || !DAYS.includes(value.weekday) || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value.time)) throw new Error("Invalid weekday or clock time");
+  const { from, to } = offerDateWindow(offered, tz, bounds);
+  const first = new Date(`${from}T00:00:00Z`);
+  const offset = (DAYS.indexOf(value.weekday) - (first.getUTCDay() + 6) % 7 + 7) % 7;
+  const candidate = first.getTime() + offset * 86_400_000;
+  const date = new Date(candidate).toISOString().slice(0, 10);
+  if (date > to || new Date(candidate + 7 * 86_400_000).toISOString().slice(0, 10) <= to) throw new WeekdayDateRequired();
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  const [hh, mm] = value.time.split(":").map(Number) as [number, number];
+  const resolved = localIso(zonedToUtc(y, m, d, hh, mm, tz), tz);
+  if (!resolved.startsWith(`${date}T${value.time}:`)) throw new Error("That local clock time does not exist");
+  return resolved;
+}
+
 if (isMain(import.meta.url)) run(() => {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { anchor: { type: "string" }, timezone: { type: "string" } } });
   if (positionals.length !== 1 || positionals[0] !== "next_week" || !values.anchor || !values.timezone) throw new Error("usage: time.ts next_week --anchor ISO --timezone IANA");
