@@ -5,7 +5,8 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-for (const failure of ["plugin", "model", "config"]) test(`boot requires plugin activation and tolerates only model failure (${failure})`, t => {
+for (const failure of ["plugin", "config", "fresh", "existing"]) test(`boot preserves base model defaults and requires plugin activation (${failure})`, t => {
+  const baseModel = { primary: "plow/z-ai/glm-5.2", fallbacks: ["plow/anthropic/claude-sonnet-5"] };
   const marker = `${failure.toUpperCase()}_FAILED`;
   const dir = mkdtempSync(join(tmpdir(), "meetly-boot-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -17,7 +18,7 @@ for (const failure of ["plugin", "model", "config"]) test(`boot requires plugin 
     const fakeBase = 'data:text/javascript,' + encodeURIComponent(\`
       export const installBootLog = () => () => {};
       export const startAgentIndex = () => {};
-      export const renderConfig = () => ({tools:{alsoAllow:[]},channels:{plow:{threadTrust:'untrusted'}}});
+      export const renderConfig = () => ({agents:{defaults:{model:${JSON.stringify(baseModel)}}},tools:{alsoAllow:[]},channels:{plow:{threadTrust:'untrusted'}}});
       export const syncConfig = async () => {};
       export const identityFromApi = async () => ({line:{uid:'fixture'}});
       export const renderPrompt = async () => '';
@@ -31,10 +32,6 @@ for (const failure of ["plugin", "model", "config"]) test(`boot requires plugin 
       load(url, context, next) {
         if (url.endsWith('/boot/gate.ts')) return {format:'module-typescript', source:
           readFileSync(new URL(url), 'utf8').replace(/export async function installGate[\\s\\S]*?\\n}/, ${JSON.stringify(`export async function installGate() { ${failure === 'plugin' ? `throw new Error('${marker}');` : ''} }`)}), shortCircuit:true};
-        if (url.endsWith('/boot/llm.ts')) return {format:'module', source: ${JSON.stringify(`
-          export const llmRoute = () => { ${failure === 'model' ? `throw new Error('${marker}');` : "return {route:{provider:'fixture',primary:'fixture',fallbacks:[]}};"} };
-          export const applyRoute = x => x;
-        `)}, shortCircuit:true};
         if (url === ${JSON.stringify(preboot)}) return {format:'module-typescript', source:
           readFileSync(new URL(url),'utf8').replaceAll('/var/lib/plow', ${JSON.stringify(dir)}).replace('/opt/plow/prompt/AGENTS.md', ${JSON.stringify(join(dir, 'prompt.md'))})
             .replace('createRequire("/opt/plow/package.json")("json5")', ${JSON.stringify(failure === 'config' ? `({parse: () => { throw new Error('${marker}'); }})` : 'JSON')}), shortCircuit:true};
@@ -43,11 +40,11 @@ for (const failure of ["plugin", "model", "config"]) test(`boot requires plugin 
     });
   `);
   writeFileSync(join(dir, "prompt.md"), "fixture");
-  writeFileSync(join(dir, "openclaw.json"), "{}");
+  if (failure !== "fresh") writeFileSync(join(dir, "openclaw.json"), JSON.stringify({ agents: { defaults: { model: baseModel } } }));
   const result = spawnSync(process.execPath, ["--import", hook, new URL(preboot).pathname], {
     env: { ...process.env, PLOW_API_BASE: "http://fixture.invalid" }, encoding: "utf8", timeout: 1_000,
   });
-  assert.match(result.stderr, new RegExp(marker));
+  if (failure === "plugin" || failure === "config") assert.match(result.stderr, new RegExp(marker));
   if (failure === "plugin") {
     assert.doesNotMatch(result.stdout, /GATEWAY_STARTED/);
     assert.equal(result.status, 1);
@@ -56,9 +53,11 @@ for (const failure of ["plugin", "model", "config"]) test(`boot requires plugin 
     assert.match(result.stderr, /plow-boot: parked/);
     assert.equal((result.error as NodeJS.ErrnoException)?.code, "ETIMEDOUT");
   } else {
-    assert.deepEqual(JSON.parse(readFileSync(join(dir, "openclaw.json"), "utf8")).plugins?.entries?.meetly,
+    const config = JSON.parse(readFileSync(join(dir, "openclaw.json"), "utf8"));
+    assert.deepEqual(config.agents.defaults, { model: baseModel });
+    assert.equal(config.models, undefined);
+    assert.deepEqual(config.plugins?.entries?.meetly,
       { enabled: true, hooks: { allowConversationAccess: true } });
-    assert.match(result.stderr, /llm config left as it was/);
     assert.match(result.stdout, /GATEWAY_STARTED/);
     assert.equal(result.status, 0);
   }
