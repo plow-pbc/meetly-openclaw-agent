@@ -306,16 +306,24 @@ test("cleanup lists only requests with pending hold deletes", () => {
   assert.deepEqual(cleanupList(l).map((r) => r.id), ["r_2"]);
 });
 
-test("pendingOwner is set, listed and cleared", () => {
+for (const [kind, fields, invalid, bookedCount] of [
+  ["time approval", { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T10:30:00-03:00" }, [{ start: "sat" }], 0],
+  ["question", { question: "Which project?" }, [
+    { question: " " }, { question: "x".repeat(501) }, { askedAt: "yesterday" }, { start: new Date(T0).toISOString() },
+  ], 1],
+] as const) test(`pendingOwner ${kind} is set, validated, listed and cleared`, () => {
   let l = addRequest(empty(), input(), T0, "r_1");
-  const pending = { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T10:30:00-03:00", askedAt: new Date(T0).toISOString() };
+  const pending = { ...fields, askedAt: new Date(T0).toISOString() };
   l = updateRequest(l, "r_1", { pendingOwner: pending }, T0);
-  assert.deepEqual(pendingOwnerList(l).map((r) => r.pendingOwner), [pending]);
-  assert.throws(() => updateRequest(l, "r_1", { pendingOwner: { ...pending, start: "sat" } }, T0), /pendingOwner/);
+  assert.deepEqual(pendingOwnerList(l).map(r => r.pendingOwner), [pending]);
+  for (const patch of invalid) assert.throws(() => updateRequest(l, "r_1", { pendingOwner: { ...pending, ...patch } }, T0), /pendingOwner/);
+  l = updateRequest(l, "r_1", { status: "booked" }, T0);
+  assert.equal(pendingOwnerList(l).length, bookedCount);
+  for (const status of ["dropped", "expired"] as const) {
+    assert.deepEqual(pendingOwnerList(updateRequest(l, "r_1", { status }, T0)), []);
+  }
   l = updateRequest(l, "r_1", { pendingOwner: null }, T0);
   assert.equal("pendingOwner" in l.requests[0]!, false);
-  assert.deepEqual(pendingOwnerList(l), []);
-  l = updateRequest(l, "r_1", { pendingOwner: pending, status: "booked" }, T0);
   assert.deepEqual(pendingOwnerList(l), []);
 });
 
@@ -387,24 +395,6 @@ test('saving a canonical suffix collision creates a separate request without rep
   const saved = saveRequest(original, input({ handle: '+115551234567' }), T0, 'r_2');
   assert.equal(saved.requests.length, 2);
   assert.deepEqual(saved.requests[0], original.requests[0]);
-});
-
-test("pending questions validate, list for offered and booked meetings, and clear", () => {
-  let l = addRequest(empty(), input(), T0, "r_1");
-  const pending = { question: "Which project?", askedAt: new Date(T0).toISOString() };
-  l = updateRequest(l, "r_1", { pendingOwner: pending }, T0);
-  assert.deepEqual(pendingOwnerList(l).map(r => r.pendingOwner), [pending]);
-  for (const invalid of [
-    { ...pending, question: " " }, { ...pending, question: "x".repeat(501) },
-    { ...pending, askedAt: "yesterday" }, { ...pending, start: new Date(T0).toISOString() },
-  ]) assert.throws(() => updateRequest(l, "r_1", { pendingOwner: invalid }, T0), /pendingOwner/);
-  l = updateRequest(l, "r_1", { status: "booked" }, T0);
-  assert.equal(pendingOwnerList(l).length, 1);
-  for (const status of ["dropped", "expired"] as const) {
-    assert.deepEqual(pendingOwnerList(updateRequest(l, "r_1", { status }, T0)), []);
-  }
-  l = updateRequest(l, "r_1", { pendingOwner: null }, T0);
-  assert.deepEqual(pendingOwnerList(l), []);
 });
 
 test("CLI lists and clears a general owner question using the existing pending command", () => {

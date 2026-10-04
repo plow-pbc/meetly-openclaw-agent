@@ -151,9 +151,21 @@ test("other-times files a free outside-window approval without replacing holds",
 
 test("an exact in-window other-times request holds that time without asking the owner", async t => {
   const f = fixture(t);
-  const result = await f.act(context, "other_times", { start: "2026-10-05T11:00" });
+  const result = await f.act(context, "other_times", { start: "2026-10-05T11:15" });
   assert.ok(!("error" in result));
-  assert.deepEqual(f.request().offered.map(o => o.start), ["2026-10-05T11:00:00+00:00"]);
+  assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, false);
+  assert.deepEqual(f.request().offered.map(o => [o.start, o.end]), [["2026-10-05T11:15:00+00:00", "2026-10-05T11:45:00+00:00"]]);
+  assert.equal(f.ownerLines.length, 0);
+});
+
+for (const reason of ["busy", "owner constraints"] as const) test(`an exact other-times request falls back when blocked by ${reason}`, async t => {
+  const f = fixture(t);
+  if (reason === "busy") f.events.set("conflict", event("conflict", "2026-10-05T11:15:00Z", "2026-10-05T11:45:00Z"));
+  else { f.ledger.requests[0]!.constraints!.after = "12:00"; f.save(f.ledger); }
+  const result = await f.act(context, "other_times", { start: "2026-10-05T11:15" });
+  assert.ok(!("error" in result));
+  assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true);
+  assert.ok(f.request().offered.every(o => o.start !== "2026-10-05T11:15:00+00:00"));
   assert.equal(f.ownerLines.length, 0);
 });
 
@@ -467,7 +479,7 @@ test('a failed replacement through the writer preserves the original offer and l
 
 for (const action of ['pick', 'other_times'] as const) test(`guest ${action} reconciles a lost write response through the writer`, async t => {
   const f = fixture(t); f.lost.add(action === 'pick' ? 'update' : 'create');
-  const result = await guestAction(context, action, { start: offers[0]!.start, after: '11:00' });
+  const result = await guestAction(context, action, action === 'pick' ? { start: offers[0]!.start } : { after: '11:00' });
   assert.ok(!('error' in result), JSON.stringify(result));
   assert.ok(f.request().calendarRevision);
   if (action === 'pick') {

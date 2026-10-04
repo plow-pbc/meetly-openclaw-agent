@@ -5,7 +5,7 @@ import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
 import { findByChat, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
-import { checkTime, findSlots, localeFormatter, withinConstraints, type SlotQuery } from "./slots.ts";
+import { checkTime, findSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
 import { DAYS, localIso } from "./time.ts";
 
@@ -112,9 +112,11 @@ async function pick(request: Request, config: Config, start: string) {
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
   const preferred = preferences(args);
   const start = args.start;
+  let exact: Slot | undefined;
   if (start) {
     const checked = await check(request, config, start);
     if (checked.free && checked.outsideHours) return askOwner(request, config, { start }, sendOwner);
+    if (checked.free && withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) exact = checked.slot;
     preferred.from = preferred.to = checked.slot.start.slice(0, 10);
     preferred.after = checked.slot.start.slice(11, 16);
     preferred.before = checked.slot.end.slice(11, 16);
@@ -124,7 +126,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   const narrowed = intersection(request.constraints, preferred);
   const query: SlotQuery = { ...busy, ...narrowed, days: narrowed.days as Day[] | undefined, now, config,
     durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
-  let { slots } = findSlots(query);
+  let { slots } = exact ? { slots: [exact] } : findSlots(query);
   const preferencesUnavailable = slots.length === 0;
   if (preferencesUnavailable) slots = findSlots({ ...query, ...intersection(request.constraints), days: request.constraints?.days as Day[] | undefined }).slots;
   if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
