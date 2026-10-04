@@ -75,11 +75,11 @@ Shortcuts:
    do Saturday 10:00 (outside the configured days).
    - Expect: Meetly tells them it will check with the owner, and holds and
      books nothing.
-   - Expect: the owner is asked to confirm in the same group.
-   - Owner answers "yes" in the group: the event is booked, the holds are deleted, and
-     the group is confirmed.
-   - A "yes" in the owner's DM redirects them to approve in the group, with no calendar changes.
-   - Repeat with "no" in the group: the group gets alternatives, and
+   - Expect: the owner is asked privately in their main DM.
+   - Owner answers "yes" in that DM: the event is booked, the holds are deleted, and
+     the recorded meeting group receives confirmation.
+   - Check: another meeting group receives no answer or calendar changes.
+   - Repeat with "no" in the DM: the recorded group gets alternatives, and
      `m/ledger.ts pending` is empty.
 8. [ ] **Email-only sender.** iMessage from an Apple ID with no phone in
    Contacts.
