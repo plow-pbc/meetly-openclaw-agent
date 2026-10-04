@@ -353,8 +353,8 @@ test("duration changes refresh the topic used for calendar titles and group labe
 test("owner approval re-check uses the saved meeting duration and meal", () => {
   const group = groupSkill();
   const approval = group.slice(group.indexOf("## Owner confirms"), group.indexOf("## Existing meetings"));
-  assert.ok(approval.includes("slots.ts --at <pendingOwner.start> --duration <request.durationMin>"));
-  assert.ok(approval.includes("--meal <request.meal>"));
+  assert.ok(approval.includes("calendar.ts approve-time --id <id>"));
+  assert.ok(approval.includes("writer uses the saved duration"));
 });
 
 test("an owner introduction waits without asking the group to plan a meeting", () => {
@@ -363,4 +363,19 @@ test("an owner introduction waits without asking the group to plan a meeting", (
   assert.ok(group.includes("Do not ask the guest or group what, when, format or place"));
   assert.ok(group.indexOf("An introduction alone") < group.indexOf("Resolve the recipient"));
   assert.ok(flat(prompt).includes("only a short Meetly introduction and wait"));
+});
+
+test("time approvals cannot infer overlap permission and busy times get nearest free alternatives", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("this approves the time only if free, never an overlap"));
+  assert.ok(group.includes("Never read conflict titles to invent permission"));
+  assert.ok(group.includes("slots.ts --near <near> --request <id> --no-overlap"));
+  assert.ok(group.includes("tell the owner in their DM that the time is busy"));
+});
+
+test("group greetings target the guest and owner coordination stays private", () => {
+  assert.ok(flat(prompt).includes("Greet the guest, never the owner who added you"));
+  assert.ok(flat(prompt).includes("Never address the owner"));
+  assert.ok(groupSkill().includes("Greet the guest, never the owner, in every group introduction"));
+  assert.ok(groupSkill().includes('never append "Patrick, let me know in our DM"'));
 });

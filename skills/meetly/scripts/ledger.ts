@@ -209,11 +209,11 @@ export function setDoNotContact(ledger: Ledger, handle: string, blocked: boolean
     ? appendLog({ ...r, doNotContact: blocked, updatedAt: new Date(now).toISOString() }, blocked ? "Do not contact enabled" : "Do not contact cleared", now) : r) };
 }
 
-// Monitoring metadata does not invalidate a scheduling action's snapshot.
+// Monitoring and question-delivery metadata do not invalidate a scheduling action's snapshot.
 export function sameRequest(a: Request | undefined, b: Request | undefined): boolean {
   if (!a || !b) return a === b;
-  const { lastNudge: _an, log: _al, lastGuestReplyAt: _ar, ...left } = a;
-  const { lastNudge: _bn, log: _bl, lastGuestReplyAt: _br, ...right } = b;
+  const { lastNudge: _an, log: _al, lastGuestReplyAt: _ar, detailsAskedAt: _ad, updatedAt: _au, ...left } = a;
+  const { lastNudge: _bn, log: _bl, lastGuestReplyAt: _br, detailsAskedAt: _bd, updatedAt: _bu, ...right } = b;
   return JSON.stringify(left) === JSON.stringify(right);
 }
 

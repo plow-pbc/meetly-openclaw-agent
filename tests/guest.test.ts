@@ -1508,3 +1508,31 @@ test(`guest other-times resolves zone-less ${start} in the owner's timezone`, as
   assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T20:00:00-07:00", end: "2026-10-05T20:30:00-07:00", askedAt: new Date(now).toISOString() });
   assert.deepEqual(f.request().offered, offers);
 });
+
+test("a simultaneous request view cannot invalidate an other-times search", async t => {
+  const f = fixture(t);
+  let viewed = false;
+  f.hooks.before = async argv => {
+    if (argv[2] === "events" && !viewed) {
+      viewed = true;
+      const result = await f.act(context, "view");
+      assert.equal("askDetails" in result && result.askDetails, true);
+    }
+  };
+  const result = await f.act(context, "other_times", { start: "2026-10-05T11:00" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().offered[0]!.start, "2026-10-05T11:00:00+00:00");
+  assert.ok(f.request().detailsAskedAt);
+  assert.equal("askDetails" in result && result.askDetails, false);
+});
+
+test("calendar tool failures give the model safe recovery instructions", async t => {
+  const f = fixture(t); f.fail.add("events");
+  const result = await f.tools.get("meetly_other_times")!.execute("failure", { start: "2026-10-05T11:00" });
+  assert.equal("isError" in result && result.isError, true);
+  const details = JSON.parse(result.content[0]!.text);
+  assert.equal(details.code, "CALENDAR_UNAVAILABLE");
+  assert.equal(details.recovery.action, "reply");
+  assert.equal(details.recovery.retry, false);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE|owner@example.com/);
+});

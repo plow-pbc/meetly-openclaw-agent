@@ -63,12 +63,14 @@ export function registerGuestTools(api, execute = run, outbound = loadOutbound) 
     api.registerTool(context => ({
       name, label: name, description: description + (context.agentAccountId === "email" ? " Email turn: include the owner's configured time zone in every offer. Relay scheduling results with plow_send_email to this thread chat uid, never in your final text. Your final reaches the owner privately. For an unanswerable guest question, use meetly_ask_owner. Whenever a tool returns replyToOwner, put its ownerQuestion in your final; do not send email or a separate DM. Do not announce that an owner ask was sent before that final is delivered. Any participant may act for the meeting; invite the request's guest, not every CC. For a Meet, the invitation contains the link; do not promise a later thread reminder." : ""), parameters,
       async execute(_id, args) {
-        const result = await execute({ ...context, turnStartedAt: guestTurns.take(context.sessionKey, _id) }, action, cleanArgs(args, parameters.required), text => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound));
+        let result = await execute({ ...context, turnStartedAt: guestTurns.take(context.sessionKey, _id) }, action, cleanArgs(args, parameters.required), text => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound));
         const emailReply = context.agentAccountId !== "email" ? undefined : result.replyToOwner
           ? "Return ownerQuestion in your final for the owner. Do not email the thread or send a separate DM for this handoff."
           : result.channel === "email" && result.chatUid
             ? `Send your scheduling response with plow_send_email to ${JSON.stringify(result.chatUid)}. This includes the guest's first reply and CC assistant handoffs; for a handoff, acknowledge it and present the current offer. State the time zone ${JSON.stringify(result.timezone)} in every offer, including replacement times. Your final is private to the owner and cannot answer the guest. Write as Meetly about ${JSON.stringify(result.ownerName)} in the third person.`
             : undefined;
+        if ("error" in result) result = { ...result, code: result.code ?? "SCHEDULING_REJECTED",
+          recovery: result.recovery ?? { action: result.silent ? "silent" : "reply", retry: false, message: result.error } };
         return { isError: "error" in result, content: [
           { type: "text", text: JSON.stringify(result) },
           ...(emailReply ? [{ type: "text", text: emailReply }] : []),

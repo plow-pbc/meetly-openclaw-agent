@@ -241,6 +241,10 @@ test("replacement slot search keeps saved and newly resolved overlap authorizati
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.json.slots[0].start, start);
   assert.doesNotMatch(result.stdout, /saved|new|own-hold|allowOverlap/);
+  const alternatives = cli("slots.ts", ["--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--near", start, "--no-overlap"], env);
+  assert.equal(alternatives.status, 0, alternatives.stderr);
+  assert.equal(alternatives.json.slots[0].start, end);
+
 });
 
 test("lunch and dinner override working hours; coffee keeps the owner's window and 30-minute default", () => {

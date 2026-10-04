@@ -206,6 +206,7 @@ if (isMain(import.meta.url)) {
         from: { type: "string" },
         to: { type: "string" },
         "allow-overlap": { type: "string", multiple: true },
+        "no-overlap": { type: "boolean", default: false },
         exclude: { type: "string", multiple: true },
         count: { type: "string" },
         at: { type: "string" },
@@ -240,6 +241,7 @@ if (isMain(import.meta.url)) {
       if (values.duration !== undefined) check.durationMin = positiveInt(values.duration, "--duration");
       if (values["allow-overlap"]) check.allowOverlap = values["allow-overlap"].map(value => JSON.parse(value));
       if (values.locale !== undefined) check.locale = values.locale;
+      if (values["no-overlap"]) check.allowOverlap = [];
       return { ...checkTime(check), degraded };
     }
     const q: SlotQuery = { now, config, meal, busy: input.busy, allowOverlap: input.allowOverlap };
@@ -273,6 +275,7 @@ if (isMain(import.meta.url)) {
       q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);
       if (request.booked) q.exclude = [...(q.exclude ?? []), request.booked.start];
     }
+    if (values["no-overlap"]) q.allowOverlap = [];
     return { ...findSlots(q), degraded };
   });
 }

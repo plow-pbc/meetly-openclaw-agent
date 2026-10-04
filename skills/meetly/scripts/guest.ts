@@ -292,8 +292,19 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt);
     return { error: "Unknown scheduling action." };
   } catch (error) {
-    if (error instanceof WeekdayDateRequired) return { error: error.message };
+    if (error instanceof WeekdayDateRequired) return { error: error.message, code: "DATE_REQUIRED",
+      recovery: { action: "ask_date", retry: false } };
+    const message = error instanceof Error ? error.message : "";
+    const code = message === "request changed" ? "REQUEST_CHANGED"
+      : message === "calendar unavailable" ? "CALENDAR_UNAVAILABLE"
+      : /calendar (?:operation|write) unresolved/.test(message) ? "CALENDAR_WRITE_PENDING" : "SCHEDULING_FAILED";
+    // Keep the exception in local diagnostics; never relay backend details to guests.
+    console.error(`meetly guest ${action} failed (${code}):`, error);
     // Backend output can contain private event details, contact data, and accounts.
-    return { error: "The scheduling action could not be completed. Check the request before trying again." };
+    return { error: "The scheduling action could not be completed.", code,
+      recovery: code === "REQUEST_CHANGED" ? { action: "view_request", tool: "meetly_view_request", retry: false }
+        : { action: "reply", retry: false, message: code === "CALENDAR_WRITE_PENDING"
+          ? "The calendar update is still pending. Please wait for confirmation."
+          : "I couldn't update the meeting times. Please try again later." } };
   }
 }
