@@ -85,7 +85,7 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; durationMin: number; u
   const { config, now } = q;
   const tz = config.timezone;
   const duration = durationFor(q);
-  const count = q.count ?? SLOT_COUNT;
+  const count = Math.min(q.count ?? SLOT_COUNT, SLOT_COUNT);
   const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], start: q.near }).slot.start);
 
   let [startMin, endMin] = windowFor(config, q.meal);

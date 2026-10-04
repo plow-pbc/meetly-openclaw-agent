@@ -35,6 +35,11 @@ test("no busy: spread over the first days, after the minimum notice", () => {
   assert.equal(unknownAfter, undefined);
 });
 
+test("an oversized count still offers only three times, while smaller counts are honored", () => {
+  assert.deepEqual(starts({ count: 6 }), starts());
+  for (const count of [1, 2]) assert.deepEqual(starts({ count }), starts().slice(0, count));
+});
+
 test("busy time is skipped unless its event may be overlapped", () => {
   const busy = [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly", account: "jean@example.com" }];
   assert.equal(starts({ busy })[0], "2026-09-28T11:00:00-03:00");
@@ -122,6 +127,9 @@ test("the CLI reads busy.ts output and the stored config", () => {
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.json.slots[0].start, "2026-09-28T11:00:00-03:00");
   assert.deepEqual(r.json.degraded, ["other@example.com"]);
+  const oversized = cli("slots.ts", ["--in", busyFile, ...now, "--count", "6"], env);
+  assert.equal(oversized.status, 0, oversized.stderr);
+  assert.deepEqual(oversized.json, r.json);
   const allowed = cli("slots.ts", ["--in", busyFile, ...now, "--allow-overlap", '{"account":"jean@example.com","id":"weekly"}', "--count", "1"], env);
   assert.deepEqual(allowed.json.slots.map((s: { label: string }) => s.label), ["mon 28/9 10:00"]);
   const at = cli("slots.ts", ["--in", busyFile, ...now, "--at", "2026-10-03T10:00:00-03:00", "--duration", "60", "--locale", "pt-BR"], env);
