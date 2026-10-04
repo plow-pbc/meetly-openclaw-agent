@@ -64,6 +64,7 @@ test("the owner answer sends once to the matched group, clears its question, and
   });
   const result = await tool.execute("answer", { ...args, chatUid: "intruder" });
   assert.equal(result.isError, false);
+  assert.equal(result.details.sent, true);
   assert.equal(deliveries.length, 1);
   assert.equal(deliveries[0].to, "group-mia");
   assert.deepEqual(deliveries[0].payloads, [{ text: args.text }]);
@@ -161,7 +162,7 @@ test("an owner answer already visible in the group clears the question without s
   const f = fixture(t);
   const result = await answerOwner({ ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" }, args,
     async () => assert.fail("the owner's answer is already in the group"));
-  assert.ok("answered" in result);
+  assert.deepEqual(result, { answered: true, sent: false, requestId: "mia", silent: true });
   assert.equal(f.read().requests[0]!.pendingOwner, undefined);
   assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
 });

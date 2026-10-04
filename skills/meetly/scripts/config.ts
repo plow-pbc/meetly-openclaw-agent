@@ -1,4 +1,5 @@
 // The owner's scheduling config: types, answer parsing and validation.
+import type { Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { DAYS, type Day } from "./time.ts";
@@ -38,6 +39,10 @@ export const DEFAULTS = {
   durationMin: 30,
   horizonDays: 14,
 };
+
+export function durationFor(q: { config: Config; meal?: Meal; durationMin?: number }): number {
+  return q.durationMin ?? (q.meal === "lunch" || q.meal === "dinner" ? 60 : q.meal === "coffee" ? 30 : q.config.durationMin);
+}
 
 export const QUESTIONS: Record<RequiredField, string> = {
   ownerName: "When I talk to other people for you, I write about you by name, like \"Ana is free at 3pm\". What name should I use?",

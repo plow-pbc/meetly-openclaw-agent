@@ -22,7 +22,7 @@ test("preboot carries every step of the pinned base's boot", () => {
   const flat = (text: string) => text.replace(/\s+/g, " ");
   const preboot = flat(readFileSync(join(root, "boot", "preboot.ts"), "utf8"));
   const base = readFileSync(join(root, "tests", "fixtures", "base-main.ts.txt"), "utf8");
-  // The two lines preboot deliberately changes, and what it has instead.
+  // The base steps customized for Meetly, and what they have instead.
   const changed: Record<string, string> = {
     "const config = renderConfig(identity, base);": "const config = withMacTimeout(renderConfig(identity, base));",
     'await syncConfig(config, "/var/lib/plow/openclaw.json", "/etc/plow/openclaw");': "await syncConfig(config, CONFIG, INCLUDES);",
@@ -31,7 +31,8 @@ test("preboot carries every step of the pinned base's boot", () => {
     .filter((l) => l && !l.startsWith("import ") && !l.startsWith("//") && !["try {", "}", "} catch (error) {"].includes(l));
   assert.ok(steps.length > 15, "fixture looks empty");
   for (const step of steps) {
-    const expected = changed[step] ?? step.replace("error instanceof Error ? error.message : String(error)", "message(error)");
+    const expected = changed[step] ?? step.replace("error instanceof Error ? error.message : String(error)", "message(error)")
+      .replace("renderPrompt(prompt,", "renderPrompt(namedPrompt,");
     assert.ok(preboot.includes(flat(expected)), `preboot is missing the base step: ${step}`);
   }
   for (const module of ["log", "agent-index", "config", "identity", "prompt", "process"]) {
