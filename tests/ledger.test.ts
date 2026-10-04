@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   addRequest, saveRequest, cleanupList, pendingOwnerList, expiredRequests, findByChat, findOpenByHandle, normalizeHandle, sameHandle, updateRequest,
@@ -422,6 +422,35 @@ for (const origin of ["owner", "owner-group", "inbound"] as const) test(`request
   assert.equal(saved.chatUid, "cht_MiXeD");
 });
 
+test("topics strip only a trailing reference to the recorded guest", () => {
+  for (const [topic, expected] of [
+    ["lunch with Kai", "lunch"],
+    ["lunch WITH KAI", "lunch"],
+    ["review with Kai about hiring", "review with Kai about hiring"],
+    ["lunch with Kaia", "lunch with Kaia"],
+  ]) {
+    const added = addRequest(empty(), input({ name: "Kai", topic }), T0, "r_1");
+    assert.equal(added.requests[0]!.topic, expected);
+    const updated = updateRequest(added, "r_1", { topic: "budget review with Kai" }, T0);
+    assert.equal(updated.requests[0]!.topic, "budget review");
+  }
+});
+
+test("poll saves unstated meal durations from config and preserves explicit lengths", t => {
+  const home = tmpHome();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeJson(join(home, "config.json"), { setupDoneAt: new Date(T0).toISOString(), durationMin: 45, calendars: [], defaultAccount: "owner@example.com" });
+  for (const [meal, stated, expected] of [["lunch", undefined, 60], ["dinner", undefined, 60], ["coffee", undefined, 30], [undefined, undefined, 45], ["lunch", 90, 90]] as const) {
+    const result = cli("ledger.ts", ["save", "--json", JSON.stringify({ origin: "inbound", status: "asked", handle: `guest${expected}${meal}@example.com`, topic: "meet", meal, durationMin: stated })], { MEETLY_HOME: home });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.json.request.durationMin, expected);
+  }
+  rmSync(join(home, "config.json"));
+  const retry = cli("ledger.ts", ["save", "--json", JSON.stringify({ origin: "inbound", status: "asked", handle: "guest60lunch@example.com", topic: "meet", meal: "lunch" })], { MEETLY_HOME: home });
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(retry.json.request.durationMin, 60);
+});
+
 test("a fresh start reservation tells the caller to send, and a duplicate explicitly forbids sending", () => {
   const env = { MEETLY_HOME: tmpHome() };
   const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(input())], env).json.request;
@@ -463,4 +492,22 @@ test("DM name lookup finds only an unambiguous open request", () => {
   const ambiguous = find("Bo");
   assert.equal(ambiguous.status, 1);
   assert.match(ambiguous.stderr, /ambiguous/i);
+});
+
+for (const command of ["add", "save", "update"]) test(`public ledger ${command} refuses calendar-owned overlap grants`, t => {
+  const home = tmpHome(), env = { MEETLY_HOME: home };
+  const saved = cli("ledger.ts", ["add", "--json", JSON.stringify(input())], env).json.request;
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const before = readFileSync(join(home, "ledger.json"), "utf8");
+  for (const allowOverlap of [[{ account: offer.account, id: "private-event" }], []]) {
+    const payload = command === "update" ? { allowOverlap } : { ...input(), allowOverlap };
+    const path = join(home, "write.json");
+    writeFileSync(path, JSON.stringify(payload));
+    for (const args of [["--json", JSON.stringify(payload)], ["--json-file", path]]) {
+      const result = cli("ledger.ts", [command, "--id", saved.id, ...args], env);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /allowOverlap is managed by calendar.ts/);
+      assert.equal(readFileSync(join(home, "ledger.json"), "utf8"), before);
+    }
+  }
 });

@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
-import { calendarAction, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
+import { approveTime, calendarAction, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
 import { addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { macOutcome, type MacCommand, type MacOutcome } from "../skills/meetly/scripts/mac.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
@@ -510,4 +510,88 @@ test("raw ledger mutations cannot bypass DM overlap authorization", t => {
     assert.match(result.stderr, /owner DM|managed by calendar/);
     assert.deepEqual(f.read(), before);
   }
+});
+
+for (const [meal, supplied, expected] of [["lunch", 30, 60], ["dinner", 30, 60], ["coffee", 60, 30]] as const)
+test(`a ${meal} offer ignores model duration in both the ledger and calendar hold`, async t => {
+  const f = fixture(t);
+  const { request } = await offerRequest({ ...f.offer, meal, durationMin: supplied,
+    offered: [{ start, end: new Date(Date.parse(start) + supplied * 60_000).toISOString() }],
+  }, f.options);
+  assert.equal(request.durationMin, expected);
+  const slot = request.offered[0]!;
+  assert.equal(Date.parse(slot.end) - Date.parse(slot.start), expected * 60_000);
+  const hold = f.events.get(slot.holdId!)!;
+  assert.equal(Date.parse(hold.end.dateTime) - Date.parse(hold.start.dateTime), expected * 60_000);
+});
+
+test("a meal offer checks conflicts for its full default duration", async t => {
+  const f = fixture(t);
+  f.events.set("later-conflict", calendarEvent("later-conflict", "2026-10-05T10:45:00Z", "2026-10-05T11:00:00Z"));
+  await assert.rejects(offerRequest({ ...f.offer, meal: "lunch", durationMin: 30,
+    offered: [{ start, end }],
+  }, f.options));
+  assert.equal(f.calls.some(c => c[2] === "create"), false);
+  assert.deepEqual(f.read().offered, f.input.offered);
+});
+
+test("a pending time approval cannot book over even a saved overlap permission", async t => {
+  const f = fixture(t);
+  const ledger = readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] });
+  ledger.requests[0]!.pendingOwner = { askedAt: new Date(now).toISOString(), start, end };
+  ledger.requests[0]!.allowOverlap = [{ account, id: "conflict" }];
+  writeJson(join(f.home, "ledger.json"), ledger);
+  f.events.set("conflict", calendarEvent("conflict", start, end));
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /time approval.*busy/i);
+  assert.equal(f.read().status, "offered");
+  assert.ok(f.read().pendingOwner);
+  assert.equal(f.calls.some(c => ["create", "update"].includes(c[2]!)), false);
+});
+
+for (const busy of [false, true]) test(`time approval without a pending ask ${busy ? "refuses busy time" : "books a free time"}`, async t => {
+  const f = fixture(t);
+  const approvedStart = "2026-10-05T20:00:00Z", approvedEnd = "2026-10-05T20:30:00Z";
+  const ledger = readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] });
+  ledger.requests[0]!.allowOverlap = [{ account, id: "conflict" }];
+  writeJson(join(f.home, "ledger.json"), ledger);
+  if (busy) f.events.set("conflict", calendarEvent("conflict", approvedStart, approvedEnd));
+  const result = await approveTime("r_one", { start: approvedStart }, f.options);
+  assert.equal(result.approved, !busy);
+  if (busy) {
+    assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
+    assert.equal("near" in result && Date.parse(result.near!), Date.parse(approvedStart));
+    assert.equal(f.read().status, "offered");
+    assert.deepEqual(f.read().offered, f.input.offered);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE CALENDAR TITLE/);
+  } else {
+    assert.equal(f.read().status, "booked");
+    assert.equal(Date.parse(f.read().booked!.end), Date.parse(approvedEnd));
+  }
+  t.diagnostic(JSON.stringify({ approved: result.approved, ...("code" in result ? { code: result.code, near: result.near, recovery: result.recovery } : {}) }));
+});
+
+test("a time approval reports a conflict that appears after its calendar read", async t => {
+  const f = fixture(t);
+  const command = async (cmd: MacCommand) => cmd.argv[2] === "update"
+    ? { error: "Calendar slot is busy", code: "calendar-conflict" as const } : f.command(cmd);
+  const result = await approveTime("r_one", { start }, { ...f.options, command });
+  assert.equal(result.approved, false);
+  assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
+  assert.equal(f.read().status, "offered");
+  assert.deepEqual(pendingCalendarWrites(), []);
+});
+
+
+test("a time approval never sends a conflict override even across its own hold", async t => {
+  const f = fixture(t);
+  const writes: string[][] = [];
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] !== "create") return f.command(cmd);
+    writes.push(cmd.argv);
+    return { error: "Calendar slot is busy", code: "calendar-conflict" as const };
+  };
+  const result = await approveTime("r_one", { start: "2026-10-05T10:15:00Z" }, { ...f.options, command });
+  assert.equal(result.approved, false);
+  assert.equal(writes.length, 1);
+  assert.equal(writes.some(c => c.includes("--confirm-conflict")), false);
 });

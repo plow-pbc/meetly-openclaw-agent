@@ -1,5 +1,5 @@
 # Meetly: a scheduling variant of Plow's OpenClaw base image.
-FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents@sha256:1cf8e57ec949f8077329927da47df4215620605cdd987bbd4bb36eaa5147da06
+FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents@sha256:160b9fe24f3ec0b134626c349ba4f5a209bb73650d10fb5d6c363597ac176ee4
 
 # New groups give guests only the scheduling tools; owners keep full tools.
 ENV AGENT_ID=meetly \
@@ -12,11 +12,9 @@ ENV AGENT_ID=meetly \
 COPY prompt/AGENTS.md /opt/plow/prompt/AGENTS.md
 COPY skills/ /opt/plow/skills/
 
-# Meetly's entrypoint: the base's boot step for step, plus the model (Plow's
-# Luna by default, the owner's own OpenAI account after `plow-llm openai`),
-# the setup gate plugin and the Mac relay's request timeout.
+# Meetly's entrypoint: the base's boot step for step, plus the setup gate
+# plugin and the Mac relay's request timeout.
 COPY boot/ /opt/meetly/boot/
 COPY plugin/ /opt/meetly/plugin/
-COPY boot/plow-llm.sh /usr/local/bin/plow-llm
 
 CMD ["node", "/opt/meetly/boot/preboot.ts"]

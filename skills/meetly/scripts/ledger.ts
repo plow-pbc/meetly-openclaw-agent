@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
-import { holdHours, reminderLeadMin } from "./config.ts";
+import { durationFor, holdHours, loadConfig, reminderLeadMin } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { file } from "./paths.ts";
 import { uniqueEvents, type EventRef } from "./busy.ts";
@@ -38,6 +38,7 @@ export function intersectConstraints(owner: Constraints = {}, guest: Constraints
   };
 }
 
+export type Meal = "lunch" | "dinner" | "coffee";
 // How the meeting happens. `unknown` until the request or an answer says it.
 export type Format = "meet" | "in_person" | "phone" | "unknown";
 // The booked event's time, and the Google account it lives on.
@@ -56,6 +57,7 @@ export type Request = {
   topic: string;
   location?: string;
   durationMin: number;
+  meal?: Meal;
   // The owner's conditions, kept for every offer of this request.
   constraints?: Constraints;
   // Times the person proposed; only the first offer uses them.
@@ -185,6 +187,16 @@ function checkOffers(offered: unknown): Offer[] {
   return offered as Offer[];
 }
 
+// The guest is a separate field; calendar titles append it and owner messages name it first.
+export function meetingTopic(request: Pick<Request, "topic" | "name" | "handle">): string {
+  let topic = request.topic.trim();
+  const suffix = ` with ${request.name?.trim() || request.handle}`.toLowerCase();
+  while (topic.length > suffix.length && topic.toLowerCase().endsWith(suffix)) {
+    topic = topic.slice(0, -suffix.length).trimEnd();
+  }
+  return topic;
+}
+
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
   input = { ...input, handle: normalizeHandle(input.handle) };
   if ("calendarRevision" in input) throw new Error("calendarRevision is managed by calendar.ts");
@@ -194,7 +206,9 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   }
   if (input.origin !== "inbound" && input.origin !== "owner" && input.origin !== "owner-group") throw new Error(`origin must be inbound, owner or owner-group, got ${input.origin}`);
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
+  input = { ...input, topic: meetingTopic(input) };
   if (!Number.isInteger(input.durationMin) || input.durationMin <= 0) throw new Error("durationMin must be a positive whole number");
+  if (input.meal !== undefined && !["lunch", "dinner", "coffee"].includes(input.meal)) throw new Error("meal must be lunch, dinner or coffee");
   const status = input.status ?? "offered";
   if (status === "offered") checkOffers(input.offered);
   else if (status !== "asked") throw new Error(`a new request is asked or offered, got ${status}`);
@@ -286,6 +300,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
     if (value === null && (NULLABLE as readonly string[]).includes(key)) delete updated[key as (typeof NULLABLE)[number]];
     else if (value !== undefined) (updated as Record<string, unknown>)[key] = value;
   }
+  updated.topic = meetingTopic(updated);
   // A link belongs to a Meet: moving to another format drops it, and a link
   // is never set on a meeting that is not one.
   if (updated.meetUrl !== undefined && updated.format !== "meet") {
@@ -373,6 +388,7 @@ function jsonArg(values: { json?: string; "json-file"?: string }): any {
   if (text === undefined) throw new Error("pass --json '<object>' or --json-file F");
   const value = JSON.parse(text);
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("the JSON must be an object");
+  if ("allowOverlap" in value) throw new Error("allowOverlap is managed by calendar.ts; use the owner's offer flow");
   return value;
 }
 
@@ -428,7 +444,12 @@ if (isMain(import.meta.url)) {
         const input = jsonArg(values);
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
-        const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
+        const ledger = updateJson<Ledger>(path, EMPTY, (l) => {
+          if (input.status === "asked" && input.durationMin === undefined && !findOpenByHandle(l, input.handle) && !findOpenBySource(l, input)) {
+            input.durationMin = durationFor({ config: loadConfig(), meal: input.meal });
+          }
+          return saveRequest(l, input, now, id);
+        });
         return { request: findOpenByHandle(ledger, input.handle) ?? findOpenBySource(ledger, input) };
       }
       case "update": {

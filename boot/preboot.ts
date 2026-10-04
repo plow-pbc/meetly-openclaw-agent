@@ -4,8 +4,8 @@
 //
 //  - the Mac relay's request timeout (mcp.ts), in the config the base renders,
 //    which the base rewrites on every boot and nothing after it could change;
-//  - the model (llm.ts) and the setup gate (gate.ts), in agents.defaults and
-//    plugins.entries, the part of openclaw.json the base leaves to the owner.
+//  - the setup gate (gate.ts), in plugins.entries, the part of
+//    openclaw.json the base leaves to the owner.
 //
 // The scheduling plugin is required: installation must succeed before boot.
 // The base's steps fail exactly as the base's boot does.
@@ -13,7 +13,6 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { applyGate, installGate } from "./gate.ts";
-import { applyRoute, llmRoute } from "./llm.ts";
 import { withMacTimeout } from "./mcp.ts";
 
 const CONFIG = "/var/lib/plow/openclaw.json";
@@ -42,6 +41,7 @@ try {
   process.env.OPENCLAW_GATEWAY_PASSWORD = randomBytes(32).toString("hex");
   process.env.PLOW_MCP_BRIDGE_TOKEN = randomBytes(32).toString("hex");
   const identity = await identityFromApi(base, process.env.PLOW_AGENT_TOKEN);
+  identity.agent = { ...identity.agent, name: identity.line.display_name?.trim() || identity.agent?.name };
   const config = withMacTimeout(renderConfig(identity, base));
   config.tools.alsoAllow.push("meetly_answer_owner", "meetly_offer_owner_group");
   await mkdir("/var/lib/plow/workspace", { recursive: true });
@@ -51,7 +51,8 @@ try {
     await rm(`/var/lib/plow/workspace/${name}`, { force: true });
   }
   const prompt = await readFile("/opt/plow/prompt/AGENTS.md", "utf8");
-  await writeFile("/var/lib/plow/workspace/AGENTS.md", await renderPrompt(prompt, identity.mcp_url, process.env.PLOW_AGENT_TOKEN, config.channels.plow.threadTrust, identity.agent?.web_url));
+  const namedPrompt = prompt.replaceAll("{{agentName}}", () => JSON.stringify(identity.agent.name));
+  await writeFile("/var/lib/plow/workspace/AGENTS.md", await renderPrompt(namedPrompt, identity.mcp_url, process.env.PLOW_AGENT_TOKEN, config.channels.plow.threadTrust, identity.agent?.web_url));
 
   const JSON5 = createRequire("/opt/plow/package.json")("json5");
   let owner: Record<string, unknown>;
@@ -61,14 +62,6 @@ try {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     // A fresh volume starts with the base config.
     owner = structuredClone(config);
-  }
-  try {
-    const { route, problem } = llmRoute();
-    if (problem) console.error(`meetly-boot: llm: ${problem}`);
-    owner = applyRoute(structuredClone(owner), route, base);
-    console.log(`meetly-boot: llm ${route.provider} ${route.primary}${route.fallbacks.length ? ` (fallback ${route.fallbacks.join(", ")})` : ""}`);
-  } catch (error) {
-    console.error(`meetly-boot: llm config left as it was: ${message(error)}`);
   }
   applyGate(owner);
   await writeFile(`${CONFIG}.tmp`, JSON.stringify(owner, null, 2) + "\n", { mode: 0o600 });

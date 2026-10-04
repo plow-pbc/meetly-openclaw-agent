@@ -26,8 +26,8 @@ Shortcuts:
 - [ ] **Skills and runtime.** `docker run --rm
   --entrypoint sh meetly:dev -c 'ls /opt/plow/skills && test -f
   /app/openclaw.mjs && node --version'`.
-  - Expect: `google-workspace`, `owners-mac`, `meetly`, `meetly-group`,
-    `meetly-poll`, `meetly-setup`, and Node ≥ 24.16.
+  - Expect: `google-workspace`, `owners-mac`, `meetly`, `meetly-confirm`,
+    `meetly-group`, `meetly-poll`, `meetly-setup`, and Node ≥ 24.16.
 
 ## Scenarios
 
@@ -129,8 +129,8 @@ ahead so its reminder fires during the run.
 16. [ ] **"call" alone.** iMessage: "let's have a call on Friday". Expect
     the format question.
 17. [ ] **Pick without the format.** Reply only "Tuesday works".
-    - Expect: booked at once, then one format question.
-    - Reply "Meet": the event gains a room, the owner hears it, and the
+    - Expect: booked at once, without a second format question.
+    - Have the guest volunteer "Meet": the event gains a room, the owner hears it, and the
       reminder fires later.
 18. [ ] **Owner request with the format.** In the DM: "set up a Meet with
     Patrick today". Expect no format question to Patrick.

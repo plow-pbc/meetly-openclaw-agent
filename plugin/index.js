@@ -56,12 +56,12 @@ export function gateContext(stdout) {
   // and the Mac could not answer them. The calendars are read from the Mac.
   const asking = status.next === "ownerName" || status.next === "timezone";
   const d = status.defaults;
-  const defaults = ` and that you start with ${d.days.join(",")}, ${d.windowStart}-${d.windowEnd}, ${d.durationMin}-minute meetings, up to ${d.horizonDays} days ahead, and they can change any of it by saying so`;
+  const defaults = ` and that you start with ${d.days.join(",")}, ${d.windowStart}-${d.windowEnd}, ${d.durationMin}-minute meetings by default; coffee 30 minutes, lunch and dinner 60 minutes; up to ${d.horizonDays} days ahead, and they can change any of it by saying so`;
   return [
     "Meetly setup check, already run for this turn (setup-status.ts): SETUP_NEEDED. Setup is not finished.",
     "Do not run setup-status.ts again this turn, and ignore any earlier setup question in the chat: this is the current state.",
     "Your reply, in the owner's language:",
-    `- If you have not introduced yourself in this conversation yet, open with one line: you are Meetly, their AI scheduling assistant, who books their meetings from their calendar and reaches people for them${defaults}.`,
+    `- If you have not introduced yourself in this conversation yet, open with one line: use your conversation name, then say you are their AI scheduling assistant, who books their meetings from their calendar and reaches people for them${defaults}.`,
     ...(name ? [`- In that line, say you will refer to them as ${name} when you talk to other people, and that they can change it.`] : []),
     ...latch,
     ...(asking
@@ -72,7 +72,7 @@ export function gateContext(stdout) {
       ]
       : [
         ...(status.next === "calendars"
-          ? ["- Do not ask which calendars to use: read them from the Mac and record every calendar with selected: true, as meetly-setup says."]
+          ? ["- Do not ask which calendars to use: read them from the Mac and record every calendar with selected: true except read-only holiday subscriptions, as meetly-setup says."]
           : []),
         "- Then run record-setup.ts --done, and carry out what the owner asked in this same turn.",
         "- If the owner asked for nothing yet, add one short line: tell me who to meet.",

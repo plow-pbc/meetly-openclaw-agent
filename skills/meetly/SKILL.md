@@ -15,15 +15,16 @@ exits non-zero: report that line; never guess a result. State lives in
 | `record-setup.ts` | `--field F --value V` \| `--done` | before setup `{saved, next, question}`; after `{saved, config}`; `--done` → `{done, config, crons}` |
 | `register-crons.ts` | `[--pause \| --resume]` | `{paused, actions}` |
 | `cursor.ts` | `get` \| `set <rowid>` \| `hold <rowid>` \| `release` \| `fail` \| `ok` | the cursor `{rowid, held?, …}`; `set` stops below `held` until the ledger has a request with that `sourceRowid`; `fail` → `{failingSince, warn}` |
-| `request-view.ts` | `--id X` | Group-safe request view with `askDetails`; reserves any permitted format/place question before returning it. Ask format/place only when `askDetails` is true. |
+| `request-view.ts` | `--id X` | Group-safe request view with `askDetails`; reserves any permitted format/place question before returning it |
 | `ledger.ts` | `find --handle H [--status asked\|offered]` \| `find --chat U` \| `find --name N` | `{request}`; chat lookup is exact and a name miss returns `{request:null}` |
 | | `add --json '<obj>'` \| `--json-file F` | `{request}` (refused if the person already has an open request) |
 | | `save --json '<obj>'` \| `--json-file F` | `{request}` (creates, or replaces the current open offer by handle or inbound `sourceRowid`, re-keying it to the supplied handle and preserving its id, chat link and delivery state; `status:"asked"` changes nothing if one is open) |
-| | `update --id X --json '<patch>'` | `{request}`; patch keys: `chatUid, name, constraints, topic, pendingOwner, locale` (`null` clears `pendingOwner`); duration, overlap authorization, format, location, calendar and reminder fields require their owning tools/scripts |
+| | `update --id X --json '<patch>'` | `{request}`; patch keys: `chatUid, name, constraints, topic, pendingOwner, locale` (`null` clears `pendingOwner`); duration and other fields belong to their owning scripts |
 | | `expired [--hours N]` \| `asked [--unnotified]` \| `pending` \| `cleanup` | `{requests}` (`--unnotified` selects asked requests without `notifiedAt`) |
-| | `delivery --id X --kind notify\|start\|answer --action begin\|complete\|clear` | `{request, delivery?}`; `begin` records `notifyAttemptedAt`/`startedAt`; a successful start returns `delivery.state: reserved` and `sendNow: true` — send immediately once, without another begin, clear, or earlier-attempt check; `complete` records `notifiedAt`/`startCompletedAt` after success or unknown delivery. Notices retry until completed; starts refuse a second attempt. `answer begin` records `pendingOwner.answerAttemptedAt` before sending and refuses another attempt; successful answer delivery clears the pending question. `clear` is for an unlinked start or an answer attempt, on the owner's explicit instruction (answers use only `begin`/`clear`). Delivery fields cannot be set through `save` or `update`. |
+| | `delivery --id X --kind notify\|start\|answer --action begin\|complete\|clear` | `{request, delivery?}`: `begin` records the attempt before sending (a start returns `delivery.state: reserved`, `sendNow: true`; starts and answers refuse a second attempt); `complete` records success or unknown delivery; `clear` resets an unlinked start or an answer attempt, only on the owner's explicit instruction |
 | | `reminders [--lead-min N]` | `{requests}`: booked Meets whose link is due (default 10 min before, until 5 min after the start) |
 | `event.ts` | `--in F` | `{id, status, start, end, meetUrl}` from a saved calendar event read |
+| `calendar.ts` | `approve-time --id ID [--json '{"start":"ISO","attendees":"email"}']` | Books only if free; `TIME_APPROVAL_BUSY` returns `near` for `slots.ts --near ... --no-overlap`. Never grants overlap permission. |
 | `calendar.ts` | `offer --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer; retains an existing offer on failure; drops a failed new request while retaining cleanup |
 | | `book --id X --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book and release the other holds |
 | | `format --id X --json '{"format":"meet", "location":"<optional place>"}'` | save format/location on an offered request, or update and record a booked event; both use the calendar lock |
@@ -35,14 +36,15 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `--id X --sent` | `{request}`: the reminder went out; refused if already handled |
 | `busy.ts` | `--fetch [--allow-overlap-title <owner-supplied name>]` (reads the Mac, writes `tmp/busy.json`) | `{file, busy:<count>, degraded, unknownAfter?}` |
 | | `--in F [--in F2…] [--max 100]` | `{busy:[{start,end,id,account}], unknownAfter?, degraded}` |
-| `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], unknownAfter?, degraded}` |
-| | `--in busy.json --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
+| `time.ts` | `next_week --anchor ISO --timezone IANA` | `{from,to}` in the owner's timezone, anchored to the source message timestamp; pass weekdays separately |
+| `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--meal lunch\|dinner\|coffee] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], durationMin, unknownAfter?, degraded}` |
+| | `--in busy.json --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
 | `owner-chat.ts` | | `{chatUid}`: the owner's DM |
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
 
 Notes:
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
-  `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-group`.
+  `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-confirm`.
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.
   `meetUrl` only ever holds `https://meet.google.com/xxx-xxxx-xxx`, only on
   a `meet`; the ledger refuses anything else.
@@ -51,9 +53,35 @@ Notes:
   persists each write's identity, and commits the ledger from the actual result.
   An unresolved write must be resumed, never replayed or bypassed. Reminders
   read the event from a saved calendar read; never copy an id, time or link by hand.
-- `slots.ts` only offers times inside the owner's days and window. Requests
-  only narrow them.
+- `slots.ts` keeps the owner's days; `--meal` replaces their window with the
+  meal window. Save `meal` with the request for re-offers and guest booking.
 - Use each slot's `label` and `dayOfWeek` as printed; never work out a
   weekday yourself. Pass `--locale` for whoever reads the message (the other
   person's locale, like `pt-BR` or `en-US`, from their language or their
   phone's country code).
+
+## Meeting format
+
+`format` is how the meeting happens: `meet` (Meetly creates a Google Meet),
+`in_person` (a place), `phone`, or `unknown`. It counts only when the words
+say it, from the owner's request or from the other person:
+
+- `meet`: "Google Meet", "Meet", "video call", "videochamada", "online",
+  "por vídeo".
+- `in_person`: "in person", "presencial", "pessoalmente", or a named place
+  ("at Starbucks Paulista", "no escritório"). Put the place in `location`.
+- `phone`: "by phone", "por telefone", "call me at <number>".
+- Anything else is `unknown`, including "call", "ligação", "a quick chat",
+  and "coffee" or "lunch" with no place. Never guess from the topic. A Zoom
+  or other link someone sends is not `meet`: leave the format `unknown` and
+  put what they said in `location`.
+
+Pass `locale` with every save: the other person's language tag, the same one
+used for `slots.ts --locale`.
+
+An answer that arrives before booking is recorded with
+`calendar.ts format --id <id> --json '{"format":"<format>","location":"<place>"}'`
+(drop `location` when there is none). Before composing a reply, use the scheduling
+tool's request view or run `request-view.ts --id <id>` after the calendar work.
+Ask format/place only when `askDetails` is true. The view reserves that one question;
+ask it in the current reply and never repeat it. Missing details never block scheduling.
