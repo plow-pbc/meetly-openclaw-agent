@@ -270,6 +270,10 @@ test("meeting confirmations stay in the group while pending questions route priv
   const group = groupSkill();
   assert.ok(group.includes("In the owner's DM, run `ledger.ts pending`"));
   assert.ok(group.includes("The group confirmation also notifies the owner"));
+  const ownerConfirms = group.slice(group.indexOf("## Owner confirms"), group.indexOf("## Owner in the group"));
+  const groupConfirms = group.slice(group.indexOf("## Owner in the group"), group.indexOf("## Holds"));
+  assert.match(ownerConfirms, /If `origin` is not `owner-group` and the format is still `unknown`, ask it in the group, once/);
+  assert.match(groupConfirms, /For `unknown` \(or `in_person` with no place\), ask how or where to meet once only if `origin` is not `owner-group`/);
   assert.ok(group.includes("clears that question only after the send succeeds"));
   assert.ok(group.includes("Never send the answer separately"));
   assert.ok(flat(prompt).includes("asks go privately through `meetly_ask_owner`"));

@@ -228,7 +228,7 @@ disclose private information.
      "Book the event". It records the booking and retains `pendingOwner` for answer delivery.
   3. The writer releases the request's other holds.
   4. Confirm once with `meetly_answer_owner` for both the owner and guest.
-     If the format is still `unknown`, include the format question in that confirmation, once.
+     If `origin` is not `owner-group` and the format is still `unknown`, include the format question in that confirmation, once.
   5. If it is no longer free, explain in the group, and offer new
      times through `meetly_answer_owner`.
 - **No:** use `meetly_answer_owner` to tell the group that time doesn't work
@@ -274,7 +274,7 @@ are out of scope. A booked or closed request is not a no-match.
 Confirm once in the group: day, time, whether an invitation was sent, and how
 they will meet. For `meet`, say the link will be posted here 10 minutes before.
 Do not paste the link now. For `unknown` (or `in_person` with no place), ask
-how or where to meet once. If the writer warns `no-meet-link`, say no reminder
+how or where to meet once only if `origin` is not `owner-group`. If the writer warns `no-meet-link`, say no reminder
 will go out. The group confirmation also notifies the owner.
 
 ## Holds
