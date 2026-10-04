@@ -76,7 +76,7 @@ The first time you text the line, Meetly introduces itself in one line and
 gets to work on what you asked. It asks only what nobody else can tell it:
 your name and time zone, when your Plow profile and your Mac cannot supply
 them. Your busy calendars are read from the Mac: every calendar you show in
-Google Calendar counts.
+Google Calendar counts, except read-only holiday subscriptions.
 
 Everything else starts at these defaults:
 
