@@ -12,12 +12,12 @@ import { calendarEvent, fakeCalendar, cli, tmpHome } from "./helpers.ts";
 
 const start = "2026-10-05T10:00:00Z", end = "2026-10-05T10:30:00Z", account = "owner@example.com";
 const now = Date.parse("2026-10-03T08:00:00Z");
-function fixture(t: TestContext) {
+function fixture(t: TestContext, chatUid?: string) {
   const home = tmpHome(), old = process.env.MEETLY_HOME;
   process.env.MEETLY_HOME = home;
   t.after(() => { if (old === undefined) delete process.env.MEETLY_HOME; else process.env.MEETLY_HOME = old; fs.rmSync(home, { recursive: true, force: true }); });
   const offered = [{ start, end, account, holdId: "hold-one" }, { start: "2026-10-06T10:00:00Z", end: "2026-10-06T10:30:00Z", account, holdId: "hold-two" }];
-  const input = { origin: "owner" as const, handle: "+15551234567", name: "Guest", topic: "Lunch", durationMin: 30, offered };
+  const input = { origin: "owner" as const, handle: "+15551234567", name: "Guest", chatUid, topic: "Lunch", durationMin: 30, offered };
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, input, now - 72 * 3_600_000, "r_one"));
   writeJson(join(home, "config.json"), { ...DEFAULTS, defaultAccount: account, timezone: "UTC", ownerName: "Alex", setupDoneAt: new Date(now).toISOString(), calendars: [{account, id: account}] });
   const { events, calls, command } = fakeCalendar(offered.map(o => calendarEvent(o.holdId, o.start, o.end)));
@@ -427,7 +427,7 @@ test("an offline preflight after a hold was created keeps the journal for recove
 });
 
 test("booked replacement holds preserve the event, expire independently and clean up after a move", async t => {
-  const f = fixture(t);
+  const f = fixture(t, "chat-one");
   await calendarAction("r_one", { action: "book", start }, f.options);
   const booked = f.read().booked;
   const replacement = { ...f.offer, offered: [
@@ -440,12 +440,19 @@ test("booked replacement holds preserve the event, expire independently and clea
   assert.equal(f.events.get("hold-one")!.start.dateTime, start);
   const early = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 47 * 3600_000 });
   assert.equal(early.skipped, true, "expiry uses the replacement timestamp, not the original offer");
+  assert.equal(early.groupNotice, undefined);
   const expired = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
   assert.equal(expired.request.status, "booked");
   assert.equal(expired.request.reoffer, undefined);
   assert.equal(f.events.get("hold-one")!.status, "confirmed");
   assert.equal(f.events.get("new-1")!.status, "cancelled");
   assert.equal(f.events.get("new-2")!.status, "cancelled");
+  assert.equal(expired.groupNotice?.chatUid, "chat-one");
+  assert.match(expired.groupNotice?.text ?? "", /replacement times were released.*booking.*unchanged/i);
+  t.diagnostic(`Group expiry notice: ${expired.groupNotice?.text}`);
+  const again = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
+  assert.equal(again.skipped, true);
+  assert.equal(again.groupNotice, undefined);
   await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
   await calendarAction("r_one", { action: "book", start: replacement.offered[0]!.start }, f.options);
   assert.equal(f.read().eventId, "hold-one");

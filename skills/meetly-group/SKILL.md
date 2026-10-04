@@ -305,7 +305,8 @@ will go out. The group confirmation also notifies the owner.
 
 The booked request remains the meeting thread's record. Guests can request other
 times, pick a replacement, or cancel with their scheduling tools; confirm the
-result once in the group so the owner is notified afterwards.
+result once in the group. The guest tools also send a private owner DM after
+a move or cancellation; `ownerNotified` confirms it. Do not duplicate that DM.
 
 From the owner's DM, run `ledger.ts booked` and match the meeting by person,
 topic and thread context. If multiple meetings fit, ask which before changing
@@ -317,11 +318,15 @@ Use that request's id and recorded `chatUid`; never start another request or gro
   from busy time. Run `calendar.ts offer --id <id> --json '<request with replacement offered slots>'`,
   carrying the saved request fields listed in "Offer times". The writer saves
   `reoffer.offered` and its hold timestamp, leaving the booked event untouched.
-  Show those replacement slots in the same group. If none work, retain the booking.
+  Show all returned replacement slots in the same group, even if the requested
+  preferences could not be met. Never say no other day is available while
+  `reoffer.offered` contains held times. If none work, retain the booking.
 - **Move to a selected time:** read the calendar and check with
   `slots.ts --request <id> --at <start>`. Then run `calendar.ts book --id <id>
   --json '{"start":"<slot.start>","end":"<slot.end>"}'`. Do not supply attendees
-  again: the existing invitation is updated in place with `sendUpdates: "all"`.
+  again: the event is updated in place with `sendUpdates: "all"`. Only say an
+  invitation was updated when the writer returns `invitationUpdated: true`;
+  otherwise say the calendar event moved, without claiming an invitation.
   The writer releases every replacement hold after committing the move.
 - **Cancel:** run `calendar.ts cancel --id <id>`. It records `dropped`, clears
   the reoffer and pending question, and deletes the event with `sendUpdates: "all"`.
@@ -330,7 +335,10 @@ Use that request's id and recorded `chatUid`; never start another request or gro
 
 Only confirm after the writer resolves successfully. From the DM, send the
 result once to the recorded group using `plow_reply_to`, then acknowledge the
-owner briefly in the DM. In a group, confirm here once. Never cancel and recreate
+owner briefly in the DM. After a script-driven move or cancellation in a group,
+send a brief private DM to the owner via `message` (action `send`, channel
+`plow`, accountId `chat`, target `plow-owner`), then confirm here once. Include
+the person, meeting, new time or cancellation, and any pending cleanup. Never cancel and recreate
 an event to reschedule it. A replacement offer expiring leaves the booking intact.
 
 ## Holds

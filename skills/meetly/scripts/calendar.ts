@@ -150,7 +150,14 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         if (request.status === "booked" && input.action === "drop") return { request, skipped: true };
         if (request.status === "booked" && input.action === "expire") {
           patch({ reoffer: null, holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]) });
-          await cleanup(); return { request: requestById(id) };
+          await cleanup();
+          request = requestById(id);
+          return { request, groupNotice: request.chatUid ? {
+            chatUid: request.chatUid,
+            text: request.holdCleanup?.length
+              ? "The replacement offer expired; some holds still need cleanup. The original booking remains unchanged."
+              : "The replacement times were released. The original booking remains unchanged.",
+          } : undefined };
         }
         const refs: HoldCleanup[] = holds(request);
         if (input.action === "cancel" && request.eventId && request.booked) refs.push({ holdId: request.eventId, account: request.booked.account, sendUpdates: "all" });
@@ -316,7 +323,17 @@ export async function calendarAction(id: string, input: CalendarAction, options:
     rmSync(journal);
     await cleanup();
     request = requestById(id);
-    return { request, invitationSent: completed.input.action === "book" && !!completed.input.attendees, meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
+    let invitationUpdated = false;
+    if (completed.input.action === "book") {
+      const step = completed.steps[0]!;
+      const raw = parseCalendarObject(step.output!);
+      const event = (raw.event ?? raw) as { attendees?: { email?: string; organizer?: boolean; self?: boolean }[] };
+      invitationUpdated = step.verb === "update" && Array.isArray(event.attendees)
+        && event.attendees.some(a => typeof a?.email === "string" && !a.organizer && !a.self && !sameHandle(a.email, step.account));
+    }
+    return { request, invitationSent: completed.input.action === "book" && !!completed.input.attendees,
+      invitationUpdated,
+      meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
   });
 }
 

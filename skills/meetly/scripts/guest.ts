@@ -75,14 +75,31 @@ async function check(request: Request, config: Config, start: string) {
   return { ...checked, overlap };
 }
 
-async function pick(request: Request, config: Config, start: string) {
+async function notifyOwner(request: Request, config: Config, change: "moved" | "cancelled", sendOwner?: SendOwner) {
+  const when = localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(request.booked!.start));
+  const subject = `${meetingTopic(request)} with ${request.name ?? request.handle}`;
+  const text = change === "moved" ? `${subject} moved to ${when} (${config.timezone}).`
+    : request.holdCleanup?.length ? `${subject} on ${when} (${config.timezone}): cancellation requested; calendar cleanup is pending.`
+    : `${subject} on ${when} (${config.timezone}) was cancelled.`;
+  try {
+    if (!sendOwner) throw new Error("owner messaging unavailable");
+    await sendOwner(text);
+    return { ownerNotified: true };
+  } catch {
+    return { ownerNotified: false, warning: "owner-notification-unconfirmed" };
+  }
+}
+
+async function pick(request: Request, config: Config, start: string, sendOwner?: SendOwner) {
   const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(start));
   if (!offer) return { error: "Choose one of the currently offered start times." };
   const checked = await check(request, config, offer.start);
   if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available. Ask for other times." };
   if (request.status === "booked") {
-    request = (await write(request, { action: "book", start: offer.start, end: offer.end })).request;
-    return { ...view(request, config), invitationUpdated: true, overlappedWithOwnerApproval: checked.overlap };
+    const result = await write(request, { action: "book", start: offer.start, end: offer.end });
+    request = result.request;
+    return { ...view(request, config), invitationUpdated: "invitationUpdated" in result && result.invitationUpdated === true,
+      overlappedWithOwnerApproval: checked.overlap, ...await notifyOwner(request, config, "moved", sendOwner) };
   }
   const contact = await lookupContact(request.handle);
   const email = request.handle.includes("@") ? request.handle : contact.found && contact.matches === 1 ? contact.emails[0] : undefined;
@@ -122,7 +139,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     }
     if (!slots.length) slots = findSlots(fallback).slots;
   }
-  if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
+  if (!slots.length) return { ...(request.status === "booked" && currentOffers(request).length ? view(request, config) : {}), error: "No new times are available within the owner's conditions. The current offer is unchanged." };
   const { origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {
     origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
@@ -192,12 +209,13 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (request.status !== "offered" && request.status !== "booked") return view(request, config);
     if (action === "decline") {
+      const booked = request.status === "booked";
       request = (await write(request, { action: request.status === "booked" ? "cancel" : "drop" })).request;
-      return view(request, config);
+      return { ...view(request, config), ...(booked ? await notifyOwner(request, config, "cancelled", sendOwner) : {}) };
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (!args.start) return { error: "Provide a start time." };
-    return await pick(request, config, args.start);
+    return await pick(request, config, args.start, sendOwner);
   } catch {
     // Backend output can contain private event details, contact data, and accounts.
     return { error: "The scheduling action could not be completed. Check the request before trying again." };

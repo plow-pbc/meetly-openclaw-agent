@@ -24,10 +24,12 @@ export function view(request: Request, config: Config) {
   });
   const format = localeFormatter(request.locale ?? "en-US", config.timezone);
   const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });
+  const offered = currentOffers(request).map(time);
   return {
     askDetails, status: request.status, origin: request.origin, ownerName: config.ownerName, timezone: config.timezone,
     topic: request.topic, meal: request.meal, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
-    offered: currentOffers(request).map(time),
+    offered,
+    ...(request.status === "booked" && offered.length ? { message: `Replacement times are held: ${offered.map(o => o.label).join("; ")} (${config.timezone}). The current booking remains unchanged until you pick a replacement.` } : {}),
     ...(request.booked ? { booked: time(request.booked), reminderAvailable: !!request.meetUrl } : {}),
     ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
     ...(request.holdCleanup?.length ? { cleanupPending: true } : {}),

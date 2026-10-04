@@ -88,7 +88,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const outbound = async () => ({
     buildOutboundSessionContext: (args: object) => args,
     sendDurableMessageBatch: async (args: Record<string, any>) => {
-      assert.ok(read().requests[0]!.pendingOwner, "save the question before sending");
+      assert.ok(read().requests[0]!.pendingOwner || read().requests[0]!.booked, "save the question or booking change before sending");
       deliveries.push(args);
       if (delivery.fail) throw new Error("PRIVATE TRANSPORT ERROR");
       ownerLines.push(args.payloads[0].text);
@@ -1001,7 +1001,10 @@ test("booked guest picks require this thread's current replacement and preserve 
   await f.act(context, "pick", { start: offers[0]!.start });
   const booked = f.request().booked;
   assert.ok("error" in await f.act(context, "pick", { start: offers[1]!.start }));
-  await f.act(context, "other_times", { days: ["thu"], after: "16:00" });
+  const alternatives = await f.act(context, "other_times", { days: ["thu"], after: "16:00" });
+  assert.ok("preferencesUnavailable" in alternatives && alternatives.preferencesUnavailable);
+  assert.match("message" in alternatives ? String(alternatives.message) : "", /Replacement times are held:/);
+  t.diagnostic(`Replacement reply: ${"message" in alternatives && alternatives.message}`);
   const replacement = f.request().reoffer!;
   assert.ok(replacement);
   assert.ok(replacement.offered.every(o => ["2026-10-05", "2026-10-06"].includes(o.start.slice(0, 10)) && o.start.slice(11, 16) < "15:00"));
@@ -1014,4 +1017,40 @@ test("booked guest picks require this thread's current replacement and preserve 
   assert.ok("error" in await f.act(context, "pick", { start: replacement.offered[0]!.start }));
   assert.deepEqual(f.request().booked, booked);
   assert.equal(f.events.get("hold-one")!.status, "confirmed");
+});
+
+for (const invited of [false, true]) test(`booked guest changes notify the owner privately and report invitation evidence: invited=${invited}`, async t => {
+  const f = fixture(t, invited ? undefined : "S|0\n");
+  const call = async (name: string, args = {}) => JSON.parse((await f.tools.get(name)!.execute("call", args)).content[0]!.text);
+  const initial = await call("meetly_pick_time", { start: offers[0]!.start });
+  assert.equal(initial.invitationSent, invited);
+  assert.equal(f.deliveries.length, 0);
+  await call("meetly_other_times", { start: offers[1]!.start });
+  const moved = await call("meetly_pick_time", { start: offers[1]!.start });
+  assert.equal(moved.invitationUpdated, invited);
+  assert.equal(moved.ownerNotified, true);
+  assert.equal(f.deliveries.length, 1);
+  assert.equal(f.deliveries[0]!.to, "plow-owner");
+  assert.match(f.ownerLines[0]!, /Lunch with Guest moved to.*10\/6.*UTC/);
+  const cancelled = await call("meetly_decline");
+  assert.equal(cancelled.ownerNotified, true);
+  assert.equal(f.deliveries.length, 2);
+  assert.equal(f.deliveries[1]!.to, "plow-owner");
+  assert.match(f.ownerLines[1]!, /Lunch with Guest.*cancelled/);
+  await call("meetly_decline");
+  assert.equal(f.deliveries.length, 2, "repeated declines must not send another DM");
+  t.diagnostic(JSON.stringify({ moved, cancelled, ownerDMs: f.ownerLines }));
+});
+
+test("a failed owner notice preserves a completed move and never claims delivery", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  await f.act(context, "other_times", { start: offers[1]!.start });
+  f.delivery.fail = true;
+  const result = JSON.parse((await f.tools.get("meetly_pick_time")!.execute("call", { start: offers[1]!.start })).content[0]!.text);
+  assert.equal(result.ownerNotified, false);
+  assert.equal(result.warning, "owner-notification-unconfirmed");
+  assert.equal(result.error, undefined);
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse(offers[1]!.start));
+  assert.equal(f.deliveries.length, 1);
 });
