@@ -1258,3 +1258,77 @@ test("runtime hooks keep a replacement unpickable through a prompt rebuild, then
   hooks.agent_end!({}, turn);
   t.diagnostic(`Same-run pick blocked; booking stayed at ${before.requests[0]!.booked!.start}. Next-turn choice moved it to ${f.request().booked!.start}.`);
 });
+
+for (const args of [{}, { after: "20:00" }, { from: "2026-10-05", to: "2026-10-06" }, { days: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] }])
+test(`booked other-times excludes the booked local date through fallbacks: ${JSON.stringify(args)}`, async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[1]!.start });
+  const booked = f.request().booked;
+  const result = await f.tools.get("meetly_other_times")!.execute("other", args);
+  const details = JSON.parse(result.content[0]!.text);
+  assert.equal(details.error, undefined, JSON.stringify(details));
+  assert.ok(details.offered.length > 0);
+  assert.ok(details.offered.every((o: { start: string }) => o.start.startsWith("2026-10-05")), JSON.stringify(details.offered));
+  assert.deepEqual(f.request().booked, booked);
+  t.diagnostic(`Tuesday booking retained; replacement offer: ${JSON.stringify(details.offered)}`);
+});
+
+for (const start of [{ weekday: "funday", time: "10:00" }, { weekday: "tue", time: "25:00" }, {}, null])
+test(`other-times rejects a malformed weekday start clearly: ${JSON.stringify(start)}`, async t => {
+  const f = fixture(t);
+  const before = f.read();
+  const result = await f.tools.get("meetly_other_times")!.execute("invalid", { start });
+  assert.match(JSON.parse(result.content[0]!.text).error, /Provide.*weekday.*HH:MM/);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.commands.length, 0);
+});
+
+for (const args of [
+  { days: ["tue"] }, { from: "2026-10-06", to: "2026-10-06" },
+  { start: "2026-10-06T11:00" }, { start: { weekday: "tue", time: "11:00" } },
+]) test(`booked other-times honors an explicit request for the booked date: ${JSON.stringify(args)}`, async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[1]!.start });
+  const booked = f.request().booked;
+  const result = await f.tools.get("meetly_other_times")!.execute("same-day", args);
+  const details = JSON.parse(result.content[0]!.text);
+  assert.equal(details.error, undefined, JSON.stringify(details));
+  assert.ok(details.offered.length > 0);
+  assert.ok(details.offered.every((o: { start: string }) => o.start.startsWith("2026-10-06")));
+  if (args.start) assert.equal(Date.parse(details.offered[0].start), Date.parse("2026-10-06T11:00:00Z"));
+  assert.deepEqual(f.request().booked, booked);
+});
+
+test("booked-date exclusion uses the owner's local date and keeps later occurrences of its weekday", async t => {
+  const f = fixture(t, undefined, "America/Los_Angeles");
+  const request = f.ledger.requests[0]!;
+  request.constraints = { from: "2026-10-05", to: "2026-10-13" };
+  request.offered = [{ ...offers[0]!, start: "2026-10-06T00:00:00Z", end: "2026-10-06T00:30:00Z" }];
+  f.save(f.ledger); f.events.clear();
+  f.events.set("hold-one", event("hold-one", request.offered[0]!.start, request.offered[0]!.end));
+  await f.act(context, "pick", { start: request.offered[0]!.start });
+  const booked = f.request().booked;
+  assert.ok(booked);
+  f.events.set("blocked-week", event("blocked-week", "2026-10-07T00:00:00-07:00", "2026-10-12T00:00:00-07:00"));
+  const result = await f.act(context, "other_times");
+  assert.ok(!("error" in result), JSON.stringify(result));
+  const dates = f.request().reoffer!.offered.map(o => o.start.slice(0, 10));
+  assert.ok(!dates.includes("2026-10-05"), JSON.stringify(dates));
+  assert.ok(dates.includes("2026-10-06"), "Tuesday is eligible: the booking's UTC date must not be excluded");
+  assert.ok(dates.includes("2026-10-12"), "exclude only the booked Monday, not every Monday");
+  assert.deepEqual(f.request().booked, booked);
+  t.diagnostic(`Booking ${booked.start} is Monday locally; offered dates: ${dates.join(", ")}`);
+});
+
+test("no other booked dates leaves the existing event and replacement holds intact", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[1]!.start });
+  await f.act(context, "other_times", { start: "2026-10-06T11:00" });
+  f.events.set("busy-monday", event("busy-monday", "2026-10-05T00:00:00Z", "2026-10-06T00:00:00Z"));
+  const before = f.read();
+  const commands = f.commands.length;
+  const result = await f.act(context, "other_times");
+  assert.ok("error" in result, JSON.stringify(result));
+  assert.deepEqual(f.read(), before);
+  assert.ok(f.commands.slice(commands).every(c => c[2] === "events"));
+});

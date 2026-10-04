@@ -27,6 +27,7 @@ export type SlotQuery = Constraints & {
   meal?: Meal;
   allowOverlap?: EventRef[];
   exclude?: string[];
+  excludeDates?: string[];
   count?: number;
   near?: string;
   locale?: string;
@@ -92,6 +93,7 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; durationMin: number; u
   const perDay: { start: number; end: number; day: Day }[][] = [];
   scan: for (let i = 0; i <= config.horizonDays; i++) {
     const { y, m, d } = addDays(today.y, today.m, today.d, i);
+    if (q.excludeDates?.includes(`${y}-${pad(m)}-${pad(d)}`)) continue;
     const day = wallParts(zonedToUtc(y, m, d, 12, 0, tz), tz).weekday;
     if (!config.days.includes(day)) continue;
     const found: { start: number; end: number; day: Day }[] = [];
