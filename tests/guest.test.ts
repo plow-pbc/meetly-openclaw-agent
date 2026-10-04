@@ -11,7 +11,7 @@ import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from
 import { addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
-import { calendarEvent as event, fakeCalendar, tmpHome } from "./helpers.ts";
+import { calendarEvent as event, fakeCalendar, cli, tmpHome } from "./helpers.ts";
 
 const now = Date.parse("2026-10-02T08:00:00Z");
 const context = { messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "chat-one", requesterSenderId: "+15551234567", config: {} };
@@ -670,7 +670,7 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
     sessionKey: "agent:main:plow:group:cht_mixed", nativeChannelId: "cht_MiXeD" };
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory(ctx); } }, offerOwnerGroup);
   assert.equal(tool.parameters.properties.chatUid, undefined);
-  const args = { handle: context.requesterSenderId, topic: "Planning", offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
+  const args = { handle: context.requesterSenderId, topic: "Planning", name: "", format: "", location: "", locale: "", durationMin: "", offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
   const result = await tool.execute("offer", args);
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.request().chatUid, "cht_MiXeD");
