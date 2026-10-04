@@ -315,7 +315,8 @@ export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, 
   let id = "", provisional = false;
   updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
     const existing = findOpenByHandle(l, input.handle) ?? l.requests.find(r => input.origin === "inbound" && input.sourceRowid !== undefined && r.sourceRowid === input.sourceRowid && ["asked", "offered"].includes(r.status));
-    if (existing && input.chatUid && existing.chatUid !== input.chatUid) throw new Error("request belongs to another conversation");
+    if (existing && input.chatUid && existing.chatUid !== input.chatUid &&
+      !(input.origin === "owner-group" && existing.status === "asked" && existing.chatUid === undefined)) throw new Error("request belongs to another conversation");
     id = existing?.id ?? requestId();
     provisional = !existing;
     return existing ? l : saveRequest(l, input, (options.now ?? Date.now)(), id);

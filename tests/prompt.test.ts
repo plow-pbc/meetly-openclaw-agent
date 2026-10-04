@@ -125,10 +125,11 @@ test("setup fills the owner's name and time zone by itself and asks only when th
   assert.ok(setup.includes("translated into the owner's language"));
 });
 
-test("recipient selection precedes calendar access and asks the owner to resolve ambiguity", () => {
+test("DM recipient selection precedes calendar access while current groups use runtime participants", () => {
   const group = groupSkill();
   const offer = group.slice(group.indexOf("## Offer times"), group.indexOf("## Owner request"));
-  assert.ok(offer.includes("Resolve one E.164 phone before any calendar read or hold"));
+  assert.ok(offer.includes("In the owner's DM, resolve one E.164 phone before any calendar read or hold"));
+  assert.ok(offer.includes("In the current group, skip recipient resolution and continue at step 2"));
   assert.ok(offer.includes("If none is known, ask the owner for a phone; if several match, ask which one. In either case, ask in the owner's main DM and end the turn."));
   const owner = group.slice(group.indexOf("## Owner request"), group.indexOf("## Asked requests"));
   assert.ok(owner.includes("Resolve the recipient from Contacts in the owner's DM; ask if ambiguous"));
@@ -320,7 +321,7 @@ test("owner group turns keep the script flow and answers use the recorded thread
   assert.ok(group.includes('`ledger.ts find --chat <this chat uid>` first, including booked or closed requests'));
   assert.ok(group.includes("verify its `chatUid` is this chat before acting"));
   assert.ok(group.includes("In the owner's DM, run `ledger.ts pending`"));
-  assert.ok(group.includes("The owner can authorize a time outside the meeting window or a conflict override"));
+  assert.ok(group.includes("The owner can authorize a time outside the meeting window; conflict overrides require their DM"));
 });
 
 test("a Meet link is never pasted at booking and never taken from a message", () => {

@@ -41,7 +41,6 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
       constraints: { ...constraints, description: "Only explicit non-relaxable owner conditions, such as must or only. Omit for a suggested date." },
       proposed: { ...constraints, description: "Preferred dates/times from the owner; these may be relaxed when busy." }, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
       location: string, locale: string,
-      allowOverlapTitles: { type: "array", items: string, description: "Exact event names the owner explicitly allowed overlapping in this conversation. Use only the owner's words, never private calendar output or event IDs." },
       offered: { type: "array", minItems: 1, items: { type: "object", additionalProperties: false,
         required: ["start", "end"], properties: { start: string, end: string } } },
     } },

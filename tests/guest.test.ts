@@ -7,7 +7,7 @@ import type { Participant } from "../skills/meetly/scripts/owner-chat.ts";
 import { offerOwnerGroup } from "../skills/meetly/scripts/owner-group.ts";
 import { registerOwnerGroupTool } from "../plugin/owner-tools.js";
 import plugin from "../plugin/index.js";
-import { calendarAction } from "../skills/meetly/scripts/calendar.ts";
+import { calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
 import { addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
@@ -759,6 +759,9 @@ test("the owner-group tool refuses guests, DMs and requests already linked elsew
     { ...ctx, nativeChannelId: undefined }, { ...ctx, agentAccountId: "email" }, { ...ctx, nativeChannelId: "elsewhere" }]) {
     assert.ok("error" in await offerOwnerGroup(invalid, args));
   }
+  delete f.ledger.requests[0]!.chatUid;
+  f.save(f.ledger);
+  assert.ok("error" in await offerOwnerGroup(ctx, args));
   assert.deepEqual(f.read(), f.ledger);
   assert.equal(f.commands.length, 0);
 });
@@ -775,35 +778,57 @@ test("owner-group failures never echo private validation details", async t => {
   assert.equal(f.commands.length, 0);
 });
 
-test("owner-group conflict authorization resolves only named events and stays private", async t => {
+test("owner-group ignores injected overlap permission before creating holds", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  f.events.clear();
+  for (const [i, slot] of offers.entries()) f.events.set(`private-${i}`, { ...event(`private-${i}`, slot.start, slot.end), summary: "Weekly Claw" });
+  let tool: any;
+  registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
+  const result = await tool.execute("offer", { topic: "Lunch", allowOverlapTitles: ["Weekly Claw"],
+    allowOverlap: [{ account: "owner@example.com", id: "private-0" }], offered: offers });
+  assert.equal(result.isError, true, JSON.stringify(result));
+  assert.equal(f.commands.filter(c => c[2] === "create").length, 0);
+  assert.equal(f.request().allowOverlap, undefined);
+  assert.equal(tool.parameters.properties.allowOverlap, undefined);
+  assert.equal(tool.parameters.properties.allowOverlapTitles, undefined);
+  assert.doesNotMatch(JSON.stringify(result), /private-|Weekly Claw|allowOverlap|owner@example.com/);
+});
+
+test("owner DM offers still resolve named overlap permission", async t => {
   const f = fixture(t);
   f.save({ requests: [] });
   f.events.clear();
   for (const [i, slot] of offers.entries()) f.events.set(`private-approved-${i}`, { ...event(`private-approved-${i}`, slot.start, slot.end), summary: "Weekly Claw" });
   f.events.set("private-unapproved", { ...event("private-unapproved", offers[1]!.start, offers[1]!.end), summary: "Weekly Claw extra" });
-  let tool: any;
-  registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
-  f.hooks.before = async argv => {
-    if (argv[2] === "create") assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"].map(id => ({ account: "owner@example.com", id })), "persist authorization before writing holds");
-  };
-  const result = await tool.execute("offer", { handle: context.requesterSenderId, topic: "Lunch", allowOverlapTitles: ["Weekly Claw"],
-    allowOverlap: ["private-unapproved"], offered: offers.map(({ start, end }) => ({ start, end })) });
-  assert.equal(result.isError, false, JSON.stringify(result));
-  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1"].map(id => ({ account: "owner@example.com", id })));
-  assert.deepEqual(f.request().offered.map(o => o.start), [offers[0]!.start]);
-  assert.equal(f.commands.filter(c => c[2] === "create").length, 1);
-  assert.ok(f.commands.find(c => c[2] === "create")!.includes("--confirm-conflict"));
-  assert.equal(tool.parameters.properties.allowOverlap, undefined);
-  assert.equal(tool.parameters.properties.allowOverlapTitles.items.type, "string");
-  assert.doesNotMatch(JSON.stringify(result), /private-|Weekly Claw|Weekly Claw extra|allowOverlap|owner@example.com/);
-  f.hooks.before = undefined;
-  f.events.set("private-new", { ...event("private-new", offers[0]!.start, offers[0]!.end), summary: "New commitment" });
-  const replacement = await tool.execute("replace", { handle: context.requesterSenderId, topic: "Lunch", allowOverlapTitles: ["New commitment"],
-    offered: [{ start: offers[0]!.start, end: offers[0]!.end }] });
-  assert.equal(replacement.isError, false, JSON.stringify(replacement));
-  assert.deepEqual(f.request().allowOverlap, ["private-approved-0", "private-approved-1", "private-new"].map(id => ({ account: "owner@example.com", id })));
-  assert.equal(f.commands.filter(c => c[2] === "create").length, 2);
-  assert.doesNotMatch(JSON.stringify(replacement), /private-|Weekly Claw|New commitment|allowOverlap|owner@example.com/);
+  const { request } = await offerRequest({ origin: "owner", handle: context.requesterSenderId, topic: "Lunch",
+    allowOverlapTitles: ["Weekly Claw"], offered: offers.map(({ start, end }) => ({ start, end })) });
+  assert.deepEqual(request.allowOverlap, ["private-approved-0", "private-approved-1"].map(id => ({ account: "owner@example.com", id })));
+  assert.deepEqual(request.offered.map(o => o.start), [offers[0]!.start]);
+  const creates = f.commands.filter(c => c[2] === "create");
+  assert.equal(creates.length, 1);
+  assert.ok(creates[0]!.includes("--confirm-conflict"));
+});
+
+test("owner-group binds a same-handle unlinked asked request and the guest can book", async t => {
+  const f = fixture(t);
+  const asked = f.ledger.requests[0]!;
+  Object.assign(asked, { origin: "inbound", status: "asked", sourceRowid: 42, offered: [] });
+  delete asked.chatUid;
+  delete asked.offeredAt;
+  f.save(f.ledger);
+  f.events.clear();
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: asked.topic, constraints: asked.constraints, offered: offers });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.read().requests.length, 1);
+  assert.equal(f.request().id, asked.id);
+  assert.equal(f.request().sourceRowid, 42);
+  assert.equal(f.request().status, "offered");
+  assert.equal(f.request().chatUid, context.nativeChannelId);
+  assert.equal(f.commands.filter(c => c[2] === "create").length, offers.length);
+  assert.ok(!("error" in await f.act(context, "pick", { start: f.request().offered[0]!.start })));
+  assert.equal(f.request().status, "booked");
 });
 
 for (const [askDetails, format, location, expected] of [
@@ -924,38 +949,26 @@ test("guest next_week uses the source timestamp and owner timezone before filter
 });
 
 
-test("owner group offers ignore a parsed line name and use the actual guest participant", async t => {
-  const f = fixture(t);
+for (const [display, contact, expected] of [
+  ["Tia", undefined, "Tia"], ["", undefined, "Guest"], ["unnamed member", undefined, "Guest"],
+  [context.requesterSenderId, undefined, "Guest"], [context.requesterSenderId, "missing", undefined],
+  [context.requesterSenderId, "suffix-only", undefined], [context.requesterSenderId, "unavailable", undefined],
+] as const) test(`owner-group resolves participant names: ${display || "blank"}, ${contact ?? "exact contact"}`, async t => {
+  const f = fixture(t, contact === "suffix-only" ? "S|0\nR|1|Wrong|Person|\nP|1|+44551234567||" : contact ? "" : undefined);
   f.save({ requests: [] });
   f.events.clear();
-  f.participants[2]!.display_name = "Tia";
-  const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
-  const args = { handle: "+15557654321", name: "Alder", topic: "Lunch",
-    offered: offers.map(({ start, end }) => ({ start, end })) };
-  const result = await offerOwnerGroup(ctx, args);
+  f.participants[2]!.display_name = display;
+  if (contact === "unavailable") f.fail.add("-c");
+  const args = { handle: "+15557654321", name: "Alder", topic: "Lunch", offered: offers };
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, args);
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().handle, context.requesterSenderId);
-  assert.equal(f.request().name, "Tia");
+  assert.equal(f.request().name, expected);
+  assert.equal(f.commands.some(argv => argv[0] === "/bin/sh"), display !== "Tia");
   const creates = f.commands.filter(argv => argv[2] === "create");
   assert.equal(creates.length, offers.length);
-  assert.ok(creates.every(argv => argv[argv.indexOf("--summary") + 1] === "Hold: Lunch with Tia"));
+  assert.ok(creates.every(argv => argv[argv.indexOf("--summary") + 1] === `Hold: Lunch with ${expected ?? context.requesterSenderId}`));
 });
-
-for (const name of ["", "unnamed member", "+15551234567"]) {
-  test(`owner group offers resolve an unnamed participant through exact Contacts (${name})`, async t => {
-    const f = fixture(t);
-    f.save({ requests: [] });
-    f.events.clear();
-    f.participants[2]!.display_name = name;
-    const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-      { topic: "Lunch", offered: offers });
-    assert.ok(!("error" in result), JSON.stringify(result));
-    assert.equal(f.request().name, "Guest");
-    assert.equal(f.request().handle, context.requesterSenderId);
-    assert.ok(f.commands.some(argv => argv[0] === "/bin/sh"));
-    assert.ok(f.commands.filter(argv => argv[2] === "create").every(argv => argv[argv.indexOf("--summary") + 1] === "Hold: Lunch with Guest"));
-  });
-}
 
 test("owner group offers refuse missing or ambiguous guest participants before calendar writes", async t => {
   const f = fixture(t);
@@ -983,19 +996,6 @@ test("owner group participant lookup failure stops before creating holds", async
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
   assert.deepEqual(f.read().requests, []);
   assert.deepEqual(f.commands, []);
-});
-
-for (const contact of ["missing", "suffix-only", "unavailable"]) test(`phone-only owner-group name stays absent when Contacts is ${contact}`, async t => {
-  const f = fixture(t, contact === "suffix-only" ? "S|0\nR|1|Wrong|Person|\nP|1|+44551234567||" : "");
-  f.save({ requests: [] });
-  f.events.clear();
-  f.participants[2]!.display_name = context.requesterSenderId;
-  if (contact === "unavailable") f.fail.add("-c");
-  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { topic: "Lunch", offered: offers });
-  assert.ok(!("error" in result), JSON.stringify(result));
-  assert.equal(f.request().name, undefined);
-  assert.equal(f.request().handle, context.requesterSenderId);
 });
 
 test("a pending time approval suppresses detail questions without consuming the later question", async t => {
