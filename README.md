@@ -183,8 +183,9 @@ message is skipped.
   scheduling tools in `PLOW_GUEST_TOOLS`; owner turns keep full tools. An uncertain
   delivery is recorded without a chat and never retried automatically; Meetly
   may retry after the owner explicitly clears the recorded attempt. Meeting
-  confirmations stay in the group. `meetly_ask_owner` sends one pending meeting
-  question or time approval to the owner's DM. `meetly_answer_owner` returns
+  confirmations stay in the group. `meetly_ask_owner` sends meeting questions
+  to the owner's DM; `meetly_other_times(start)` sends time-approval requests.
+  `meetly_answer_owner` returns
   the owner's answer to that request's recorded group; time approvals use the
   calendar writer. The answer tool is owner-only and is not in `PLOW_GUEST_TOOLS`.
   The private send stays inside Meetly over the public `sendDurableMessageBatch`
