@@ -155,7 +155,8 @@ test("other-times files a free outside-window approval without replacing holds",
   const tool = f.tools.get("meetly_other_times")!;
   const result = JSON.parse((await tool.execute("ask", args)).content[0]!.text);
   assert.equal(result.ownerAskSent, true);
-  assert.match(result.message, /asked Alex/);
+  assert.equal(result.message, "I've asked Alex and will get back to you here when Alex replies.");
+  assert.equal(result.askDetails, false);
   assert.deepEqual(f.request().offered, offers);
   assert.equal(f.request().status, "offered");
   assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T20:00:00+00:00", end: "2026-10-05T20:30:00+00:00", askedAt: new Date(now).toISOString() });
@@ -296,7 +297,8 @@ test("other times intersect guest preferences with owner conditions and replace 
 test("decline drops the open request, clears approval, deletes holds and queues failed deletes", async t => {
   const f = fixture(t); f.fail.add("hold-two");
   f.ledger.requests[0]!.pendingOwner = { start: "2026-10-05T20:00:00Z", end: "2026-10-05T20:30:00Z", askedAt: new Date(now).toISOString() }; f.save(f.ledger);
-  await guestAction(context, "decline");
+  const result = await guestAction(context, "decline");
+  assert.equal("message" in result && result.message, "I've cancelled this scheduling request.");
   assert.equal(f.request().status, "dropped"); assert.equal(f.request().pendingOwner, undefined);
   assert.deepEqual(f.request().holdCleanup, [{ holdId: "hold-two", account: "owner@example.com" }]);
   assert.equal(f.commands.filter(c => c[2] === "delete").length, 2);

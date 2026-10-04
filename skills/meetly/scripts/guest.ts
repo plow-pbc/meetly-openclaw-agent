@@ -146,7 +146,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   } catch {
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
   }
-  return { ownerName: config.ownerName, ownerAskSent: true, message: `I've asked ${config.ownerName} and will get back to you here when they reply.` };
+  return { ownerName: config.ownerName, ownerAskSent: true, askDetails: false, message: `I've asked ${config.ownerName} and will get back to you here when ${config.ownerName} replies.` };
 }
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
@@ -170,7 +170,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
     if (action === "decline") {
       request = (await write(request, { action: "drop" })).request;
-      return view(request, config);
+      return { ...view(request, config), message: "I've cancelled this scheduling request." };
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (!args.start) return { error: "Provide a start time." };
