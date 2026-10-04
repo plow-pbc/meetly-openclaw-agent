@@ -892,3 +892,20 @@ test("owner-group busy requested times rank nearby alternatives while retaining 
   assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true, JSON.stringify(result));
   assert.deepEqual(f.request().offered.map(o => o.start), ["2026-10-13T11:30:00+00:00", "2026-10-13T11:00:00+00:00", "2026-10-13T13:00:00+00:00"]);
 });
+for (const constraints of [
+  { days: ["mon", "tue", "wed"] },
+  { from: "2026-10-12" },
+  { to: "2026-10-07" },
+  { days: [] },
+]) test(`out-of-hours approval cannot bypass owner day/date conditions: ${JSON.stringify(constraints)}`, async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = constraints;
+  f.save(f.ledger);
+  const before = f.read();
+  const result = await f.act(context, "other_times", { start: "2026-10-08T20:00:00Z" });
+  assert.match(JSON.stringify(result), /day.*outside.*owner.*conditions/i);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.ownerLines.length, 0);
+  assert.equal(f.deliveries.length, 0);
+  assert.ok(f.commands.every(c => c[2] === "events"));
+});
