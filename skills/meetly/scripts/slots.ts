@@ -19,7 +19,7 @@ export type Slot = { start: string; end: string; dayOfWeek: Day; label: string }
 export type Constraints = { startTime?: string; days?: string[]; after?: string; before?: string; from?: string; to?: string };
 export type SearchTiming = { week?: "this" | "next"; asap?: boolean };
 
-export type SlotQuery = Constraints & SearchTiming & {
+export type SlotQuery = Constraints & {
   now: number;
   config: Config;
   busy: Busy[];
@@ -29,7 +29,7 @@ export type SlotQuery = Constraints & SearchTiming & {
   meal?: Meal;
   allowOverlap?: EventRef[];
   exclude?: string[];
-  excludeDates?: string[];
+  asap?: boolean;
   count?: number;
   near?: string;
   locale?: string;
@@ -132,8 +132,7 @@ export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}
 export function findSlots(q: SlotQuery): SlotResult {
   const { config, now } = q;
   const tz = config.timezone;
-  const resolvedConstraints = resolveSearchConstraints(q, q.week, now, tz);
-  q = { ...q, ...resolvedConstraints };
+  const resolvedConstraints = Object.fromEntries(Object.entries(intersectConstraints({}, q)).filter(([, value]) => value !== undefined));
   if (q.asap && q.near) throw new Error("asap searches earliest first; omit near");
   const duration = meetingDuration(q.durationMin, q.meal, q.config.durationMin);
   const count = q.count ?? SLOT_COUNT;
@@ -158,7 +157,6 @@ export function findSlots(q: SlotQuery): SlotResult {
   const perDay: { start: number; end: number; day: Day }[][] = [];
   scan: for (let i = 0; i <= days; i++) {
     const { y, m, d } = addDays(y0!, m0!, d0!, i);
-    if (q.excludeDates?.includes(`${y}-${pad(m)}-${pad(d)}`)) continue;
     const day = wallParts(zonedToUtc(y, m, d, 12, 0, tz), tz).weekday;
     if (!config.days.includes(day)) continue;
     const found: { start: number; end: number; day: Day }[] = [];

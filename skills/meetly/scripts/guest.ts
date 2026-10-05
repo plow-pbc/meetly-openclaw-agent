@@ -132,7 +132,9 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   const query: SlotQuery = { busy: [], ...bounds, now, config,
     meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
   const range = preferredSearchCoverage(query, preferred);
-  const span = Date.parse(range.to) - Date.parse(range.from);
+  const fromDate = localIso(Date.parse(range.from), config.timezone).slice(0, 10);
+  const toDate = localIso(Date.parse(range.to), config.timezone).slice(0, 10);
+  const span = Date.parse(toDate) - Date.parse(fromDate);
   if (!Number.isFinite(span) || span > 60 * 86_400_000) {
     return { error: "Guest searches must cover at most 60 days. Ask for a narrower date range.", code: "SEARCH_RANGE_TOO_LARGE" };
   }

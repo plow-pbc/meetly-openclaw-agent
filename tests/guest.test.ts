@@ -1341,6 +1341,22 @@ for (const constraints of [undefined, {}, { days: ["wed"], after: "14:00" }]) {
   });
 }
 
+for (const to of ["2026-11-30", "2026-12-01"]) test(`guest calendar-day cap across fall-back DST through ${to}`, async t => {
+  const f = fixture(t, undefined, "America/Los_Angeles");
+  f.ledger.requests[0]!.constraints = { from: "2026-10-02", to };
+  f.save(f.ledger);
+  const result = await f.act(context, "other_times", { offer_week: false });
+  if (to === "2026-11-30") {
+    assert.ok(!("error" in result), JSON.stringify(result));
+    assert.ok(f.request().offered.length > 0);
+    assert.ok(f.commands.some(c => c[2] === "events"));
+  } else {
+    assert.equal("code" in result && result.code, "SEARCH_RANGE_TOO_LARGE");
+    assert.deepEqual(f.commands, []);
+    assert.deepEqual(f.read(), f.ledger);
+  }
+});
+
 test("oversized guest coverage is rejected before calendar reads or hold changes", async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.constraints = {};

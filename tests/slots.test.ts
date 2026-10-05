@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import type { Config } from "../skills/meetly/scripts/config.ts";
-import { checkTime, findSlots, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
+import { checkTime, findSlots, resolveSearchConstraints, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
 import { writeJson } from "../skills/meetly/scripts/store.ts";
 import { addRequest } from "../skills/meetly/scripts/ledger.ts";
 import { cli, tmpHome } from "./helpers.ts";
@@ -293,12 +293,13 @@ test("unread explicit dates return incomplete coverage, not apparent unavailabil
 
 test("typed weeks resolve in the owner's zone on Sunday and cannot carry substituted dates", () => {
   const query = q({ config: { ...CONFIG, timezone: "America/Los_Angeles" }, now: Date.parse("2026-10-05T02:12:33Z") });
-  const result = findSlots({ ...query, week: "next", days: ["mon", "tue", "wed"] });
+  const next = resolveSearchConstraints({ days: ["mon", "tue", "wed"] }, "next", query.now, query.config.timezone);
+  const result = findSlots({ ...query, ...next });
   assert.deepEqual(result.resolvedConstraints, { from: "2026-10-05", to: "2026-10-11", days: ["mon", "tue", "wed"] });
   assert.deepEqual(result.slots.map(s => s.start.slice(0, 10)), ["2026-10-05", "2026-10-06", "2026-10-07"]);
-  assert.throws(() => findSlots({ ...query, week: "next", from: "2026-10-12", to: "2026-10-14" }), /week.*from.*to/i);
-  assert.throws(() => findSlots({ ...query, week: "later" } as any), /week/);
-  const current = findSlots({ ...query, week: "this" });
+  assert.throws(() => resolveSearchConstraints({ from: "2026-10-12", to: "2026-10-14" }, "next", query.now, query.config.timezone), /week.*from.*to/i);
+  assert.throws(() => resolveSearchConstraints({}, "later" as any, query.now, query.config.timezone), /week/);
+  const current = findSlots({ ...query, ...resolveSearchConstraints({}, "this", query.now, query.config.timezone) });
   assert.deepEqual(current.resolvedConstraints, { from: "2026-09-28", to: "2026-10-04" });
   assert.deepEqual(current.slots, []);
 });
