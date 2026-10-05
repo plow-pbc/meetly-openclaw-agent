@@ -1,7 +1,7 @@
 import { fetchBusy } from "./busy.ts";
 import { offerRequest, type OfferInput } from "./calendar.ts";
 import { lookupContact } from "./contact.ts";
-import { loadConfig } from "./config.ts";
+import { DAYS, loadConfig } from "./config.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { findPreferredSlots, resolveSearchConstraints, preferredSearchCoverage, type SearchTiming } from "./slots.ts";
@@ -60,11 +60,12 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
     const constraints = args.constraints !== undefined || args.week !== undefined
       ? resolveSearchConstraints(args.constraints ?? savedPolicy, args.week, now, config.timezone) : existing?.constraints;
     const proposed = args.proposed ?? (existing?.status === "asked" ? existing.proposed : undefined);
-    const search = { ...constraints, now, config, meal, ownerStartTime: constraints?.startTime, durationMin, locale, asap: args.asap, busy: [] };
+    const search = { ...constraints, now, config, meal, durationMin, locale, asap: args.asap, busy: [] };
     const busy = await fetchBusy(config, preferredSearchCoverage(search, proposed));
     if (busy.degraded.length) throw new Error("calendar unavailable");
     busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
     const query = { ...search, ...busy, allowOverlap: existing?.allowOverlap };
+    query.days = (constraints?.days ?? DAYS).filter(day => !existing?.excludedDays?.includes(day));
     const near = !args.asap && proposed?.from && proposed.from === proposed.to
       ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
     const { slots, preferencesUnavailable, incomplete } = findPreferredSlots(query, proposed, [{ ...query, near }]);

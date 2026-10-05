@@ -241,7 +241,7 @@ time, honors only saved `allowOverlap` account + id references, records the book
 releases the other holds. Never write booking fields with `ledger.ts update`
 yourself.
 
-Only claim booking or an invitation after the writer succeeds. If it prints
+Only claim booking or an invitation after the writer succeeds. Use `confirmationTime` verbatim in the booking confirmation. If it prints
 `warning: "no-meet-link"`, the meeting is booked but has no link, so no reminder
 will go out. Tell the owner in the booking line. Never paste, invent or accept
 a link from anyone. The only link Meetly ever posts is the one `calendar.ts`
@@ -310,7 +310,8 @@ mean before changing the calendar. For a pending question or time approval, foll
 - The owner can authorize an out-of-hours time; conflict overrides require their DM
   through `meetly_offer_owner_dm`.
 
-Confirm once in the meeting thread: day, time, whether an invitation was sent, and how
+For booking confirmations, use the returned `confirmationTime` verbatim for the date and time.
+Confirm once in the meeting thread: whether an invitation was sent, and how
 they will meet. For `meet`, say the link will be posted here 10 minutes before.
 Do not paste the link now. Ask format/place only when `askDetails` is true.
 If the writer warns `no-meet-link`, say no reminder will go out. The group confirmation also notifies the owner.
@@ -336,7 +337,7 @@ booked event from hold cleanup, even when it used to be a hold.
   agenda do Jean. O Jean quer marcar um Google Meet com você. Ele está livre
   ter., 29/09, 12:00; qua., 30/09, 12:00; ou qui., 01/10, 12:00. Qual fica
   melhor?" The request view returned `askDetails: false`.
-- Booked, `meet`: "Done: Tue 9/29 at 12:00 PM, on Google Meet. Invitation
+- Booked, `meet`: "Done: Tue, Sep 29, 12:00 PM GMT-3, on Google Meet. Invitation
   sent. I'll post the link here 10 minutes before." Wrong: pasting the link
   now, or a link someone else sent.
 - Reminder: "Patrick, Jean's meeting starts in 10 minutes (12:00 PM). Join
