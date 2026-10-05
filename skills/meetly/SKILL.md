@@ -27,18 +27,20 @@ exits non-zero: report that line; never guess a result. State lives in
 | `calendar.ts` | `offer [--id X] --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer; uses explicit, saved, meal-default or configured `durationMin` and requires matching intervals; retains an existing offer on failure; drops a failed new request while retaining cleanup |
 | | `approve-time --id X --json '{"start":"<approved time>"}'` | `{approved,request,...}`; a time approval never grants an overlap. On `TIME_APPROVAL_BUSY`, use `slots.ts --request X --near <near> --no-overlap` |
 | | `book --id X --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, confirmationTime, meetUrl, warning?:"no-meet-link"}`: book and release the other holds |
-| | `format --id X --json '{"format":"meet", "location":"<optional place>"}'` | save format/location on an offered request, or update and record a booked event; both use the calendar lock |
+| | `format --id X --json '{"format":"meet", "travel":{"beforeMin":0,"afterMin":0}, "location":"<optional place>"}'` | save format/location and required explicit `travel`; resize booked children under the lock |
+| | `travel --id X --json '{"travel":{"beforeMin":30,"afterMin":30,"override":true}}'` | resize private travel only; meeting time and duration stay unchanged |
 | | `duration --id X --json '{"durationMin":60,"topic":"…","offered":[{"start":"…","end":"…"}]}'` | `{request}`: atomically replace duration, topic and holds on an open request |
 | | `resume-pending` | `{results:[{id, request?, error?}]}`: resume all pending writes, continuing past individual failures |
 | | `pending` | `{ids}`: requests with a durable write awaiting reconciliation |
 | | `drop\|expire\|cancel\|cleanup\|resume --id X` | `{request, skipped?}`: close an offer, cancel a booked event, retry cleanup, or reconcile an unresolved write |
+| `travel-context.ts` | `--from ISO --to ISO --start ISO --end ISO [--request ID]` | Private untrusted `{before,after}` locations. |
 | `reminder-check.ts` | `--id X --event-file F [--lead-min N]` | `{action:"send"\|"wait"\|"cancelled"\|"no-link"\|"skip", send?:{chatUid, meetUrl, name, locale, time, minutesToStart}}` |
 | | `--id X --sent` | `{request}`: the reminder went out; refused if already handled |
 | `busy.ts` | `--fetch [--from ISO --to ISO] [--allow-overlap-title <owner-supplied name>]` (reads the Mac, writes `tmp/busy.json`) | `{file, busy:<count>, degraded, unknownAfter?}` |
 | | `--in F [--in F2…] [--max 100]` | `{busy:[{start,end,id,account}], unknownAfter?, degraded}` |
 | `time.ts` | `next_week --anchor ISO` | `{from,to}` in the owner's timezone, anchored to the source message timestamp; pass weekdays separately |
-| `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--meal lunch\|dinner\|coffee] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--week this\|next] [--asap] [--start-time HH:MM] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], durationMin, resolvedConstraints, incomplete?, unknownAfter?, degraded}` |
-| | `--in busy.json --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
+| `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--week this\|next] [--asap] [--start-time HH:MM] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], durationMin, resolvedConstraints, incomplete?, unknownAfter?, degraded}` |
+| | `--in busy.json [--request ID] --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
 | `owner-chat.ts` | | `{chatUid}`: the owner's DM |
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
 | `pipeline.ts` | `view [--locale TAG]` | `{items, text}`: derived pending pipeline and short dated request logs; read-only |
@@ -73,6 +75,7 @@ Notes:
   those replacement holds; the original event remains until a move or cancellation.
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
   `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-confirm`.
+- `travelBase` is an optional config field saved through `record-setup.ts`.
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.
   `meetUrl` only ever holds `https://meet.google.com/xxx-xxxx-xxx`, only on
   a `meet`; the ledger refuses anything else.
@@ -83,7 +86,7 @@ Notes:
   An unresolved write must be resumed, never replayed or bypassed. Reminders
   read the event from a saved calendar read; never copy an id, time or link by hand.
 - `slots.ts` keeps the owner's days; `--meal` replaces their window with the
-  meal window. Save `meal` with the request for re-offers and guest booking.
+  meal window. Every travel-sensitive operation requires explicit `travel` (zero for virtual). Save `meal` with the request for re-offers and guest booking.
 - Explicit dates/ranges extend slot search beyond the default horizon. `--week this|next`
   resolves the owner's relative week and rejects manual from/to dates. Save its
   `resolvedConstraints`; never recompute the week. `--asap` ranks earliest starts
@@ -114,8 +117,12 @@ Pass `locale` with every save: the other person's language tag, the same one
 used for `slots.ts --locale`.
 
 An answer that arrives before booking is recorded with
-`calendar.ts format --id <id> --json '{"format":"<format>","location":"<place>"}'`
+`calendar.ts format --id <id> --json '{"format":"<format>","location":"<place>","travel":<estimate>}'`
 (drop `location` when there is none). Before composing a reply, use the scheduling
 tool's request view or run `request-view.ts --id <id>` after the calendar work.
 Ask format/place only when `askDetails` is true. The view reserves that one question;
 ask it in the current reply and never repeat it. Missing details never block scheduling.
+
+For meals, ask only where, never suggest remote formats. Unknown-place meals use
+15 minutes of private travel on each side; explicit virtual formats use zero. Follow
+`meetly-travel` to estimate and override travel; pass `travel` on offers, bookings and place changes.

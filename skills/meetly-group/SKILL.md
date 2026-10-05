@@ -6,6 +6,10 @@ description: Owner scheduling requests in their DM or a group, asked-request ans
 
 For owner turns and scheduled upkeep. Guest turns use the scheduling tools.
 
+For replies to your private travel estimate, follow `meetly-travel`, "Owner
+corrections": list bookings, resize travel, finish privately. The recipient lookup
+and offer flow below are for scheduling requests.
+
 Scripts are `node /opt/plow/skills/meetly/scripts/<name>.ts`. Mac commands go
 through Latch's `plow_run_command` (the tool name may be server-prefixed),
 following the Mac's `contacts` and `google-workspace` skills for their exact
@@ -43,6 +47,12 @@ selects it (`meetly-confirm`, "Book the event"). Overlap permission does not aut
 
 ## Offer times
 
+Before searching, read `meetly-travel` to prepare format and an explicit travel estimate.
+If an in-person meeting needs a missing owner base, ask privately and stop.
+Pass the same `travel` to the group tool, slot search (`--format` and `--travel`), and saved offer.
+Use zero minutes for virtual meetings. Never disclose private travel in a group.
+
+
 Suggested dates/times are `proposed`; only explicit non-relaxable conditions are `constraints`.
 Save accepted clock times in `constraints.startTime` (HH:MM), not `proposed`, before searching with `--start-time`.
 
@@ -69,7 +79,7 @@ as `constraints`; an empty object clears them. Omission preserves the saved poli
 For a DM search, run `ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
 before searching, keeping any hard conditions they did not change.
 
-1. In the current group, call `meetly_offer_owner_group` with `topic`, required `durationMin`, `introduction: "needed"|"already_introduced"`, `meal`, `constraints`,
+1. In the current group, call `meetly_offer_owner_group` with `topic`, required `durationMin`, `travel`, `introduction: "needed"|"already_introduced"`, `meal`, `constraints`,
    `proposed`, `name` as given by the owner in this thread, `format`, `location` and `locale` as known.
    It resolves the guest and chat, searches within the owner's conditions and
    holds times itself using your chosen duration; never supply `offered` intervals.
@@ -100,7 +110,7 @@ before searching, keeping any hard conditions they did not change.
    - **`unknownAfter` is set:** offer only what came back.
 4. For new overlap permission, use `meetly_offer_owner_dm` with `allowOverlapTitles`; the raw CLI cannot authorize overlaps. Otherwise save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,
    `name`, `sourceRowid`, known `chatUid`, `topic`, `location`, `meal` if applicable, optional `durationMin`,
-   `constraints` (the owner's conditions), `proposed`, `format`,
+   `constraints` (the owner's conditions), `proposed`, `format`, `travel`,
    `locale`, and `offered[]` with each slot's `start`/`end`. Do not supply hold ids.
 5. The writer creates the holds and saves the offer under the existing request
    id, preserving its chat link. It re-keys an inbound request with the same

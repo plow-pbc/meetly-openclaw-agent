@@ -1,3 +1,4 @@
+import { TravelBaseRequired } from "./travel.ts";
 import { fetchBusy } from "./busy.ts";
 import { offerRequest, type OfferInput } from "./calendar.ts";
 import { lookupContact } from "./contact.ts";
@@ -10,7 +11,7 @@ import { checkContact, ContactConfirmationRequired, findOpenByHandle, normalizeH
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & SearchTiming & { durationMin: number };
+type GroupRequest = Pick<OfferInput, "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & SearchTiming & { durationMin: number };
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sendOwner?: (text: string) => Promise<void>): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -87,7 +88,8 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     const constraints = args.constraints !== undefined || args.week !== undefined
       ? resolveSearchConstraints(args.constraints ?? savedPolicy, args.week, now, config.timezone) : existing?.constraints;
     const proposed = args.proposed ?? (existing?.status === "asked" ? existing.proposed : undefined);
-    const search = { ...constraints, now, config, meal, durationMin, locale, asap: args.asap, busy: [] };
+    const travel = existing?.travel?.override ? existing.travel : args.travel ?? existing?.travel;
+    const search = { travel, format: format ?? existing?.format, ...constraints, now, config, meal, durationMin, locale, asap: args.asap, busy: [] };
     const busy = await fetchBusy(config, preferredSearchCoverage(search, proposed));
     if (busy.degraded.length) throw new Error("calendar unavailable");
     busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
@@ -98,11 +100,12 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     const { slots, preferencesUnavailable, incomplete } = findPreferredSlots(query, proposed, [{ ...query, near }]);
     if (incomplete && !slots.length) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current request is unchanged.", incomplete };
     if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
-    const { request } = await offerRequest({ handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
+    const { request } = await offerRequest({ travel, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
       offered: slots.map(({ start, end }) => ({ start, end })),
       origin: "owner-group", chatUid: chat, askDetails: false });
     return { ...view(request, config), preferencesUnavailable };
-  } catch {
+  } catch (error) {
+    if (error instanceof TravelBaseRequired) return { error: "Provide your travel base in your private DM before offering in-person times.", code: "TRAVEL_BASE_REQUIRED" };
     return { error: "The scheduling action could not be completed. Check the request before trying again." };
   }
 }
