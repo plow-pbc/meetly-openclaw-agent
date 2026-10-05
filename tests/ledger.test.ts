@@ -408,17 +408,17 @@ for (const origin of ["owner", "owner-group", "inbound"] as const) test(`request
   assert.equal(saved.chatUid, "cht_MiXeD");
 });
 
-test("topics strip only a trailing reference to the recorded guest", () => {
+test("topics preserve the supplied text on creation and update", () => {
   for (const [topic, expected] of [
-    ["lunch with Kai", "lunch"],
-    ["lunch WITH KAI", "lunch"],
+    ["lunch with Kai", "lunch with Kai"],
+    ["lunch WITH KAI", "lunch WITH KAI"],
     ["review with Kai about hiring", "review with Kai about hiring"],
     ["lunch with Kaia", "lunch with Kaia"],
   ]) {
     const added = addRequest(empty(), input({ name: "Kai", topic }), T0, "r_1");
     assert.equal(added.requests[0]!.topic, expected);
     const updated = updateRequest(added, "r_1", { topic: "budget review with Kai" }, T0);
-    assert.equal(updated.requests[0]!.topic, "budget review");
+    assert.equal(updated.requests[0]!.topic, "budget review with Kai");
   }
 });
 
