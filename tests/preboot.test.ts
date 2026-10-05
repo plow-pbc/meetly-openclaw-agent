@@ -55,7 +55,7 @@ for (const failure of ["plugin", "config", "fresh", "existing", "name-fallback"]
     assert.equal((result.error as NodeJS.ErrnoException)?.code, "ETIMEDOUT");
   } else {
     const config = JSON.parse(readFileSync(join(dir, "openclaw.json"), "utf8"));
-    assert.deepEqual(config.agents.defaults, { model: baseModel });
+    assert.deepEqual(config.agents.defaults, { model: baseModel, heartbeat: { target: "none" } });
     assert.equal(config.models, undefined);
     if (failure === "fresh") assert.ok(config.tools.alsoAllow.includes("meetly_offer_owner_dm"), "owner DM overlap tool must survive the messaging profile allowlist");
     assert.deepEqual(config.plugins?.entries?.meetly,

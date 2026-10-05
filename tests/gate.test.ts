@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyGate, installGate } from "../boot/gate.ts";
+import { applyGate, installGate, quietHeartbeat } from "../boot/gate.ts";
 import gate, { gateContext, isOwnerDmTurn } from "../plugin/index.js";
 
 const status = (s: unknown) => JSON.stringify(s) + "\n";
@@ -109,4 +109,10 @@ test("with no Mac at the time zone question the gate still asks it, and adds the
   assert.match(context, /https:\/\/plow\.co\/download\/latch/);
   const connected = gateContext(status({ status: "SETUP_NEEDED", next: "timezone", question: "What time zone are you in?", draft: {}, defaults: DEFAULTS, mac: { connected: true } }))!;
   assert.doesNotMatch(connected, /plow\.co/);
+});
+
+test("heartbeat finals stay private and other heartbeat settings are kept", () => {
+  assert.deepEqual(quietHeartbeat({}).agents.defaults.heartbeat, { target: "none" });
+  assert.deepEqual(quietHeartbeat({ agents: { defaults: { heartbeat: { every: "1h", target: "owner" } } } }).agents.defaults.heartbeat,
+    { every: "1h", target: "none" });
 });
