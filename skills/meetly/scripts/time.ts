@@ -67,6 +67,13 @@ export function localIso(ms: number, tz: string): string {
   return `${p.y}-${pad(p.m)}-${pad(p.d)}T${pad(p.hh)}:${pad(p.mm)}:${pad(p.ss)}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
 }
 
+export function formatMeetingTime(start: string, timezone: string, locale = "en-US"): string {
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: timezone, weekday: "short", month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit", timeZoneName: "short",
+  }).format(new Date(start));
+}
+
 export function addDays(y: number, m: number, d: number, n: number): { y: number; m: number; d: number } {
   const t = new Date(Date.UTC(y, m - 1, d + n));
   return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
@@ -119,8 +126,11 @@ export function resolveWeekday(value: WeekdayTime, offered: readonly { start: st
   return resolved;
 }
 
-if (isMain(import.meta.url)) run(() => {
-  const { values, positionals } = parseArgs({ allowPositionals: true, options: { anchor: { type: "string" }, timezone: { type: "string" } } });
-  if (positionals.length !== 1 || positionals[0] !== "next_week" || !values.anchor || !values.timezone) throw new Error("usage: time.ts next_week --anchor ISO --timezone IANA");
-  return nextWeek(values.anchor, values.timezone);
+if (isMain(import.meta.url)) run(async () => {
+  const { values, positionals } = parseArgs({ allowPositionals: true, options: { anchor: { type: "string" } } });
+  if (positionals.length !== 1 || positionals[0] !== "next_week" || !values.anchor) throw new Error("usage: time.ts next_week --anchor ISO");
+  const { loadConfig } = await import("./config.ts");
+  const { timezone } = loadConfig();
+  if (typeof timezone !== "string" || !timezone.trim()) throw new Error("owner timezone is missing from config");
+  return nextWeek(values.anchor, timezone);
 });

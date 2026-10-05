@@ -1110,3 +1110,18 @@ for (const invalid of ["cancelled", "partial", "owner", "invalid-email"] as cons
   assert.ok(f.calls.every(c => c[2] === "event"));
   assert.deepEqual(pendingCalendarWrites(), []);
 });
+
+for (const [start, end, expected] of [
+  ["2026-10-14T17:30:00Z", "2026-10-14T18:00:00Z", "Wed, Oct 14, 10:30 AM PDT"],
+  ["2026-11-04T18:30:00Z", "2026-11-04T19:00:00Z", "Wed, Nov 4, 10:30 AM PST"],
+]) test(`calendar confirmations carry a copy-ready owner-local time: ${expected}`, async t => {
+  const f = fixture(t);
+  const config = readJson<Record<string, unknown>>(join(f.home, "config.json"), {});
+  writeJson(join(f.home, "config.json"), { ...config, timezone: "America/Los_Angeles" });
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, locale: "en-US", offered: [{ start: start!, end: end!, account }] } }, f.options);
+  const result = await calendarCommand(["book", "--id", "r_one", "--json", JSON.stringify({ start })], f.options);
+  assert.equal(result.confirmationTime, expected);
+  const resumed = await calendarCommand(["resume", "--id", "r_one"], f.options);
+  assert.equal(resumed.confirmationTime, expected);
+  assert.equal(Date.parse(f.read().booked!.start), Date.parse(start!));
+});

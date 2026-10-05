@@ -78,7 +78,9 @@ If Contacts has an attendee email, pass it as `attendees`. The writer rechecks b
 time, books with the saved format (adding the Meet room for `meet`), records the
 booking and releases the other holds. Never write booking fields with `ledger.ts update` yourself.
 
-Only claim booking or an invitation after the writer succeeds. If it prints
+Only claim booking or an invitation after the writer succeeds. Copy the returned
+`confirmationTime` verbatim in booking and move confirmations: it already includes
+the weekday, date, time and owner time zone. Never calculate a weekday from the ISO timestamp. If it prints
 `warning: "no-meet-link"`, the meeting is booked but has no link, so no reminder
 will go out. Tell the owner in the booking line. Never paste, invent or accept
 a link from anyone. The only link Meetly ever posts is the one `calendar.ts`

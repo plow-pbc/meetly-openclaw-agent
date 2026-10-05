@@ -277,7 +277,7 @@ test("the owner's conditions hold for every offer of a request; the person's pro
 test("owner and poll next-week requests use the time CLI; guests follow their tool contract", () => {
   for (const skill of [groupSkill(), pollSkill()]) {
     assert.match(skill, /time\.ts next_week --anchor/);
-    assert.match(skill, /--timezone <config\.timezone>/);
+    assert.doesNotMatch(skill, /--timezone/);
     assert.match(skill, /`constraints`/);
     assert.doesNotMatch(skill, /following Monday through Sunday/);
   }
