@@ -1331,3 +1331,45 @@ for (const existing of [false, true]) test(`malformed owner locale is rejected b
   assert.deepEqual(f.commands, []);
   assert.deepEqual(f.read(), before);
 });
+
+test("excluded weekdays block stale picks when replacement search has no slots", async t => {
+  const f = fixture(t);
+  const result = await f.act(context, "other_times", { excludedDays: ["mon", "tue"] });
+  assert.ok("error" in result);
+  const before = f.commands.length;
+  const picked = await guestAction(context, "pick", { start: offers[0]!.start });
+  assert.ok("error" in picked, JSON.stringify(picked));
+  assert.equal(f.request().status, "offered");
+  assert.ok(f.commands.slice(before).every(c => c[2] === "events"));
+});
+
+test("owner-group re-offers respect saved excluded weekdays", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.excludedDays = ["mon"];
+  f.save(f.ledger);
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Call", durationMin: 30 });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-06")), JSON.stringify(f.request().offered));
+});
+
+test("owner DM meal schema carries a new lunch through the calendar writer", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] }); f.events.clear();
+  let tool: any;
+  registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
+  assert.deepEqual(tool.parameters.properties.meal?.enum, ["lunch", "dinner", "coffee"]);
+  const result = await tool.execute("call", { origin: "owner", handle: context.requesterSenderId, topic: "Lunch", meal: "lunch",
+    offered: [{ start: "2026-10-05T12:00:00Z", end: "2026-10-05T13:00:00Z" }] });
+  assert.equal(result.isError, false, JSON.stringify(result.details));
+  assert.equal(f.request().durationMin, 60);
+  assert.equal(f.request().meal, "lunch");
+});
+
+test("exact clock constraints are owner-only; guests use the dated start argument", () => {
+  const tools = new Map<string, any>();
+  const api = { registerTool(factory: any) { const tool = factory(context); tools.set(tool.name, tool); } };
+  registerGuestTools(api); registerOwnerGroupTool(api);
+  assert.equal(tools.get("meetly_other_times").parameters.properties.startTime, undefined);
+  assert.equal(tools.get("meetly_offer_owner_group").parameters.properties.constraints.properties.startTime.type, "string");
+});

@@ -12,7 +12,7 @@ import { view } from "./request-view.ts";
 
 export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
-export type GuestArgs = Constraints & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string };
+export type GuestArgs = Omit<Constraints, "startTime"> & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string };
 type SendOwner = (text: string) => Promise<void>;
 const EMPTY: Ledger = { requests: [] };
 
@@ -71,7 +71,7 @@ function preferences(args: GuestArgs, timezone: string): Constraints {
 async function check(request: Request, config: Config, requested: string | WeekdayTime) {
   if (typeof requested === "object" && requested.time === undefined) throw new Error("An exact time is required");
   const start = typeof requested === "string" ? requested : resolveWeekday(requested, request.offered, config.timezone);
-  const query = { now: Date.now(), config, meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
+  const query = { now: Date.now(), config, meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
   const { slot } = checkTime({ ...query, busy: [] });
   const busy = await busyFor(request, config, slot.start, slot.end);
   const checked = checkTime({ ...query, ...busy });
@@ -82,11 +82,11 @@ async function check(request: Request, config: Config, requested: string | Weekd
 
 async function pick(request: Request, config: Config, start: string) {
   const requested = checkTime({ now: Date.now(), config, busy: [], start,
-    meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin }).slot.start;
+    meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin }).slot.start;
   const offer = request.offered.find(o => Date.parse(o.start) === Date.parse(requested));
   if (!offer) return { error: "Choose one of the currently offered start times." };
   const checked = await check(request, config, offer.start);
-  if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available. Ask for other times." };
+  if (request.excludedDays?.includes(checked.slot.dayOfWeek) || !checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available. Ask for other times." };
   const contact = await lookupContact(request.handle);
   const email = request.handle.includes("@") ? request.handle : contact.found && contact.matches === 1 ? contact.emails[0] : undefined;
   request = (await write(request, { action: "book", start: offer.start, attendees: email })).request;
@@ -149,7 +149,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   const now = Date.now();
   const query: SlotQuery = { busy: [], ...bounds, now, config,
-    meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
+    meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
   const range = preferredSearchCoverage(query, preferred);
   const span = Date.parse(range.to) - Date.parse(range.from);
   if (!Number.isFinite(span) || span > 60 * 86_400_000) {
