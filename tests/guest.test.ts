@@ -1316,6 +1316,18 @@ test("guest calendar failures return a safe terminal recovery through the plugin
   const result = await f.tools.get("meetly_other_times")!.execute("call", {});
   const detail = JSON.parse(result.content[0]!.text);
   assert.equal(detail.code, "CALENDAR_UNAVAILABLE");
-  assert.deepEqual(detail.recovery, { action: "reply", retry: false, message: "I couldn't update the meeting times. Please try again later." });
+  assert.deepEqual(detail.recovery, { action: "reply", message: "I couldn't update the meeting times. Please try again later." });
   assert.doesNotMatch(JSON.stringify(detail), /PRIVATE|owner@example.com/);
+});
+
+for (const existing of [false, true]) test(`malformed owner locale is rejected before calendar writes: existing=${existing}`, async t => {
+  const f = fixture(t);
+  if (!existing) { f.save({ requests: [] }); f.events.clear(); }
+  const before = f.read();
+  await assert.rejects(offerRequest({ origin: "owner", handle: context.requesterSenderId,
+    topic: "Call", durationMin: 30, locale: "en_US",
+    offered: offers.map(({ start, end }) => ({ start, end })),
+  }), /language tag/i);
+  assert.deepEqual(f.commands, []);
+  assert.deepEqual(f.read(), before);
 });
