@@ -31,6 +31,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | `calendar.ts` | `approve-time --id ID [--json '{"start":"ISO","attendees":"email"}']` | Books only if free; `TIME_APPROVAL_BUSY` returns `near` for `slots.ts --near ... --no-overlap`. Never grants overlap permission. |
 | `calendar.ts` | `offer [--id X] [--confirm-contact] --json '<request with slots, no hold ids>'` | `{request}`: hold offers atomically; `--id` selects a booked reoffer. Failure retains prior offers or drops a new request with cleanup |
 | | `book --id X [--confirm-contact] --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book/move with optional `travel`; returns `ownerTravelNote` for the DM |
+| | `attendee --id X [--confirm-contact] --json '{"operation":"add\|remove","email":"person@example.com"}'` | `{request, invitationUpdated}`: owner-requested attendee edit on a booked event; sends updates to all guests, refuses last-attendee removal |
 | | `travel --id X --json '{"travel":{"beforeMin":45,"afterMin":45,"override":true}}'` | Save override; resize booked travel. |
 | | `format --id X --json '{"format":"meet", "location":"<optional place>"}'` | save format/location and optional `travel`; resize booked children under the lock |
 | | `duration --id X --json '{"durationMin":60,"topic":"…","offered":[{"start":"…","end":"…"}]}'` | `{request}`: atomically replace duration, topic and holds on an open request |

@@ -165,8 +165,10 @@ and Contacts has no card; keep it out of `topic`.
 Extract the topic, proposed times, hard conditions, explicit duration, format and
 place, and, only in the owner's DM, owner-authorized overlap titles. Follow
 "Offer times" with `origin: owner`. If a requested time is busy, say there is an
-existing commitment; in the main DM, inspect with `meetly-travel` before offering
-alternatives. In groups, offer nearest alternatives. Confirm the offer once in its meeting thread.
+existing commitment and ask whether to search for alternatives before suggesting or
+holding unrequested times. Once asked, in the main DM inspect with `meetly-travel`;
+in groups follow "Offer times". State times with their time zone. Confirm the offer
+once in its meeting thread.
 
 For an explicit owner-stated length, read busy times and run
 `slots.ts --request <saved id> --duration <minutes>` with the saved conditions.

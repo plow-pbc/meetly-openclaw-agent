@@ -22,9 +22,10 @@ export type CalendarAction =
   | { action: "book"; start: string; end?: string; attendees?: string; timeApproval?: boolean; travel?: Travel }
   | { action: "format"; format: Request["format"]; location?: string; travel?: Travel }
   | { action: "travel"; travel: Travel }
+  | { action: "attendee"; operation: "add" | "remove"; email: string }
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
 type Step = { travel?: boolean; checkFrom?: string; checkTo?: string; verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
-type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" | "travel" }>; steps: Step[]; failed?: boolean };
+type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" | "travel" | "attendee" }>; steps: Step[]; failed?: boolean };
 export type CalendarOptions = { confirmContact?: boolean; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
 class TimeApprovalBusy extends Error {
   constructor() { super("Time approval cannot book a busy slot; no overlap was authorized."); }
@@ -52,10 +53,16 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
     holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
   }, now);
 }
-const checkedEvent = (step: Step) => {
+const checkedEvent = (step: Step, input: Intent["input"]) => {
   const event = parseEvent(step.output!);
   if (event.status === "cancelled" || Date.parse(event.start) !== Date.parse(step.start) || Date.parse(event.end) !== Date.parse(step.end)
     || (step.verb === "update" && event.id !== step.eventId)) throw new Error("unexpected calendar event; operation kept for reconciliation");
+  if (input.action === "attendee") {
+    const raw = parseCalendarObject(step.output!);
+    const updated = (raw.event ?? raw) as { attendees?: { email?: string }[]; attendeesOmitted?: boolean };
+    const present = updated.attendees?.some(a => a.email?.toLowerCase() === input.email) ?? false;
+    if (updated.attendeesOmitted || present !== (input.operation === "add")) throw new Error("Attendee change not confirmed; run resume, do not repeat the write.");
+  }
   return event;
 };
 
@@ -192,7 +199,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           travel: input.travel });
         return { request: requestById(id) };
       }
-      if (input.action === "format" || input.action === "travel" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(request.status === "booked" && ((input.action === "book" && wasBooked) || input.action === "offer"))) throw new Error(`request is ${request.status}`);
+      if (input.action === "format" || input.action === "travel" || input.action === "attendee" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(request.status === "booked" && ((input.action === "book" && wasBooked) || input.action === "offer"))) throw new Error(`request is ${request.status}`);
       if (input.action === "duration") {
         const { origin, handle, name, channel, travel, meal, sourceRowid, chatUid, constraints, proposed, format, location, locale, askDetails } = request;
         const config = loadConfig();
@@ -219,6 +226,32 @@ export async function calendarAction(id: string, action: CalendarAction, options
         input.request.format = saved.format;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
         for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${meetingTopic(input.request)} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, input.request));
+      } else if (input.action === "attendee") {
+        if (!["add", "remove"].includes(input.operation) || typeof input.email !== "string" || !/^[^\s,;@]+@[^\s,;@]+\.[^\s,;@]+$/.test(input.email.trim())) {
+          throw new Error("Supply operation add or remove and one attendee email.");
+        }
+        const email = input.email = input.email.trim().toLowerCase();
+        if (input.operation === "add") checkContact(ledger(), input.email, options.confirmContact);
+        if (!request.eventId || !request.booked) throw new Error("Booked request has no calendar event.");
+        const output = await call(["event", "primary", request.eventId, "--json"], request.booked.account);
+        if (output === undefined) throw new Error("Cannot read the booked event's attendees.");
+        const event = parseEvent(output);
+        const raw = parseCalendarObject(output);
+        const current = (raw.event ?? raw) as { attendees?: { email: string; organizer?: boolean; self?: boolean; optional?: boolean; resource?: boolean; comment?: string }[]; attendeesOmitted?: boolean };
+        if (event.id !== request.eventId || event.status === "cancelled") throw new Error("Booked event is unavailable.");
+        if (current.attendeesOmitted) throw new Error("Cannot edit an incomplete attendee list.");
+        const attendees = current.attendees ?? [];
+        const target = attendees.find(a => a.email.toLowerCase() === email);
+        if (input.operation === "remove" && (target?.organizer || target?.self || sameHandle(input.email, request.booked.account))) throw new Error("Cannot remove the calendar owner; cancel the meeting instead.");
+        if (!!target === (input.operation === "add")) return { request, invitationUpdated: false };
+        const remaining = attendees.filter(a => a.email.toLowerCase() !== email);
+        if (input.operation === "remove" && !remaining.some(a => !a.organizer && !a.self && !sameHandle(a.email, request.booked!.account))) {
+          throw new Error("Cannot remove the last attendee; ask the owner whether to cancel the meeting instead.");
+        }
+        const emails = remaining.map(a => [a.email, ...(a.optional ? ["optional"] : []), ...(a.resource ? ["resource"] : []), ...(a.comment ? [`comment=${a.comment}`] : [])].join(";"));
+        if (input.operation === "remove" && remaining.some(a => /[,;]/.test(a.email) || /[,;]/.test(a.comment ?? ""))) throw new Error("Cannot preserve this attendee list through the calendar command.");
+        steps.push({ verb: "update", account: request.booked.account, eventId: event.id, start: event.start, end: event.end,
+          args: [input.operation === "add" ? "--add-attendee" : "--attendees", input.operation === "add" ? input.email : emails.join(","), "--send-updates", "all"], token: randomUUID() });
       } else {
         const config = loadConfig();
         if (input.action === "format") updateRequest(ledger(), id, { format: input.format, location: input.location }, now());
@@ -281,8 +314,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
     if (intent.failed) await fail();
     for (const step of intent.steps) {
       if (step.skipped) continue;
-      if (step.output !== undefined) { checkedEvent(step); continue; }
-      if (step.sentAt === undefined && !intent.failed) {
+      if (step.output !== undefined) { checkedEvent(step, intent.input); continue; }
+      if (step.sentAt === undefined && !intent.failed && intent.input.action !== "attendee") {
         const config = loadConfig();
         const results: unknown[] = [];
         for (const account of new Set(config.calendars.map(c => c.account))) {
@@ -313,7 +346,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (step.sentAt === undefined && !intent.failed) {
         step.sentAt = now(); writeJson(journal, intent);
         const outcome = await send([step.verb, "primary", ...(step.verb === "update" ? [step.eventId!] : []),
-          ...step.args, "--from", step.start, "--to", step.end, "--private-prop", `meetlyOperation=${step.token}`, "--private-prop", `meetlyRequest=${id}`, "--json"], step.account);
+          ...step.args, ...(intent.input.action === "attendee" ? [] : ["--from", step.start, "--to", step.end]), "--private-prop", `meetlyOperation=${step.token}`, "--private-prop", `meetlyRequest=${id}`, "--json"], step.account);
         if (outcome && "output" in outcome) step.output = outcome.output;
         if (outcome && "handle" in outcome) step.handle = outcome.handle;
         if (outcome && "error" in outcome) {
@@ -356,7 +389,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         }
         throw new Error(`calendar write unresolved for ${id}; run resume, do not repeat the write`);
       }
-      checkedEvent(step);
+      checkedEvent(step, intent.input);
       writeJson(journal, intent);
     }
     if (intent.input.action === "offer" && intent.steps.every(s => s.skipped)) await fail();
@@ -366,6 +399,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (completed.input.action === "offer") {
         const offered = completed.steps.filter(s => !s.skipped).map(s => { const e = parseEvent(s.output!); return { start: e.start, end: e.end, holdId: e.id, account: s.account }; });
         next = saveOffer(l, { ...completed.input.request, offered }, now(), id);
+      } else if (completed.input.action === "attendee") {
+        next = l;
       } else {
         if (completed.input.action === "format") l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location ?? "" }, now());
         const step = completed.steps.find(s => !s.travel);
@@ -388,6 +423,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
     });
     rmSync(journal);
     await cleanup();
+    if (completed.input.action === "attendee") return { request: requestById(id), invitationUpdated: true };
     const releasedTravel = !!request.travelEvents?.length;
     request = requestById(id);
     let invitationUpdated = false;
@@ -489,6 +525,6 @@ if (isMain(import.meta.url)) run(async () => {
   if ((action === "book" || action === "approve-time") && values.id) checkContact(ledger(), requestById(values.id).handle, values["confirm-contact"]);
   if (action === "approve-time" && values.id) return approveTime(values.id, args);
   if (action === "offer") return values.id ? calendarAction(values.id, { action: "offer", request: args }) : offerRequest(args, { confirmContact: values["confirm-contact"] });
-  if (!values.id || !["duration", "book", "format", "travel", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | duration|approve-time|book|format|travel|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
-  return calendarAction(values.id, { ...args, action } as CalendarAction);
+  if (!values.id || !["duration", "book", "format", "travel", "attendee", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | duration|approve-time|book|format|travel|attendee|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
+  return calendarAction(values.id, { ...args, action } as CalendarAction, { confirmContact: values["confirm-contact"] });
 });

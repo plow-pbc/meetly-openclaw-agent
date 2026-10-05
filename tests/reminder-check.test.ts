@@ -39,13 +39,13 @@ test("in the window, the link is sent to the group with the time in the person's
   assert.equal(out.action, "send");
   assert.deepEqual(out.patch, {});
   assert.deepEqual(out.send, {
-    chatUid: "c1", meetUrl: MEET, name: "Patrick", locale: "pt-BR", time: "04:00", minutesToStart: 8,
+    chatUid: "c1", meetUrl: MEET, name: "Patrick", locale: "pt-BR", time: "04:00 BRT", minutesToStart: 8,
   });
 });
 
 test("the time is written in the owner's zone and the person's locale", () => {
   const out = check(bookedMeet({ locale: "en-US" }), event(), START - 5 * MIN);
-  assert.equal(out.send!.time, "04:00 AM");
+  assert.equal(out.send!.time, "04:00 AM GMT-3");
   const noLocale = check(bookedMeet({}, { locale: undefined }), event(), START - 5 * MIN);
   assert.equal(noLocale.send!.locale, "en-US");
 });
@@ -96,7 +96,7 @@ test("a meeting moved a little: sent now, for the new time", () => {
   const moved = { start: "2026-10-10T04:05:00-03:00", end: "2026-10-10T04:35:00-03:00" };
   const out = check(bookedMeet(), event(moved), START - 3 * MIN);
   assert.equal(out.action, "send");
-  assert.equal(out.send!.time, "04:05");
+  assert.equal(out.send!.time, "04:05 BRT");
   assert.equal(out.send!.minutesToStart, 8);
   assert.deepEqual(out.patch.booked, { ...moved, account: ACCOUNT });
 });

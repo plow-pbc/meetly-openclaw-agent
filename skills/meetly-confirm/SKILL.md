@@ -1,6 +1,6 @@
 ---
 name: meetly-confirm
-description: The owner's answers to pending meeting questions and time approvals, bookings, and changes to or cancellation of existing meetings.
+description: The owner's answers to pending meeting questions and time approvals, bookings, attendee additions/removals, and changes to or cancellation of existing meetings.
 ---
 # Meetly confirm
 
@@ -54,10 +54,10 @@ tell the owner; do not resend. Only if the owner explicitly authorizes a retry, 
   - `approved: true`: deliver the booking once, through `meetly_answer_owner` when a
     pending approval exists, otherwise to the saved group. If already booked, relay it without booking again.
   - `code: TIME_APPROVAL_BUSY`: tell the owner in their DM that the time is busy.
-    Read fresh busy time, run `slots.ts --near <near> --request <id> --no-overlap`,
+    Ask whether to search for alternatives; keep the current offer intact until asked.
+    Once requested, read fresh busy time, run `slots.ts --near <near> --request <id> --no-overlap`,
     hold the returned times with `calendar.ts offer` and deliver them with
-    `meetly_answer_owner`, as "an existing commitment" to guests. If there are no
-    slots, tell the owner and leave the current offer intact.
+    `meetly_answer_owner`, as "an existing commitment" to guests.
 - **No:** use `meetly_answer_owner` to tell the group that time doesn't work
   for the owner, and offer the current times or new ones.
 
@@ -91,7 +91,7 @@ Cancel a booked meeting with `calendar.ts cancel --id <id>`; drop an open one wi
 `calendar.ts drop --id <id>`. Confirm once in the meeting thread. For a Meet, say the
 link will be posted here 10 minutes before. Do not paste the link now.
 
-Booked, `meet`: "Done: Tue 9/29 at 12:00 PM, on Google Meet. Invitation sent. I'll post
+Booked, `meet`: "Done: Tue 9/29 at 12:00 PM PDT, on Google Meet. Invitation sent. I'll post
 the link here 10 minutes before." Wrong: pasting the link now, or a link someone else sent.
 
 ## Changes after booking
@@ -116,6 +116,15 @@ and `chatUid`. Before owner-requested offers/moves, run `pipeline.ts contact
   the existing event updates with `sendUpdates: "all"`. Say the invitation was
   updated only when `invitationUpdated: true`; otherwise say the calendar event
   moved. Replacement holds are released after commit.
+- **Add/remove an attendee:** only on the owner's instruction, resolve the person's
+  email from their message or Contacts; ask if missing or ambiguous. Run
+  `calendar.ts attendee --id <id> --json '{"operation":"add","email":"person@example.com"}'`
+  or use `"operation":"remove"`. This updates the existing event with `sendUpdates: "all"`;
+  existing guests may receive an update. It preserves the booking, Meet link, travel and
+  replacement holds. No calendar write occurs when the attendee is already added/absent.
+  Removing the last attendee is refused: ask whether the owner wants to cancel instead;
+  never cancel automatically. Confirm the attendee change only after success, using
+  the saved meeting time with its time zone. Do not suggest new times or rebook.
 - **Cancel:** run `calendar.ts cancel --id <id>`. It records `dropped`, clears
   the reoffer and pending question, and deletes the event with `sendUpdates: "all"`.
   If `holdCleanup` is nonempty, report pending cancellation/hold cleanup rather
