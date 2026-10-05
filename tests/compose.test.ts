@@ -25,7 +25,9 @@ test("new groups are untrusted and grant exactly the registered guest tools", ()
   assert.match(env, /PLOW_THREAD_TRUST=untrusted/);
   const names = env.match(/PLOW_GUEST_TOOLS=(\S+)/)?.[1]?.split(",");
   const manifest = JSON.parse(readFileSync(join(ROOT, "plugin", "openclaw.plugin.json"), "utf8"));
-  assert.deepEqual(names, manifest.contracts.tools.filter((name: string) => !["meetly_answer_owner", "meetly_offer_owner_group", "meetly_offer_owner_dm", "meetly_movable"].includes(name)));
+  assert.deepEqual(names, manifest.contracts.tools.filter((name: string) => !["meetly_answer_owner", "meetly_set_owner_travel", "meetly_set_owner_format", "meetly_offer_owner_group", "meetly_offer_owner_dm", "meetly_movable"].includes(name)));
   assert.ok(!names?.includes("meetly_answer_owner"));
+  assert.ok(!names?.includes("meetly_set_owner_travel"));
+  assert.ok(!names?.includes("meetly_set_owner_format"));
   assert.equal(new Set(names).size, 6);
 });
