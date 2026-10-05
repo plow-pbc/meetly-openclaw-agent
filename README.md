@@ -177,13 +177,13 @@ message is skipped.
   existing group with the owner, one guest and Meetly, the owner can request
   scheduling directly; Meetly resolves the guest from the group, links the
   request and offers times there. Owner-group offers supply an explicit duration.
-  Other offers and slot searches use the saved duration, falling back to the owner's
-  configured default. Code checks interval lengths. Owner-requested duration changes replace the topic,
+  Other offers and slot searches use an explicit or saved duration, then the typed meal
+  default (lunch/dinner 60 minutes, coffee 30), then the owner's configured default. Code checks interval lengths. Owner-requested duration changes replace the topic,
   duration and holds together under the calendar lock. Unnamed requests stay in
   their originating group; chat lookup requires the exact runtime chat uid.
   Overlap authorization goes through the registered `meetly_offer_owner_dm` tool,
   which verifies the runtime Plow owner and main-DM session before calling the
-  internal calendar writer. It uses the saved duration or configured default and has
+  internal calendar writer. It uses the saved duration, then the typed meal default, then the configured default and has
   no separate duration argument. Raw calendar
   commands reject overlap authorization.
 - **Opening groups.** Only in the owner's DM, with the base's
