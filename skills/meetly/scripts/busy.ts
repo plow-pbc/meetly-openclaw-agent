@@ -151,16 +151,16 @@ export async function fetchBusy(
       readPaths: [], timeoutMs: 60_000,
       goal: "Meetly: read your busy times so it only offers times you are free",
     }, opts).catch(() => undefined);
-    let events: CalEvent[];
+    let listing: ReturnType<typeof eventsOf>;
     try {
       if (output === undefined) throw new Error("unreadable");
-      events = eventsOf(listingOf(output)).events;
+      listing = eventsOf(listingOf(output));
     } catch {
       degraded.push(account);
       continue;
     }
-    allowOverlap.push(...events.filter(e => e.id && !skipped(e) && titles.has(eventTitle(e.summary))).map(e => ({ account, id: e.id! })));
-    results.push({ events: events.map((e) => ({ ...e, account })) });
+    allowOverlap.push(...listing.events.filter(e => e.id && !skipped(e) && titles.has(eventTitle(e.summary))).map(e => ({ account, id: e.id! })));
+    results.push({ events: listing.events.map((e) => ({ ...e, account })), degraded: listing.degraded, truncated: { after: listing.after } });
   }
   const out = toBusy(results, { tz: config.timezone, max: FETCH_MAX });
   out.coverage = { from: new Date(range.from).toISOString(), to: new Date(range.to).toISOString() };

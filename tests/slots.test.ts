@@ -306,6 +306,21 @@ test("CLI searches an asked request using a typed next week", () => {
   assert.equal(result.json.resolvedConstraints.to, "2026-10-11");
 });
 
+test("CLI next week replaces saved date bounds and retains non-date policy", () => {
+  const home = tmpHome();
+  writeJson(join(home, "config.json"), { ...CONFIG, timezone: "UTC" });
+  writeJson(join(home, "busy.json"), { busy: [] });
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
+    status: "asked", origin: "owner", handle: "+15550107812", topic: "call", durationMin: 45, offered: [],
+    constraints: { from: "2026-10-12", to: "2026-10-18", days: ["tue", "thu"], after: "13:00", before: "15:00", startTime: "13:15" },
+  }, NOW, "saved-week"));
+  const result = cli("slots.ts", ["--in", join(home, "busy.json"), "--request", "saved-week", "--week", "next", "--now", "2026-10-02T08:00:00Z"], { MEETLY_HOME: home });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.json.resolvedConstraints, { from: "2026-10-05", to: "2026-10-11", days: ["tue", "thu"], after: "13:00", before: "15:00", startTime: "13:15" });
+  assert.deepEqual(result.json.slots.map((s: { start: string }) => s.start), ["2026-10-06T13:15:00+00:00", "2026-10-08T13:15:00+00:00"]);
+  assert.equal(result.json.durationMin, 45);
+});
+
 test("typed meal defaults and saved exact owner starts survive slot planning", () => {
   for (const meal of ["lunch", "dinner", "coffee"] as const) {
     const query = { ...q(), durationMin: undefined, meal };
