@@ -5,13 +5,13 @@ import { lookupContact } from "./contact.ts";
 import { loadConfig } from "./config.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
-import { findPreferredSlots } from "./slots.ts";
+import { findPreferredSlots, resolveSearchConstraints, preferredSearchCoverage, type SearchTiming } from "./slots.ts";
 import { view } from "./request-view.ts";
 import { checkContact, ContactConfirmationRequired, requireDuration, findOpenByHandle, intersectConstraints, normalizeHandle, sameHandle, type Ledger, type Constraints } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & { durationMin: number };
+type GroupRequest = Pick<OfferInput, "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & SearchTiming & { durationMin: number };
 
 // Tool callers may fill unused optional fields with empty values.
 function conditions(value?: Constraints): Constraints | undefined {
@@ -86,17 +86,23 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     const meal = args.meal ?? existing?.meal;
     const durationMin = requireDuration(args.durationMin);
     const locale = args.locale ?? existing?.locale;
-    const hard = conditions(args.constraints);
+    if (args.week !== undefined && (args.proposed?.from || args.proposed?.to)) {
+      return { error: "week resolves dates itself; omit proposed.from and proposed.to" };
+    }
+    const hard = conditions(resolveSearchConstraints(conditions(args.constraints) ?? {}, args.week, now, config.timezone));
     const constraints = hard ? intersectConstraints(existing?.constraints, hard) : existing?.constraints;
     const proposed = conditions(args.proposed) ?? (existing?.status === "asked" ? existing.proposed : undefined);
-    const busy = await fetchBusy(config, { from: new Date(now).toISOString(), to: new Date(now + (config.horizonDays + 1) * 86_400_000).toISOString() });
+    const travel = existing?.travel?.override ? existing.travel : args.travel ?? existing?.travel;
+    const search = { travel, format: format ?? existing?.format, ...constraints, now, config, meal, durationMin, locale, asap: args.asap, busy: [] };
+    const range = preferredSearchCoverage(search, proposed);
+    const busy = await fetchBusy(config, range);
     if (busy.degraded.length) throw new Error("calendar unavailable");
     busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
-    const travel = existing?.travel?.override ? existing.travel : args.travel ?? existing?.travel;
-    const query = { travel, format: format ?? existing?.format, ...busy, ...constraints, now, config, meal, durationMin, locale, allowOverlap: existing?.allowOverlap };
-    const near = proposed?.from && proposed.from === proposed.to
+    const query = { ...search, ...busy, allowOverlap: existing?.allowOverlap };
+    const near = !args.asap && proposed?.from && proposed.from === proposed.to
       ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
-    const { slots, preferencesUnavailable } = findPreferredSlots(query, proposed, [{ ...query, near }]);
+    const { slots, preferencesUnavailable, incomplete } = findPreferredSlots(query, proposed, [{ ...query, near }]);
+    if (incomplete) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current request is unchanged.", incomplete };
     if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
     const input = { travel, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
       offered: slots.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),

@@ -799,6 +799,43 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
   assert.ok(!("error" in await guestAction({ ...context, nativeChannelId: "cht_MiXeD" }, "view")));
 });
 
+test("guest alternatives search the owner's saved distant date", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = { from: "2026-10-29", to: "2026-10-29" };
+  f.save(f.ledger);
+  const result = await f.act(context, "other_times", { offer_week: false });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-29")));
+});
+
+for (const field of ["constraints", "proposed"] as const) test(`owner-group reads and holds explicit distant ${field}`, async t => {
+  const f = fixture(t);
+  f.save({ requests: [] }); f.events.clear();
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+    topic: "Planning", durationMin: 30, format: "meet", travel: { beforeMin: 0, afterMin: 0 },
+    [field]: { from: "2026-10-29", to: "2026-10-29" },
+  });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.ok(f.read().requests[0]!.offered.every(o => o.start.startsWith("2026-10-29")));
+  assert.equal((result as any).preferencesUnavailable, false);
+  const read = f.commands.find(a => a[2] === "events")!;
+  assert.ok(read.some(a => a.includes("2026-10-30")), JSON.stringify(read));
+});
+
+test("owner-group resolves and persists next week from Sunday in the owner's zone", async t => {
+  const f = fixture(t, undefined, "America/Los_Angeles");
+  f.save({ requests: [] }); f.events.clear();
+  t.mock.method(Date, "now", () => Date.parse("2026-10-05T02:12:33Z"));
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+    topic: "Planning", durationMin: 30, format: "meet", travel: { beforeMin: 0, afterMin: 0 },
+    week: "next", constraints: { days: ["mon", "tue", "wed"] },
+  });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  const request = f.read().requests[0]!;
+  assert.deepEqual(request.constraints, { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-11" });
+  assert.deepEqual(request.offered.map(o => o.start.slice(0, 10)), ["2026-10-05", "2026-10-06", "2026-10-07"]);
+});
+
 test("owner-group computes slots from saved policy and ignores guest-injected offered intervals", async t => {
   const f = fixture(t);
   const saved = f.ledger.requests[0]!;

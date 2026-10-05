@@ -16,6 +16,8 @@ conversation with `message` (action `send`, omit target) or a normal final reply
 The owner is in every meeting thread: confirmations and notifications go
 there once. Greet the guest, never the owner, in every group introduction.
 Owner-only coordination stays in the owner’s DM: never append "Patrick, let me know in our DM".
+Tell the owner only the result or the question needed to proceed. Never narrate internal
+reasoning, skill names, or instructions (such as "Per the meetly-travel skill").
 Copy the selected request's exact `handle` and `chatUid` from the ledger for reads,
 writes and delivery; never invent an id.
 
@@ -38,11 +40,20 @@ selects it (`meetly-confirm`, "Book the event"). Overlap permission does not aut
 
 ## Offer times
 
-For "next week", run `time.ts next_week --anchor <owner message timestamp>`; it uses
-the configured owner timezone. Use returned `from`/`to` and pass named weekdays as `days`. For owner DM requests, save those bounds in
-`constraints` and pass them as `--from`/`--to`. For a request started in a group,
-suggested dates/times are `proposed` and only explicit non-relaxable conditions
-are `constraints`. Carry constraints into every re-offer unless the owner changes them.
+For "this week" or "next week", pass typed `week: "this"|"next"` to the group tool,
+or `--week this|next` to `slots.ts` in the owner's DM. The search resolves Monday–Sunday
+in the owner's configured timezone. Never compute or substitute from/to dates for a relative
+week, including after a tool error. Pass named weekdays separately as `days`/`--days`.
+For DM calendar reads, `time.ts next_week --anchor <owner message timestamp>` supplies read
+bounds only; the search must still receive `--week next`. Save the search's exact
+`resolvedConstraints` on the request before offering. The group tool saves the week itself.
+For explicit calendar dates/ranges, use from/to; the default horizon does not limit them.
+For ASAP or "as soon as possible", use `asap: true` / `--asap`, starting from now,
+including today. It returns the earliest starts in order, subject to the existing minimum
+notice, days and hours. Never move the search to tomorrow without checking today.
+For a request started in a group, suggested explicit dates/times are `proposed` and
+non-relaxable conditions are `constraints`. Carry constraints into every re-offer unless
+the owner changes them.
 Save accepted clock times in `constraints.startTime` (HH:MM), not `proposed`, before
 searching with `--start-time`. If meeting plus travel cannot fit, ask before alternatives.
 When the owner replaces saved hard conditions, run
@@ -72,19 +83,22 @@ same `travel` to offers. Never expose the base or travel in a group.
    start was already attempted and stop. Only if the owner explicitly asks to clear the attempt and retry,
    run `ledger.ts delivery --id <id> --kind start --action clear` before continuing.
 2. Read the calendar.
-3. For an offered/booked request, pass `--request <id>` to preserve conditions and
+3. For an asked/offered/booked request, pass `--request <id>` to preserve conditions and
    exclude this request's own holds. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
    first offer, its `proposed` times: `--days`, `--start-time`, `--after`, `--before`,
    `--from`/`--to`, `--duration`. Check an exact preferred time with
    `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --at <ISO> --duration <minutes>
-   --format <format> --travel '<estimate>'` (plus `--request <id>` only for offered/booked requests; omit it for new/asked requests).
+   --format <format> --travel '<estimate>'` (plus `--request <id>` for saved requests).
    `--at` rejects search filters: no days/after/before/from/to/exclude/count/near.
    If busy in the owner's main DM, read `meetly-travel` and inspect flexible blockers
    before `--near` or any offer. A permission question ends this turn; never remember
    a historical answer or search alternatives until a fresh reply. Otherwise ask before
    searching unrequested alternatives; once authorized, use `--near <ISO>` with hard conditions.
-   - **No slots.** If the person's `proposed` times block it, run again
+   - **`incomplete` is set:** availability is not fully known. Fetch its `requiredCoverage`
+     and search again; if the calendar is truncated or unavailable, say the read is incomplete.
+     Never call unread dates unavailable or relax dates because of an incomplete read.
+   - **No slots, complete read.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
      If `constraints` block it, tell the owner which one and suggest
      loosening it; stop.

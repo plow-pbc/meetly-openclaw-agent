@@ -6,7 +6,7 @@ import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
 import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findByChat, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
-import { checkTime, findPreferredSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
+import { checkTime, findPreferredSlots, preferredSearchCoverage, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
 import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, wallParts, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
@@ -221,14 +221,16 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     preferred.before = checked.slot.end.slice(11, 16);
   }
   const now = Date.now();
-  const busy = await busyFor(request, config, localIso(now, config.timezone), localIso(now + (config.horizonDays + 1) * 86_400_000, config.timezone));
-  const query: SlotQuery = { ...busy, ...bounds, now, config, travel, format: request.format,
+  const query: SlotQuery = { busy: [], ...bounds, now, config, travel, format: request.format,
     excludeDates: bookedDate && !requestedBookedDate ? [bookedDate] : [],
     meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
+  const range = preferredSearchCoverage(query, preferred);
+  Object.assign(query, await busyFor(request, config, range.from, range.to));
   const narrowed = intersectConstraints(bounds, preferred);
   const fallbacks = preferred.from && preferred.to && preferred.from < preferred.to
     ? [{ ...query, from: narrowed.from, to: narrowed.to }, query] : [query];
-  const { slots, preferencesUnavailable } = exact ? { slots: [exact], preferencesUnavailable: false } : findPreferredSlots(query, preferred, fallbacks);
+  const { slots, preferencesUnavailable, incomplete } = exact ? { slots: [exact], preferencesUnavailable: false, incomplete: undefined } : findPreferredSlots(query, preferred, fallbacks);
+  if (incomplete) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current offer is unchanged.", code: "INCOMPLETE_CALENDAR", incomplete };
   if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged.",
     code: "NO_ALTERNATIVES", conditions: request.constraints ?? {},
     recovery: { action: "ask_owner", tool: "meetly_ask_owner", retry: false,
