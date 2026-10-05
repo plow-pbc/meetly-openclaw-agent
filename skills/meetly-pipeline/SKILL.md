@@ -28,5 +28,10 @@ To re-enable scheduling on the owner's instruction, use `--blocked false`.
 The flag applies to every request for that canonical handle. If there is no prior
 request, a closed preference record stores it in the ledger. Setting it does not
 cancel existing events; use the normal cancellation flow if the owner asks.
-Never expose this private preference in a guest reply. Owner group tools may
-return a do-not-contact warning; defer scheduling to the owner's DM confirmation.
+Never expose this private preference in a group, including on an owner's turn.
+The owner group tool sends the confirmation request directly to the owner's DM
+and returns a neutral `silent` result. On that result, send nothing in the group,
+do not send a second DM, and do not retry an unconfirmed delivery. Only a
+confirmation in the owner's main DM authorizes `--confirm-contact` for that
+specific request; an owner request or confirmation in the group does not.
+Keep the flag unless the owner explicitly asks to clear it.

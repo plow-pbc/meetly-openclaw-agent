@@ -1992,7 +1992,8 @@ test("an existing owner-group offer still respects a do-not-contact flag", async
   f.save(f.ledger);
   const before = f.read();
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { topic: "Lunch", durationMin: 30, travel: { beforeMin: 0, afterMin: 0 } });
-  assert.equal("doNotContact" in result && result.doNotContact, true, JSON.stringify(result));
+  assert.equal("silent" in result && result.silent, true, JSON.stringify(result));
+  assert.doesNotMatch(JSON.stringify(result), /do.?not.?contact|marked|blocked/i);
   assert.deepEqual(f.read(), before);
   assert.equal(f.commands.some(c => ["create", "update", "delete"].includes(c[2]!)), false);
 });
@@ -2093,3 +2094,54 @@ test("ask-owner rejects over-length text without sending and preserves a correct
   assert.equal(pending.question, question);
   assert.ok(f.ownerLines[0]!.includes(JSON.stringify(question)));
 });
+
+for (const existing of [true, false]) for (const delivery of ["sent", "unknown", "throws"]) {
+  test(`owner-group contact confirmation stays private (${existing ? "existing request" : "preference only"}, ${delivery})`, async t => {
+    const f = fixture(t);
+    f.ledger.requests[0]!.doNotContact = true;
+    if (!existing) {
+      f.ledger.requests[0]!.status = "dropped";
+      delete f.ledger.requests[0]!.chatUid;
+      f.ledger.requests[0]!.offered = [];
+    }
+    f.save(f.ledger);
+    const before = f.read();
+    const sent: any[] = [];
+    let tool: any;
+    const ctx = { ...context, senderIsOwner: true, requesterSenderId: "plow-owner", sessionKey: "agent:main:plow:group:chat-one" };
+    registerOwnerGroupTool({
+      registerTool(factory: any) { tool = factory(ctx); },
+      runtime: { channel: {
+        routing: { resolveAgentRoute(args: any) {
+          assert.deepEqual(args.peer, { kind: "direct", id: "plow-owner" });
+          return { agentId: "main", sessionKey: "agent:main:main" };
+        } },
+        session: { resolveStorePath: () => "/sessions", updateLastRoute: async () => {} },
+      } },
+    }, offerOwnerGroup, async () => ({
+      buildOutboundSessionContext: (args: any) => args,
+      sendDurableMessageBatch: async (args: any) => {
+        sent.push(args);
+        if (delivery === "throws") throw new Error("PRIVATE transport diagnostic");
+        return { status: delivery };
+      },
+    }));
+    const result = await tool.execute("offer", { topic: "Coffee", durationMin: 30, proposed: { from: "2026-10-05", to: "2026-10-11" } });
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to, "plow-owner");
+    assert.equal(sent[0].session.sessionKey, "agent:main:main");
+    assert.match(sent[0].payloads[0].text, /Guest.*\+15551234567/);
+    assert.match(sent[0].payloads[0].text, /Coffee/);
+    assert.match(sent[0].payloads[0].text, /2026-10-05.*2026-10-11/);
+    assert.match(sent[0].payloads[0].text, /do not contact/i);
+    assert.match(sent[0].payloads[0].text, /confirm.*here/i);
+    assert.equal(result.details.silent, true);
+    assert.equal(result.details.ownerAskSent, delivery === "sent");
+    assert.equal(result.details.recovery.action, "silent");
+    assert.equal(result.details.recovery.retry, false);
+    assert.doesNotMatch(JSON.stringify(result), /do.?not.?contact|marked|blocked|PRIVATE|Guest|Coffee|15551234567/i);
+    assert.deepEqual(f.read(), before);
+    assert.equal(f.commands.length, 0);
+    t.diagnostic(JSON.stringify({ privateDm: sent[0].payloads[0].text, groupResult: result.details, delivery }));
+  });
+}

@@ -26,17 +26,17 @@ export function registerOwnerTools(api, execute = run, outbound) {
   }));
 }
 
-const runGroup = async (context, args) => {
+const runGroup = async (context, args, sendOwner) => {
   const { offerOwnerGroup } = await import("/opt/plow/skills/meetly/scripts/owner-group.ts");
-  return offerOwnerGroup(context, args);
+  return offerOwnerGroup(context, args, sendOwner);
 };
 
-export function registerOwnerGroupTool(api, execute = runGroup) {
+export function registerOwnerGroupTool(api, execute = runGroup, outbound) {
   const required = ["topic", "durationMin"];
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
-    description: "Group-only: never use in the owner's DM. In the owner's DM, follow meetly-group, Owner request: find times, save with calendar.ts offer, then plow_start_thread through the delivery steps. Use this tool only for the owner's scheduling ask in an existing group with exactly one guest and Meetly. Read meetly-group. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Records the request with this turn's exact chat uid and creates holds through the calendar writer. Resolves the sole guest and chat from Plow participants; never supply guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless you decide to change it. Supply explicit travel estimates; read meetly-travel before in-person preparation. Suggested dates belong in proposed; constraints contain only explicit must/only conditions. Reply with the returned offer here; never open another thread. Greet the guest, never the owner; use a neutral greeting when the guest name is unavailable. Keep owner-only coordination in the DM. If this is your first reply in this group, introduce yourself as \"<agentName>, <ownerName>'s scheduling assistant\" in their language with the offer. Ask format/place only when askDetails is true. Owner only.",
+    description: "Group-only: never use in the owner's DM. In the owner's DM, follow meetly-group, Owner request: find times, save with calendar.ts offer, then plow_start_thread through the delivery steps. Use this tool only for the owner's scheduling ask in an existing group with exactly one guest and Meetly. Read meetly-group. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Records the request with this turn's exact chat uid and creates holds through the calendar writer. Resolves the sole guest and chat from Plow participants; never supply guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless you decide to change it. Supply explicit travel estimates; read meetly-travel before in-person preparation. Suggested dates belong in proposed; constraints contain only explicit must/only conditions. Reply with the returned offer here; never open another thread. Greet the guest, never the owner; use a neutral greeting when the guest name is unavailable. Keep owner-only coordination in the DM. If silent is true, output nothing in the group and do not send a separate message or retry: the tool handles private coordination. If this is your first reply in this group, introduce yourself as \"<agentName>, <ownerName>'s scheduling assistant\" in their language with the offer. Ask format/place only when askDetails is true. Owner only.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
       durationMin: { type: "integer", minimum: 1 }, topic: string, meal: { type: "string", enum: ["lunch", "dinner", "coffee"] }, name: { type: "string", description: "Guest name explicitly given by the owner in this thread, if known." },
       constraints: { ...constraints, description: "Only explicit non-relaxable owner conditions, such as must or only. Omit for a suggested date." },
@@ -44,7 +44,7 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
       travel, location: string, locale: string,
     } },
     async execute(_id, args) {
-      const result = await execute(context, cleanArgs(args, required));
+      const result = await execute(context, cleanArgs(args, required), text => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound));
       return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   }));

@@ -19,7 +19,7 @@ function conditions(value?: Constraints): Constraints | undefined {
   return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
-export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Promise<object> {
+export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sendOwner?: (text: string) => Promise<void>): Promise<object> {
   const chat = resolveOwnerChat(ctx);
   if (!chat || !ctx.sessionKey?.includes(":plow:group:")) {
     return { error: "Only the owner's own Plow group turn can start this request." };
@@ -51,7 +51,31 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
     }
     name = args.name?.trim() || name;
     const ledger = readJson<Ledger>(file("ledger.json"), { requests: [] });
-    checkContact(ledger, handle);
+    try {
+      checkContact(ledger, handle);
+    } catch (error) {
+      if (!(error instanceof ContactConfirmationRequired)) throw error;
+      // The group receives only the coordination outcome, never the private reason.
+      const dates = (label: string, value?: Constraints) => {
+        const parts = [value?.from && `from ${value.from}`, value?.to && `through ${value.to}`,
+          value?.days?.length && `on ${value.days.join(", ")}`, value?.after && `after ${value.after}`, value?.before && `before ${value.before}`].filter(Boolean);
+        return parts.length ? ` ${label}: ${parts.join("; ")} (${loadConfig().timezone}).` : "";
+      };
+      let ownerAskSent = false;
+      try {
+        if (sendOwner) {
+          await sendOwner(`You asked in your group for ${args.durationMin}-minute ${JSON.stringify(args.topic)} with ${name ?? handle} (${handle}).`
+            + dates("Required dates/times", args.constraints) + dates("Preferred dates/times", args.proposed)
+            + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")
+            + (args.format ? ` Format: ${args.format}.` : "")
+            + " You previously marked this person do not contact. Please confirm here in our private DM if you want to schedule this meeting. Your preference stays in place unless you ask to clear it.");
+          ownerAskSent = true;
+        }
+      } catch {
+        // An uncertain delivery is never retried or explained in the group.
+      }
+      return { code: "OWNER_CONFIRMATION_REQUIRED", silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
+    }
     const existing = findOpenByHandle(ledger, handle);
     if (existing && existing.chatUid !== chat && !(existing.status === "asked" && existing.chatUid === undefined)) {
       throw new Error("request belongs to another conversation");
@@ -84,7 +108,6 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
     return { ...view(request, config), preferencesUnavailable };
   } catch (error) {
     if (error instanceof TravelBaseRequired) return { error: "Provide your travel base in your private DM before offering in-person times.", code: "TRAVEL_BASE_REQUIRED" };
-    if (error instanceof ContactConfirmationRequired) return { error: error.message, doNotContact: true };
     return { error: "The scheduling action could not be completed. Check the request before trying again." };
   }
 }
