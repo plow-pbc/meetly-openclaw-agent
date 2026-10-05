@@ -514,6 +514,8 @@ if (isMain(import.meta.url)) {
         name: { type: "string" },
         chat: { type: "string" },
         id: { type: "string" },
+        from: { type: "string" },
+        to: { type: "string" },
         json: { type: "string" },
         "json-file": { type: "string" },
         hours: { type: "string" },
@@ -578,6 +580,27 @@ if (isMain(import.meta.url)) {
         if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
         return { request: findOpenByHandle(ledger, input.handle) ?? findOpenBySource(ledger, input) };
       }
+      case "widen-dates": {
+        if (!values.id || !values.from || !values.to || Object.keys(values).some(key => !["id", "from", "to"].includes(key))) {
+          throw new Error("usage: ledger.ts widen-dates --id X --from YYYY-MM-DD --to YYYY-MM-DD; pass only the additional date range, never other conditions");
+        }
+        const { id, from, to } = values;
+        for (const value of [from, to]) {
+          const ms = Date.parse(value);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== value) throw new Error("dates must be valid YYYY-MM-DD values");
+        }
+        if (from > to) throw new Error("from must not be after to");
+        const ledger = updateJson<Ledger>(path, EMPTY, l => {
+          const request = l.requests.find(r => r.id === id);
+          if (!request || !["asked", "offered", "booked"].includes(request.status)) throw new Error("widen-dates needs an asked, offered or booked request");
+          const constraints = { ...request.constraints };
+          // Missing bounds are already unrestricted; widening cannot add a restriction.
+          if (constraints.from !== undefined) constraints.from = [constraints.from, from].sort()[0]!;
+          if (constraints.to !== undefined) constraints.to = [constraints.to, to].sort().at(-1)!;
+          return updateRequest(l, id, { constraints }, now);
+        });
+        return { request: ledger.requests.find(r => r.id === id), search: { request: id, from, to } };
+      }
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
         const patch = jsonArg(values);
@@ -618,7 +641,7 @@ if (isMain(import.meta.url)) {
         return { requests: dueReminders(readJson<Ledger>(path, EMPTY), now, lead) };
       }
       default:
-        throw new Error("usage: ledger.ts find | add | save | update | delivery | expired | asked | booked | pending | cleanup | reminders");
+        throw new Error("usage: ledger.ts find | add | save | update | widen-dates | delivery | expired | asked | booked | pending | cleanup | reminders");
     }
   }, withoutPrivateTravel);
 }

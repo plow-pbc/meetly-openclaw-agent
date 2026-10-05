@@ -22,6 +22,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `add --json '<obj>'` \| `--json-file F` | `{request}` (refused if the person already has an open request) |
 | | `save --json '<obj>'` \| `--json-file F` | `{request}` (reuses the open handle/source request and delivery state; `asked` preserves an open offer) |
 | | `update --id X --json '<patch>'` | `{request}`; patch keys: `chatUid, name, constraints, topic, pendingOwner, locale` (`null` clears `pendingOwner`); duration and other fields belong to their owning scripts |
+| | `widen-dates --id X --from YYYY-MM-DD --to YYYY-MM-DD` | `{request, search}`: extends only this request's date bounds; preserves all other conditions and guest exclusions. Search the returned range with `--request`. |
 | | `expired [--hours N]` \| `asked` \| `pending` \| `booked` \| `cleanup` | `{requests}` |
 | | `delivery --id X --kind start\|answer --action begin\|complete\|clear` | `{request, delivery?}`: `begin` records the attempt before sending (a start returns `delivery.state: reserved`, `sendNow: true`; starts and answers refuse a second attempt); `complete` records success or unknown delivery; `clear` resets an unlinked start or an answer attempt, only on the owner's explicit instruction |
 | | `reminders [--lead-min N]` | `{requests}`: booked text-thread Meets whose link is due (default 10 min before, until 5 min after the start) |

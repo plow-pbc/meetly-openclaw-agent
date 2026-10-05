@@ -44,6 +44,10 @@ apply an attendee edit later when nothing has been saved.
 
 ## Owner confirms
 
+For "that week is fine too", use `ledger.ts widen-dates --id <matched id> --from YYYY-MM-DD
+--to YYYY-MM-DD`, then search the returned range with `--request`. Do not rebuild conditions
+or add weekday filters: code keeps the matched request's conditions and guest exclusions.
+
 Approval to offer an exact clock time is a hard condition: save `constraints.startTime`
 with `ledger.ts update`, preserving other conditions, then follow `meetly-group`.
 Do not leave the accepted time in relaxable `proposed` or search nearby times.
