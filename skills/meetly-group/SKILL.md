@@ -36,6 +36,13 @@ free there.
 
 ## Offer times
 
+For "this week" or "next week", pass `week: "this"` or `week: "next"` to the group tool;
+for ASAP, pass `asap: true`. In the owner DM, use `slots.ts --week this|next` or `--asap`.
+Code resolves dates in the owner's timezone. Save the returned `resolvedConstraints`.
+For a timestamp-anchored next week, run `time.ts next_week --anchor <source timestamp>`.
+Read explicit date ranges with `busy.ts --fetch --from ISO --to ISO` covering the search;
+if the search reports incomplete coverage, fetch that range before claiming availability.
+
 Pass `meal: "lunch"|"dinner"|"coffee"` or `slots.ts --meal` when applicable.
 Lunch and dinner use their meeting windows; explicit or saved duration takes precedence,
 otherwise use 60 minutes for lunch/dinner, 30 for coffee, or `config.durationMin`. Keep `meal`, place, format and locale on re-offers.

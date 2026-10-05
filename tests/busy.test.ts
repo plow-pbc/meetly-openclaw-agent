@@ -125,7 +125,7 @@ test("fetchBusy reports an account it could not read as degraded, never as free"
     timezone: TZ,
     calendars: [{ account: "owner@example.com", id: "owner@example.com" }, { account: "work@example.com", id: "work@example.com" }],
   }, range, { token: "tok", fetch: macBridge((argv) => argv.includes("work@example.com") ? undefined : '{"events": []}') });
-  assert.deepEqual(r, { busy: [], degraded: ["work@example.com"] });
+  assert.deepEqual(r, { busy: [], degraded: ["work@example.com"], coverage: { from: new Date(range.from).toISOString(), to: new Date(range.to).toISOString() } });
   const noMac = await fetchBusy({ timezone: TZ, calendars: [{ account: "owner@example.com", id: "owner@example.com" }] }, range, { token: "" });
   assert.deepEqual(noMac.degraded, ["owner@example.com"]);
 });
@@ -136,10 +136,11 @@ test("the CLI's --fetch writes tmp/busy.json for slots.ts and prints only a shor
     ownerName: "Ana", timezone: TZ, days: ["mon"], windowStart: "09:00", windowEnd: "17:00", durationMin: 30, horizonDays: 3,
     calendars: [{ account: "owner@example.com", id: "owner@example.com" }], defaultAccount: "owner@example.com", setupDoneAt: "2026-09-26T00:00:00Z",
   });
-  const r = cli("busy.ts", ["--fetch"], { MEETLY_HOME: home, PLOW_MCP_BRIDGE_TOKEN: "" });
+  const coverage = { from: "2026-10-19T00:00:00.000Z", to: "2026-10-24T00:00:00.000Z" };
+  const r = cli("busy.ts", ["--fetch", "--from", coverage.from, "--to", coverage.to], { MEETLY_HOME: home, PLOW_MCP_BRIDGE_TOKEN: "" });
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(r.json, { file: join(home, "tmp", "busy.json"), busy: 0, degraded: ["owner@example.com"] });
-  assert.deepEqual(JSON.parse(readFileSync(join(home, "tmp", "busy.json"), "utf8")), { busy: [], degraded: ["owner@example.com"] });
+  assert.deepEqual(r.json, { file: join(home, "tmp", "busy.json"), busy: 0, degraded: ["owner@example.com"], coverage });
+  assert.deepEqual(JSON.parse(readFileSync(join(home, "tmp", "busy.json"), "utf8")), { busy: [], degraded: ["owner@example.com"], coverage });
 });
 
 test("overlap titles match Latch-wrapped summaries exactly and keep account identity", async () => {

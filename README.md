@@ -83,7 +83,7 @@ Everything else starts at these defaults:
 - days: Monday to Friday,
 - hours: 09:00 to 18:00,
 - meeting length: 30 minutes; lunch and dinner default to 60, with explicit or saved lengths taking precedence,
-- offers up to 14 days ahead.
+- searches 14 days ahead by default; explicit dates can extend the search.
 
 Change any of it later in plain words ("make my window 10 to 17", "I don't
 take meetings on Fridays"), or say "pause Meetly" / "resume Meetly".

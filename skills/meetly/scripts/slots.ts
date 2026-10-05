@@ -1,35 +1,36 @@
-// Free times to offer: the owner's days and window, in the owner's zone,
+// Free times to offer: the owner's days and the meeting's window, in the owner's zone,
 // clear of busy time, at least MIN_NOTICE_MIN ahead, spread across days.
-// Lunch and dinner use their meal windows unless the owner selected an exact start.
 // The label and weekday come from here so the agent never computes a weekday.
-// A request only narrows the owner's days and the meeting window. A time outside them is
-// never offered: when the other person can only do such a time, --at checks
-// it and the owner must confirm it before anything is held or booked.
+// Lunch and dinner use their own windows unless the owner selected an exact start.
+// Guest preferences only narrow them; other times require owner confirmation.
 // With a locale (the other person's, e.g. pt-BR or en-US) the label follows
 // that locale's date and time conventions; without one it is "tue 29/9 12:00".
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
-import { allowsOverlap, uniqueEvents, type EventRef, type Busy } from "./busy.ts";
+import { allowsOverlap, covers, uniqueEvents, type Coverage, type EventRef, type Busy } from "./busy.ts";
 import { intersectConstraints, meetingDuration, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
-import { addDays, DAYS, localIso, wallParts, zonedToUtc, type Day } from "./time.ts";
+import { addDays, DAYS, localIso, nextWeek, wallParts, zonedToUtc, type Day } from "./time.ts";
 
 export type Slot = { start: string; end: string; dayOfWeek: Day; label: string };
 
 export type Constraints = { startTime?: string; days?: string[]; after?: string; before?: string; from?: string; to?: string };
+export type SearchTiming = { week?: "this" | "next"; asap?: boolean };
 
-export type SlotQuery = Constraints & {
+export type SlotQuery = Constraints & SearchTiming & {
   now: number;
   config: Config;
   busy: Busy[];
   unknownAfter?: string;
+  coverage?: Coverage;
   durationMin?: number;
   meal?: Meal;
   ownerStartTime?: string;
   allowOverlap?: EventRef[];
   exclude?: string[];
+  excludeDates?: string[];
   count?: number;
   near?: string;
   locale?: string;
@@ -52,6 +53,49 @@ function windowFor(config: Config, meal?: Meal, ownerStartTime?: string, duratio
 
 
 const pad = (n: number) => String(n).padStart(2, "0");
+
+function shiftDate(date: string, days: number): string {
+  return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+export function resolveSearchConstraints(input: Constraints, week: SearchTiming["week"], now: number, timezone: string): Constraints {
+  const constraints = Object.fromEntries(Object.entries(intersectConstraints({}, input)).filter(([, value]) => value !== undefined));
+  if (week === undefined) return constraints;
+  if (week !== "this" && week !== "next") throw new Error("week must be this or next");
+  if (input.from || input.to) throw new Error("week resolves dates itself; omit from and to");
+  const next = nextWeek(new Date(now).toISOString(), timezone);
+  return { ...constraints, ...(week === "next" ? next : { from: shiftDate(next.from, -7), to: shiftDate(next.to, -7) }) };
+}
+
+// The horizon supplies missing bounds; explicit dates are never clipped to it.
+export function searchBounds(q: Pick<SlotQuery, "config" | "now" | "from" | "to">) {
+  const today = localIso(q.now, q.config.timezone).slice(0, 10);
+  const from = q.from && q.from > today ? q.from : today;
+  return { from, to: q.to ?? shiftDate(from, q.config.horizonDays) };
+}
+
+export function searchCoverage(q: SlotQuery): Coverage {
+  const bounds = searchBounds(q);
+  const midnight = (date: string) => {
+    const [y, m, d] = date.split("-").map(Number);
+    return zonedToUtc(y!, m!, d!, 0, 0, q.config.timezone);
+  };
+  return { from: new Date(midnight(bounds.from)).toISOString(), to: new Date(midnight(shiftDate(bounds.to, 1))).toISOString() };
+}
+
+export function preferredSearchCoverage(query: SlotQuery, preferred?: Constraints): Coverage {
+  const fallback = searchCoverage(query);
+  const requested = searchCoverage({ ...query, ...intersectConstraints(query, preferred) });
+  return { from: [fallback.from, requested.from].sort()[0]!, to: [fallback.to, requested.to].sort().at(-1)! };
+}
+
+type SlotResult = {
+  slots: Slot[];
+  durationMin: number;
+  resolvedConstraints: Constraints;
+  unknownAfter?: string;
+  incomplete?: { reason: "calendar-coverage" | "truncated-calendar"; requiredCoverage: Coverage };
+};
 
 // Throws on a malformed locale tag, so the CLI fails instead of guessing.
 export function localeFormatter(locale: string, tz: string): Intl.DateTimeFormat {
@@ -81,25 +125,29 @@ export function withinConstraints(start: number, end: number, timezone: string, 
 }
 
 export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}, fallbacks: SlotQuery[] = [query]) {
-  let { slots } = findSlots({ ...query, ...intersectConstraints(query, preferred) });
-  const preferencesUnavailable = slots.length === 0;
+  let result = findSlots({ ...query, ...intersectConstraints(query, preferred) });
+  const preferencesUnavailable = result.slots.length === 0 && !result.incomplete;
   for (const fallback of fallbacks) {
-    if (slots.length) break;
-    slots = findSlots(fallback).slots;
+    if (result.slots.length || result.incomplete) break;
+    result = findSlots(fallback);
   }
-  return { slots, preferencesUnavailable };
+  return { ...result, preferencesUnavailable };
 }
 
-export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string } {
+export function findSlots(q: SlotQuery): SlotResult {
   const { config, now } = q;
   const tz = config.timezone;
+  const resolvedConstraints = resolveSearchConstraints(q, q.week, now, tz);
+  q = { ...q, ...resolvedConstraints };
+  if (q.asap !== undefined && typeof q.asap !== "boolean") throw new Error("asap must be a boolean");
+  if (q.asap && q.near) throw new Error("asap searches earliest first; omit near");
   const duration = meetingDuration(q.durationMin, q.meal, q.config.durationMin);
   const count = q.count ?? SLOT_COUNT;
-  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], durationMin: duration, start: q.near }).slot.start);
+  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, durationMin: duration, busy: [], start: q.near }).slot.start);
 
   let [startMin, endMin] = windowFor(config, q.meal, q.ownerStartTime, duration);
   const exactStart = q.startTime === undefined ? undefined : minutes(parseTime(q.startTime));
-  if (exactStart !== undefined && exactStart < startMin) return { slots: [] };
+  if (exactStart !== undefined && exactStart < startMin) return { slots: [], durationMin: duration, resolvedConstraints };
   startMin = exactStart ?? Math.ceil(startMin / STEP_MIN) * STEP_MIN;
 
   const earliest = now + MIN_NOTICE_MIN * 60_000;
@@ -109,29 +157,41 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string 
     .map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }));
   const unknownAfter = q.unknownAfter !== undefined ? Date.parse(q.unknownAfter) : undefined;
 
-  const today = wallParts(now, tz);
+  const bounds = searchBounds(q);
+  const [y0, m0, d0] = bounds.from.split("-").map(Number);
+  const days = (Date.parse(bounds.to) - Date.parse(bounds.from)) / 86_400_000;
+  let incomplete: SlotResult["incomplete"];
   const perDay: { start: number; end: number; day: Day }[][] = [];
-  scan: for (let i = 0; i <= config.horizonDays; i++) {
-    const { y, m, d } = addDays(today.y, today.m, today.d, i);
+  scan: for (let i = 0; i <= days; i++) {
+    const { y, m, d } = addDays(y0!, m0!, d0!, i);
+    if (q.excludeDates?.includes(`${y}-${pad(m)}-${pad(d)}`)) continue;
     const day = wallParts(zonedToUtc(y, m, d, 12, 0, tz), tz).weekday;
     if (!config.days.includes(day)) continue;
     const found: { start: number; end: number; day: Day }[] = [];
     for (let t = startMin; t + duration <= endMin && (exactStart === undefined || t === exactStart); t += STEP_MIN) {
       const start = zonedToUtc(y, m, d, Math.floor(t / 60), t % 60, tz);
       const end = start + duration * 60_000;
-      if (unknownAfter !== undefined && end > unknownAfter) {
+      if (start < earliest || excluded.has(start) || !withinConstraints(start, end, tz, q)) continue;
+      const range = { from: new Date(start).toISOString(), to: new Date(end).toISOString() };
+      if (unknownAfter !== undefined && Date.parse(range.to) > unknownAfter) {
+        incomplete = { reason: "truncated-calendar", requiredCoverage: searchCoverage(q) };
         perDay.push(found);
         break scan;
       }
-      if (start < earliest || excluded.has(start) || !withinConstraints(start, end, tz, q)) continue;
-      if (busy.some((b) => b.start < end && b.end > start)) continue;
+      if (!covers(q.coverage, range)) {
+        incomplete = { reason: "calendar-coverage", requiredCoverage: searchCoverage(q) };
+        continue;
+      }
+      if (busy.some((b) => b.start < Date.parse(range.to) && b.end > Date.parse(range.from))) continue;
       found.push({ start, end, day });
     }
     perDay.push(found);
   }
 
   let picked: (typeof perDay)[number];
-  if (near !== undefined) {
+  if (q.asap) {
+    picked = perDay.flat().slice(0, count);
+  } else if (near !== undefined) {
     // Rank all eligible starts, not just the first start of each day.
     picked = perDay.flat().sort((a, b) => Math.abs(a.start - near) - Math.abs(b.start - near) || a.start - b.start).slice(0, count);
   } else {
@@ -151,7 +211,8 @@ export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string 
     dayOfWeek: c.day,
     label: label(c.start, tz, format),
   }));
-  return q.unknownAfter !== undefined ? { slots, unknownAfter: q.unknownAfter } : { slots };
+  return { slots, durationMin: duration, resolvedConstraints, ...(incomplete ? { incomplete } : {}),
+    ...(q.unknownAfter !== undefined ? { unknownAfter: q.unknownAfter } : {}) };
 }
 
 export type TimeCheck = {
@@ -171,6 +232,7 @@ export function checkTime(q: {
   busy: Busy[];
   start: string;
   unknownAfter?: string;
+  coverage?: Coverage;
   durationMin?: number;
   meal?: Meal;
   ownerStartTime?: string;
@@ -179,9 +241,9 @@ export function checkTime(q: {
 }): TimeCheck {
   const tz = q.config.timezone;
   // A wall time with no offset (2026-10-03T10:00) is the owner's clock.
-  const wall = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(q.start);
+  const wall = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(q.start);
   const start = wall
-    ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz)
+    ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz) + Number(wall[6] ?? 0) * 1000
     : Date.parse(q.start);
   if (Number.isNaN(start)) throw new Error(`not a time: ${q.start}`);
   const end = start + meetingDuration(q.durationMin, q.meal, q.config.durationMin) * 60_000;
@@ -191,10 +253,11 @@ export function checkTime(q: {
   const [windowStart, windowEnd] = windowFor(q.config, q.meal, q.ownerStartTime, meetingDuration(q.durationMin, q.meal, q.config.durationMin));
   const outsideHours = !q.config.days.includes(s.weekday) || !sameDay ||
     s.hh * 60 + s.mm < windowStart || e.hh * 60 + e.mm > windowEnd;
+  const range = { from: new Date(start).toISOString(), to: new Date(end).toISOString() };
   let reason: TimeCheck["reason"];
-  if (q.unknownAfter !== undefined && end > Date.parse(q.unknownAfter)) reason = "unknown";
+  if (!covers(q.coverage, range) || (q.unknownAfter !== undefined && Date.parse(range.to) > Date.parse(q.unknownAfter))) reason = "unknown";
   else if (start < q.now + MIN_NOTICE_MIN * 60_000) reason = "too-soon";
-  else if (q.busy.some((b) => (!allowsOverlap(b, q.allowOverlap)) && Date.parse(b.start) < end && Date.parse(b.end) > start)) {
+  else if (q.busy.some((b) => (!allowsOverlap(b, q.allowOverlap)) && Date.parse(b.start) < Date.parse(range.to) && Date.parse(b.end) > Date.parse(range.from))) {
     reason = "busy";
   }
   const format = q.locale !== undefined ? localeFormatter(q.locale, tz) : undefined;
@@ -220,12 +283,14 @@ if (isMain(import.meta.url)) {
         request: { type: "string" },
         duration: { type: "string" },
         meal: { type: "string" },
-        "start-time": { type: "string" },
         days: { type: "string" },
         after: { type: "string" },
+        "start-time": { type: "string" },
         before: { type: "string" },
         from: { type: "string" },
         to: { type: "string" },
+        week: { type: "string" },
+        asap: { type: "boolean" },
         "allow-overlap": { type: "string", multiple: true },
         exclude: { type: "string", multiple: true },
         count: { type: "string" },
@@ -242,15 +307,20 @@ if (isMain(import.meta.url)) {
       busy?: Busy[];
       allowOverlap?: EventRef[];
       unknownAfter?: string;
+      coverage?: Coverage;
       degraded?: string[];
     };
     if (!Array.isArray(input.busy)) throw new Error("the busy input has no busy list (pass busy.ts output)");
     const now = values.now !== undefined ? Date.parse(values.now) : Date.now();
     if (Number.isNaN(now)) throw new Error(`--now is not a time: ${values.now}`);
     const degraded = input.degraded ?? [];
+    const request = values.request === undefined ? undefined
+      : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
+    if (values.request !== undefined && (!request || !["asked", "offered"].includes(request.status))) throw new Error("--request needs an asked or offered request");
+    if (request) input.busy = input.busy.filter(b => !request.offered.some(o => o.holdId === b.id && o.account === b.account));
     const q: SlotQuery = { now, config, meal, busy: input.busy, allowOverlap: input.allowOverlap };
+    q.coverage = input.coverage;
     if (values["start-time"] !== undefined) q.startTime = parseTime(values["start-time"]);
-    q.ownerStartTime = q.startTime;
     if (input.unknownAfter !== undefined) q.unknownAfter = input.unknownAfter;
     if (values.duration !== undefined) q.durationMin = positiveInt(values.duration, "--duration");
     if (values.count !== undefined) q.count = positiveInt(values.count, "--count");
@@ -266,29 +336,29 @@ if (isMain(import.meta.url)) {
     if (values.before !== undefined) q.before = parseTime(values.before);
     if (values.from !== undefined) q.from = date(values.from, "--from");
     if (values.to !== undefined) q.to = date(values.to, "--to");
+    Object.assign(q, resolveSearchConstraints(q, values.week as SearchTiming["week"], now, config.timezone));
+    q.asap = values.asap;
     if (values["allow-overlap"]) q.allowOverlap = values["allow-overlap"].map(value => JSON.parse(value));
     if (values.locale !== undefined) q.locale = values.locale;
     if (values.exclude) {
       for (const e of values.exclude) if (Number.isNaN(Date.parse(e))) throw new Error(`--exclude is not a time: ${e}`);
       q.exclude = values.exclude;
     }
-    if (values.request !== undefined) {
-      const request = readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
-      if (!request || !["asked", "offered"].includes(request.status)) throw new Error("--request needs an asked or offered request");
+    q.ownerStartTime = request?.constraints?.startTime ?? q.startTime;
+    if (request) {
       const narrowed = intersectConstraints(request.constraints, q);
       Object.assign(q, narrowed);
-      q.ownerStartTime = request.constraints?.startTime ?? q.startTime;
       q.meal ??= request.meal;
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
       q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);
-      q.busy = q.busy.filter(b => !request.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
     }
     if (values.at !== undefined) {
-      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "start-time"] as const) {
+      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "start-time", "week", "asap"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
-      return { ...checkTime({ ...q, start: values.at }), degraded };
+      const result = checkTime({ ...q, start: values.at });
+      return { ...result, degraded };
     }
     return { ...findSlots(q), degraded };
   });
