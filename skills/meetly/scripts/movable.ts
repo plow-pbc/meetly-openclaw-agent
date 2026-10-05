@@ -7,14 +7,11 @@ import { runOnMac, type BridgeOptions } from "./mac.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
-import { LAST_BUSY, type LastBusy } from "./slots.ts";
+import { lastBusy } from "./last-busy.ts";
 import { travelRange, type TravelInput } from "./travel.ts";
 
 export type MovableArgs = TravelInput & { action: "inspect" | "remember"; requestId?: string;
   candidates?: { start: string; end: string }[]; title?: string; allowed?: boolean };
-
-// How long an exact-time check stands in for inspect's candidates.
-const LAST_BUSY_MS = 30 * 60_000;
 
 // A call the model can fix by changing its arguments; its message says how.
 class ArgsError extends Error {}
@@ -34,8 +31,8 @@ export async function movableAction(ctx: OwnerContext, args: MovableArgs, option
       return { remembered: true, decision, grantsOverlap: false };
     }
     // Without candidates, inspect the slot the last exact-time check found busy.
-    const last = args.candidates === undefined ? readJson<LastBusy | null>(file(LAST_BUSY), null) : null;
-    if (last && Date.now() - Date.parse(last.checkedAt) < LAST_BUSY_MS) {
+    const last = args.candidates === undefined ? lastBusy() : null;
+    if (last) {
       args = { requestId: last.requestId, ...(last.format ? { format: last.format } : {}), ...(last.travel ? { travel: last.travel } : {}), ...args, candidates: [last.slot] } as MovableArgs;
     }
     if (args.action !== "inspect" || !Array.isArray(args.candidates) || args.candidates.length < 1 || args.candidates.length > 2) {

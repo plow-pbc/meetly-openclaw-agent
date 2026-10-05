@@ -9,6 +9,7 @@ import { isMain, run } from "./cli.ts";
 import { holdHours, parseTime, loadConfig, reminderLeadMin } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { file } from "./paths.ts";
+import { unpinBusyStart } from "./last-busy.ts";
 import { uniqueEvents, type EventRef } from "./busy.ts";
 import { checkTravel, type Travel } from "./travel.ts";
 import { DAYS } from "./time.ts";
@@ -567,6 +568,7 @@ if (isMain(import.meta.url)) {
         if ("id" in input) throw new Error("Do not pass id to ledger add/save. Use ledger.ts update --id for conditions or calendar.ts offer --id for replacement times; no request was created.");
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
+        if (input.constraints) input.constraints = unpinBusyStart(input.constraints, loadConfig().timezone, now);
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => addRequest(l, input, now, id));
         if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
         return { request: ledger.requests.find((r) => r.id === id) };
@@ -576,6 +578,7 @@ if (isMain(import.meta.url)) {
         if ("id" in input) throw new Error("Do not pass id to ledger add/save. Use ledger.ts update --id for conditions or calendar.ts offer --id for replacement times; no request was created.");
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
+        if (input.constraints) input.constraints = unpinBusyStart(input.constraints, loadConfig().timezone, now);
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
         if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
         return { request: findOpenByHandle(ledger, input.handle) ?? findOpenBySource(ledger, input) };

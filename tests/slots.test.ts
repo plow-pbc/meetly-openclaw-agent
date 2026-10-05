@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import type { Config } from "../skills/meetly/scripts/config.ts";
-import { checkTime, findSlots, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
+import { checkTime, findSlots, nearbyAlternatives, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { addRequest, intersectConstraints } from "../skills/meetly/scripts/ledger.ts";
 import { cli, tmpHome } from "./helpers.ts";
@@ -607,4 +607,42 @@ test("a busy exact-time check returns the nearest free times and leaves its slot
   assert.doesNotMatch(at.stdout, /gym/, "the shared result never names the blocker");
   assert.deepEqual(readJson<{ slot: unknown }>(join(home, "tmp", "last-busy.json"), { slot: null }).slot,
     { start: "2026-09-29T10:00:00-03:00", end: "2026-09-29T11:00:00-03:00" });
+});
+
+// QA v9: Thu Oct 29 2 PM, 45 min; only 12:45-2:30 busy, the caller's busy list read 1-4 PM, and the horizon ended before the day.
+const KELP_NOW = Date.parse("2026-10-05T04:00:00-07:00");
+const kelpConfig: Config = { ...CONFIG, timezone: "America/Los_Angeles", horizonDays: 14 };
+const kelpBusy = { start: "2026-10-29T19:45:00.000Z", end: "2026-10-29T21:30:00.000Z", id: "permits", account: "jean@example.com" };
+const kelp = (over: Partial<SlotQuery> = {}): SlotQuery => ({ travel: { beforeMin: 0, afterMin: 0 }, now: KELP_NOW, config: kelpConfig, durationMin: 45,
+  busy: [kelpBusy], coverage: { from: "2026-10-29T20:00:00.000Z", to: "2026-10-29T23:00:00.000Z" }, ...over });
+
+test("a busy exact time's alternatives come from that day and nearby days, reading the calendar the caller did not", async () => {
+  const reads: { from: string; to: string }[] = [];
+  const read = async (range: { from: string; to: string }) => { reads.push(range); return { busy: [kelpBusy], coverage: range, degraded: [] }; };
+  const alternatives = await nearbyAlternatives(kelp({ startTime: "14:00" }), "2026-10-29T14:00:00-07:00", [], read);
+  assert.equal(reads.length, 1);
+  assert.ok(reads[0]!.from <= "2026-10-27T07:00:00.000Z" && reads[0]!.to >= "2026-11-01T07:00:00.000Z", JSON.stringify(reads[0]));
+  assert.deepEqual(alternatives.map(s => s.start).slice(0, 2), ["2026-10-29T14:30:00-07:00", "2026-10-29T15:00:00-07:00"]);
+  assert.ok(alternatives.every(s => Date.parse(s.start) >= Date.parse(kelpBusy.end) || Date.parse(s.end) <= Date.parse(kelpBusy.start)));
+  assert.deepEqual(await nearbyAlternatives(kelp(), "2026-10-29T14:00:00-07:00", [], async range => ({ busy: [], coverage: range, degraded: ["jean@example.com"] })), [],
+    "an unreadable calendar offers nothing rather than guessing");
+});
+
+test("an exact time found busy is never saved as the request's start, and a saved pin is released", () => {
+  const home = tmpHome();
+  writeJson(join(home, "config.json"), kelpConfig);
+  const env = { MEETLY_HOME: home };
+  writeFileSync(join(home, "busy.json"), JSON.stringify({ busy: [kelpBusy], degraded: [], coverage: { from: "2026-10-26T07:00:00.000Z", to: "2026-11-02T08:00:00.000Z" } }));
+  const base = { origin: "owner", status: "asked", offered: [], handle: "+15550116003", name: "Lex", topic: "Kelp-farm permitting review", durationMin: 45, format: "meet", travel: { beforeMin: 0, afterMin: 0 } };
+  const pinned = cli("ledger.ts", ["add", "--json", JSON.stringify({ ...base, constraints: { startTime: "14:00", from: "2026-10-29", to: "2026-10-29" } })], env);
+  assert.equal(pinned.status, 0, pinned.stderr);
+  const at = cli("slots.ts", ["--in", join(home, "busy.json"), "--request", pinned.json.request.id, "--now", new Date().toISOString(), "--at", "2026-10-29T14:00"], env);
+  assert.equal(at.json.reason, "busy", at.stderr);
+  assert.equal(at.json.alternatives[0].start, "2026-10-29T14:30:00-07:00");
+  const saved = (id: string) => readJson<{ requests: { id: string; constraints?: Record<string, string> }[] }>(join(home, "ledger.json"), { requests: [] }).requests.find(r => r.id === id)!;
+  assert.deepEqual(saved(pinned.json.request.id).constraints, { from: "2026-10-29", to: "2026-10-29" });
+  const later = cli("ledger.ts", ["add", "--json", JSON.stringify({ ...base, handle: "+15550116004", constraints: { startTime: "14:00", from: "2026-10-29", to: "2026-10-29" } })], env);
+  assert.deepEqual(later.json.request.constraints, { from: "2026-10-29", to: "2026-10-29" });
+  const free = cli("ledger.ts", ["add", "--json", JSON.stringify({ ...base, handle: "+15550116005", constraints: { startTime: "11:30", from: "2026-10-29", to: "2026-10-29" } })], env);
+  assert.equal(free.json.request.constraints.startTime, "11:30", "an approved free time stays a hard start");
 });
