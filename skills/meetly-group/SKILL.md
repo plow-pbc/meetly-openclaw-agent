@@ -4,8 +4,7 @@ description: Owner scheduling requests in their DM or a group, asked-request ans
 ---
 # Meetly group
 
-A reply to your private travel estimate stays in `meetly-travel`, "Owner corrections":
-list bookings, resize travel, finish privately. Do not enter the recipient lookup below.
+For replies to private travel estimates, follow `meetly-travel`, "Owner corrections".
 
 Scripts are `node /opt/plow/skills/meetly/scripts/<name>.ts`. Every calendar write goes through `calendar.ts`.
 For an unresolved write, run `calendar.ts resume --id <id>` and wait; never create
@@ -16,20 +15,18 @@ Messages to the other person come from Meetly, in the third person, using
 conversation with `message` (action `send`, omit target) or a normal final reply.
 The owner is in every meeting thread: confirmations and notifications go
 there once. Greet the guest, never the owner, in every group introduction.
-Owner-only coordination stays in the owner's DM: never append "Patrick, let me know in our DM"
-or a request for overlap permission to an offer addressed to the guest.
+Owner-only coordination stays in the owner’s DM: never append "Patrick, let me know in our DM".
 Copy the selected request's exact `handle` and `chatUid` from the ledger for reads,
 writes and delivery; never invent an id.
 
 ## Read the calendar
 
-Run `busy.ts --fetch`. Only in the owner's DM, for events they explicitly allowed
+Run `busy.ts --fetch --from <ISO> --to <ISO>` covering dates plus travel. Only in the owner's DM, for events they explicitly allowed
 overlapping, add `--allow-overlap-title <owner-supplied event name>` for each name.
 It checks every configured calendar on the Mac, writes
-`/var/lib/plow/meetly/tmp/busy.json` and prints only `{file, busy, degraded, unknownAfter?}`.
-Never run `plow-gog calendar events` yourself or copy a calendar listing into a file.
-Never claim the owner is free on an account in `degraded`. A read-only holiday
-subscription is not a conflict warning; never override a real conflict.
+`/var/lib/plow/meetly/tmp/busy.json` and returns coverage bounds. Unread time is unknown: extend the read, not global preferences.
+Use busy.ts, never raw calendar listings. Never use calendar writes as probes.
+Never claim the owner is free on an account in `degraded`. Never override a real conflict.
 
 **Overlap permission.** The busy file keeps the allowed events' references for slot
 search without exposing them. Overlap permission alone is not a time selection.
@@ -47,6 +44,9 @@ weekdays separately as `days`. For owner DM requests, save those bounds in
 `constraints` and pass them as `--from`/`--to`. For a request started in a group,
 suggested dates/times are `proposed` and only explicit non-relaxable conditions
 are `constraints`. Carry constraints into every re-offer unless the owner changes them.
+Accepted clock times belong in `constraints.startTime` (HH:MM), even without “only”;
+never leave it in `proposed`. Save it before searching with `--start-time`.
+If meeting plus travel cannot fit, ask before offering another time.
 When the owner replaces saved hard conditions, run
 `ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
 before searching or calling the group tool, keeping any hard conditions they did not change.
@@ -77,7 +77,7 @@ same `travel` to offers. Never expose the base or travel in a group.
 3. For an offered/booked request, pass `--request <id>` to preserve conditions and
    exclude this request's own holds. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
-   first offer, its `proposed` times: `--days`, `--after`, `--before`,
+   first offer, its `proposed` times: `--days`, `--start-time`, `--after`, `--before`,
    `--from`/`--to`, `--duration`. Check an exact preferred time with
    `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --at <ISO> --duration <minutes>
    --format <format> --travel '<estimate>'` (plus `--request <id>` only for offered/booked requests; omit it for new/asked requests).

@@ -2005,7 +2005,7 @@ test("an invalidated travel pick searches alternatives then exposes bounded exha
   ledger.requests[0]!.travel = {beforeMin: 15, afterMin: 15};
   f.save(ledger);
   f.events.set("blocker", event("blocker", "2026-10-05T09:45:00Z", "2026-10-07T00:00:00Z"));
-  const picked = await guestAction(context, "pick", {start: offers[0]!.start, travel: {beforeMin: 15, afterMin: 15}}) as any;
+  const picked = await guestAction(context, "pick", {start: offers[0]!.start}) as any;
   assert.equal(picked.code, "TIME_UNAVAILABLE");
   assert.equal(picked.recovery.action, "other_times");
   const result = await guestAction(context, "other_times", {}) as any;
@@ -2092,4 +2092,31 @@ test("ask-owner rejects over-length text without sending and preserves a correct
   assert.ok(pending && "question" in pending);
   assert.equal(pending.question, question);
   assert.ok(f.ownerLines[0]!.includes(JSON.stringify(question)));
+});
+
+test("a guest pick cannot replace the owner's saved travel estimate", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.travel = { beforeMin: 20, afterMin: 20 };
+  f.ledger.requests[0]!.format = "in_person";
+  f.ledger.requests[0]!.location = "Tartine";
+  f.save(f.ledger);
+  const rejected = await f.act(context, "pick", { start: offers[0]!.start, travel: { beforeMin: 15, afterMin: 15 } });
+  assert.ok("error" in rejected);
+  assert.deepEqual(f.commands, [], "reject before calendar reads or writes");
+  const result = await f.act(context, "pick", { start: offers[0]!.start });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.deepEqual(f.request().travel, { beforeMin: 20, afterMin: 20 });
+  assert.match(f.ownerLines.at(-1)!, /20 min travel before and 20 min after/);
+  assert.doesNotMatch(JSON.stringify(result), /beforeMin|afterMin|20 min/);
+});
+
+test("guest exact-start preferences are validated and applied to replacement searches", async t => {
+  const f = fixture(t);
+  const bad = await f.act(context, "other_times", { startTime: "25:00" });
+  assert.ok("error" in bad);
+  assert.deepEqual(f.commands, []);
+  const result = await f.act(context, "other_times", { startTime: "11:45" }) as any;
+  assert.ok(!result.error, JSON.stringify(result));
+  assert.ok(result.offered.length);
+  assert.ok(result.offered.every((slot: { start: string }) => slot.start.slice(11, 16) === "11:45"));
 });
