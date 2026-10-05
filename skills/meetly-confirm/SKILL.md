@@ -109,6 +109,11 @@ not just the owner. With a pending question use `meetly_answer_owner` with
 from the owner DM, or reply in the current group (`plow_send_email` for email).
 Keep travel estimates/base out of that message; a private travel-only correction
 gets no guest notice. Do not acknowledge completion in the DM before guest delivery.
+When `ownerReply.action` is `already_notified`, the writer already sent the owner
+the update. Complete the guest delivery, then finish `NO_REPLY` in the owner's DM;
+do not send another completion or travel summary. This does not suppress a required
+reply in the meeting group. Report failed guest delivery privately without repeating
+the successful change.
 Cancel a booked meeting with `calendar.ts cancel --id <id>`; drop an open one with
 `calendar.ts drop --id <id>`. Confirm once in the meeting thread. For a Meet, say the
 link will be posted here 10 minutes before. Do not paste the link now.

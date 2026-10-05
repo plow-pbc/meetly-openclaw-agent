@@ -118,6 +118,11 @@ explanation. This applies to both owner and guest turns, with or without a tool 
 A silent question handoff suppresses only that handoff, never another scheduling
 outcome in the same guest turn. Finish the other actions and confirm their result once;
 when returned, use `schedulingResult`. Do not announce the private handoff.
+For `meetly_ask_owner`, explicitly choose `replyMode: "with_scheduling"` when the
+guest's message also picks, changes or declines a meeting, regardless of tool order
+or an earlier failed attempt. Use `question_only` only when there is no separate
+scheduling action. Never promise a later invitation when the booking tool says
+`invitationSent: false`. Do not recap earlier notifications during an unrelated request.
 
 - **Owner's DM:** the channel usually runs `setup-status.ts` for you and puts
   its answer at the top of the turn ("Meetly setup check, already run for this

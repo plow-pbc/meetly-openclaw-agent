@@ -14,7 +14,7 @@ for (const failedAsk of [false, true]) test(`a question handoff preserves an ear
   t.after(() => guestTurns.end({}, turn));
   const call = async (name: string, id: string) => {
     guestTurns.beforeTool({ toolName: name }, { ...turn, toolCallId: id });
-    return tools.get(name).execute(id, {});
+    return tools.get(name).execute(id, { replyMode: "question_only" });
   };
   await call("meetly_pick_time", "pick");
   guestTurns.begin(turn);
@@ -40,7 +40,7 @@ test("failed picks cannot supply a booking confirmation", async t => {
   guestTurns.beforeTool({ toolName: "meetly_pick_time" }, { ...turn, toolCallId: "pick" });
   await tools.get("meetly_pick_time").execute("pick", {});
   guestTurns.beforeTool({ toolName: "meetly_ask_owner" }, { ...turn, toolCallId: "ask" });
-  const result = await tools.get("meetly_ask_owner").execute("ask", {});
+  const result = await tools.get("meetly_ask_owner").execute("ask", { replyMode: "question_only" });
   assert.equal(result.details.silent, true);
   assert.equal(result.details.schedulingResult, undefined);
 });
@@ -57,7 +57,43 @@ test("a booking confirmation cannot cross sessions", async t => {
   await tools.get("meetly_pick_time").execute("pick", {});
   guestTurns.beforeTool({ toolName: "meetly_ask_owner" }, { ...turn, toolCallId: "ask" });
   context.sessionKey = "group-two";
-  const result = await tools.get("meetly_ask_owner").execute("ask", {});
+  const result = await tools.get("meetly_ask_owner").execute("ask", { replyMode: "question_only" });
   assert.equal(result.details.silent, true);
   assert.equal(result.details.schedulingResult, undefined);
+});
+
+for (const order of ["ask-first", "parallel"] as const) test(`mixed questions cannot latch channel silence before a booking: ${order}`, async t => {
+  const turn = { runId: order, sessionKey: "mixed-group" };
+  const tools = new Map<string, any>();
+  const active: string[] = [];
+  registerGuestTools({ registerTool(factory: any) { const tool = factory({ sessionKey: turn.sessionKey, agentAccountId: "chat" }); tools.set(tool.name, tool); } },
+    async (_ctx: unknown, action: string) => {
+      active.push(action);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      assert.equal(active.length, 1, "guest writes must not race over one ledger request");
+      active.pop();
+      return action === "pick" ? { status: "booked", invitationSent: false } : { silent: true, ownerAskSent: true };
+    });
+  guestTurns.begin(turn);
+  t.after(() => guestTurns.end({}, turn));
+  let channelSilent = false;
+  const call = async (name: string) => {
+    guestTurns.beforeTool({ toolName: name }, { ...turn, toolCallId: name });
+    const result = await tools.get(name).execute(name, { replyMode: "with_scheduling", question: "Should I bring anything?" });
+    // Plow latches any silent result until this run ends.
+    channelSilent ||= result.details?.silent === true;
+    return result;
+  };
+  if (order === "parallel") await Promise.all([call("meetly_pick_time"), call("meetly_ask_owner")]);
+  else { await call("meetly_ask_owner"); await call("meetly_pick_time"); }
+  assert.equal(channelSilent, false, "the successful booking's final reply must be deliverable");
+});
+
+for (const replyMode of [undefined, "guess"]) test(`question reply scope must be explicit: ${replyMode}`, async () => {
+  let calls = 0, ask: any;
+  registerGuestTools({ registerTool(factory: any) { const tool = factory({}); if (tool.name === "meetly_ask_owner") ask = tool; } },
+    async () => { calls++; return { silent: true }; });
+  const result = await ask.execute("ask", { question: "What to bring?", replyMode });
+  assert.equal(calls, 0);
+  assert.equal(result.isError, true);
 });

@@ -32,6 +32,7 @@ export async function calendarOutput(result: Result, sendOwner = sendOwnerTravel
       await sendOwner(result.ownerTravelNote);
       output.ownerNotified = true;
       if (travelOnly) output.ownerReply = { action: "silent", message: "Finish with exactly NO_REPLY. The travel update was already delivered privately; do not repeat or summarize it." };
+      else output.ownerReply = { action: "already_notified", message: "The owner already received the calendar update privately. Deliver any required guest confirmation once. From the owner's DM, then finish NO_REPLY without another completion message. In the meeting group, still confirm the meeting result. Report a guest-delivery failure privately if needed; never repeat private travel details." };
     } catch {
       output.ownerNotified = false;
       output.ownerNotificationWarning = "owner-notification-unconfirmed";

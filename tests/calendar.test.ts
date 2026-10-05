@@ -998,7 +998,8 @@ test("calendar CLI delivers travel privately and returns no travel data to its c
   })], { ...f.options, sendOwner: async text => { sent.push(text); } });
   assert.doesNotMatch(JSON.stringify(result), /beforeMin|afterMin|ownerTravelNote|travelEvents|Held 10|say if/);
   assert.equal(result.ownerNotified, true);
-  assert.equal(result.ownerReply, undefined, "format changes still need their meeting confirmation");
+  assert.equal((result.ownerReply as { action: string }).action, "already_notified", "format changes must not send another owner confirmation");
+  assert.equal(result.silent, undefined, "the guest confirmation must still be delivered");
   assert.equal(sent.length, 1);
   assert.match(sent[0]!, /Held 10 min travel before and 10 min after/);
   assert.deepEqual(f.read().travel, { beforeMin: 10, afterMin: 10 });
