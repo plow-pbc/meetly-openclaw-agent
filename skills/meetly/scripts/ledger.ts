@@ -259,6 +259,7 @@ export function findByChat(ledger: Ledger, chatUid: string, handle?: string): Re
   }
   // A chat remains a Meetly group after its request closes.
   return ledger.requests.findLast((r) => r.chatUid === chatUid && r.status === "offered")
+    ?? ledger.requests.findLast((r) => r.chatUid === chatUid && r.status === "booked")
     ?? ledger.requests.findLast((r) => r.chatUid === chatUid && r.status !== "asked");
 }
 
@@ -312,6 +313,8 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   checkFormat(format);
   if (input.locale !== undefined) checkLocale(input.locale);
   if (input.travel !== undefined) checkTravel(input.travel);
+  const booked = input.chatUid && ledger.requests.find(r => r.status === "booked" && r.chatUid === input.chatUid && sameHandle(r.handle, input.handle));
+  if (booked) throw new Error(`This conversation already has booking ${booked.id}; use calendar.ts offer --id ${booked.id} for replacement times.`);
   const open = findOpenByHandle(ledger, input.handle);
   if (open) throw new Error(`open request ${open.id} already exists for this person; update it instead`);
   const at = new Date(now).toISOString();
@@ -559,6 +562,7 @@ if (isMain(import.meta.url)) {
       }
       case "add": {
         const input = jsonArg(values);
+        if ("id" in input) throw new Error("Do not pass id to ledger add/save. Use ledger.ts update --id for conditions or calendar.ts offer --id for replacement times; no request was created.");
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => addRequest(l, input, now, id));
@@ -567,6 +571,7 @@ if (isMain(import.meta.url)) {
       }
       case "save": {
         const input = jsonArg(values);
+        if ("id" in input) throw new Error("Do not pass id to ledger add/save. Use ledger.ts update --id for conditions or calendar.ts offer --id for replacement times; no request was created.");
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));

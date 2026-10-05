@@ -94,9 +94,10 @@ tell the owner; do not resend. Only if the owner explicitly authorizes a retry, 
   - `approved: true`: deliver the booking once, through `meetly_answer_owner` when a
     pending approval exists, otherwise to the saved group. If already booked, relay it without booking again.
   - `code: TIME_APPROVAL_BUSY`: tell the owner in their DM that the time is busy.
-    Ask whether to search for alternatives; keep the current offer intact until asked.
-    Once requested, read fresh busy time, run `slots.ts --near <near> --request <id> --no-overlap`,
-    hold the returned times with `calendar.ts offer` and deliver them with
+    Read fresh busy time and run `slots.ts --near <near> --request <id> --no-overlap`,
+    preserving saved conditions; use `--horizon` only when no date range was requested.
+    Offer nearest times in this reply; do not ask whether to search.
+    Hold them with `calendar.ts offer --id <id>` and deliver them with
     `meetly_answer_owner`, as "an existing commitment" to guests.
 - **No:** use `meetly_answer_owner` to tell the group that time doesn't work
   for the owner, and offer the current times or new ones.

@@ -2278,7 +2278,7 @@ for (const booked of [false, true]) test(`named weekday exclusions survive later
   f.save(f.ledger);
   const first = await f.act(context, "other_times", { excludedDays: ["mon", "thu"] });
   assert.equal("error" in first, false, JSON.stringify(first));
-  const result = await f.act(context, "other_times", { excludedDays: ["tue"], days: ["thu"], after: "23:00" });
+  const result = await f.act(context, "other_times", { excludedDays: ["tue"], restoredDays: [], days: ["thu"], after: "23:00" });
   assert.equal("error" in result, false, JSON.stringify(result));
   const offered = (result as { offered: { start: string }[] }).offered;
   assert.ok(offered.length);
@@ -2541,3 +2541,40 @@ for (const replacement of [undefined, { days: ["wed"], from: "2026-10-07", to: "
     saved.constraints = f.request().constraints;
   });
 }
+
+test("a previously excluded preferred day requests explicit restoration before searching or waiting on the owner", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.excludedDays = ["mon", "tue"];
+  f.ledger.requests[0]!.pendingOwner = { question: "Can we widen the dates?", askedAt: new Date(now).toISOString() };
+  f.save(f.ledger);
+  const result = await f.act(context, "other_times", { days: ["tue"] }) as any;
+  assert.equal(result.code, "DAY_RESTORATION_REQUIRED");
+  assert.deepEqual(result.days, ["tue"]);
+  assert.deepEqual(f.commands, []);
+  assert.deepEqual(f.request().excludedDays, ["mon", "tue"]);
+  const restored = await f.act(context, "other_times", { days: ["tue"], restoredDays: ["tue"] }) as any;
+  assert.equal(restored.error, undefined, JSON.stringify(restored));
+  assert.deepEqual(f.request().excludedDays, ["mon"]);
+  assert.ok(restored.offered.every((o: any) => o.start.startsWith("2026-10-06")));
+});
+
+test("a guest can pick the original booking's replacement despite a dropped recovery record, releasing its holds", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  const originalId = f.request().eventId;
+  const replacements = ["11:00", "11:30", "12:00"].map(time => ({
+    start: `2026-10-06T${time}:00Z`, end: new Date(Date.parse(`2026-10-06T${time}:00Z`) + 30 * 60_000).toISOString(),
+    account: "owner@example.com",
+  }));
+  const result = await calendarAction("request-one", { action: "offer", request: { origin: "owner-group", handle: context.requesterSenderId, chatUid: context.nativeChannelId, topic: "Lunch", durationMin: 30, travel: { beforeMin: 0, afterMin: 0 }, offered: replacements } });
+  const holds = result.request.reoffer!.offered.map(o => o.holdId!);
+  f.save({ requests: [result.request, { ...result.request, id: "failed-recovery", status: "dropped", reoffer: undefined, offered: replacements }] });
+  const picked = await f.act(context, "pick", { start: replacements[1]!.start }) as any;
+  assert.equal(picked.error, undefined, JSON.stringify(picked));
+  assert.equal(f.request().eventId, originalId);
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse(replacements[1]!.start));
+  assert.equal(f.request().reoffer, undefined);
+  assert.deepEqual(f.request().holdCleanup, []);
+  assert.ok(holds.every(id => f.events.get(id)?.status === "cancelled"), "all replacement holds are released after the move");
+  assert.equal(f.read().requests.length, 2, "the recovery does not create another request");
+});

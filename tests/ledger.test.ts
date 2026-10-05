@@ -530,3 +530,26 @@ test("meeting lookup rejects an unknown scope or status rather than silently nar
   const status = cli("ledger.ts", ["find", "--scope", "all", "--status", "confirmed"], env);
   assert.match(status.stderr, /status must be/);
 });
+
+test("a dropped recovery request cannot hide the live booking in its chat", () => {
+  const booked = { ...addRequest(empty(), input({ chatUid: "chat" }), T0, "booked").requests[0]!, status: "booked" as const };
+  const dropped = { ...booked, id: "failed-recovery", status: "dropped" as const };
+  assert.equal(findByChat({ requests: [booked, dropped] }, "chat")?.id, "booked");
+  assert.equal(findByChat({ requests: [booked, dropped] }, "chat", booked.handle)?.id, "booked");
+});
+
+test("ledger save cannot fork a booked request by silently discarding its supplied id", () => {
+  const home = tmpHome();
+  const booked = { ...addRequest(empty(), input({ chatUid: "chat" }), T0, "booked").requests[0]!, status: "booked" as const };
+  writeJson(join(home, "ledger.json"), { requests: [booked] });
+  const result = cli("ledger.ts", ["save", "--json", JSON.stringify({ ...input({ chatUid: "chat" }), id: "booked" })], { MEETLY_HOME: home });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /calendar.ts offer --id/);
+  assert.deepEqual(readJson(join(home, "ledger.json"), {}), { requests: [booked] });
+});
+
+test("new offers cannot fork the same person's booked conversation without selecting that booking", () => {
+  const booked = { ...addRequest(empty(), input({ chatUid: "chat" }), T0, "booked").requests[0]!, status: "booked" as const };
+  assert.throws(() => saveRequest({ requests: [booked] }, input({ chatUid: "chat" }), T0, "fork"), /calendar.ts offer --id booked/);
+  assert.equal(addRequest({ requests: [booked] }, input({ chatUid: "different-chat" }), T0, "new").requests.length, 2);
+});
