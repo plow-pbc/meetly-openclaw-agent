@@ -12,7 +12,7 @@ import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, t
 import { allowsOverlap, covers, uniqueEvents, type Coverage, type EventRef, type Busy } from "./busy.ts";
 import { requestEvents, intersectConstraints, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
-import { readJson } from "./store.ts";
+import { readJson, writeJson } from "./store.ts";
 import { addDays, DAYS, formatMeetingTime, localIso, nextWeek, wallParts, zonedToUtc, type Day } from "./time.ts";
 
 export type Slot = { start: string; end: string; dayOfWeek: Day; label: string; confirmationTime: string };
@@ -141,6 +141,10 @@ export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}
   }
   return { ...result, preferencesUnavailable };
 }
+
+// The last owner exact-time check that found the time busy.
+export const LAST_BUSY = "tmp/last-busy.json";
+export type LastBusy = { slot: { start: string; end: string }; requestId?: string; format?: string; travel?: unknown; checkedAt: string };
 
 export function findSlots(q: SlotQuery): SlotResult {
   const { config, now } = q;
@@ -384,11 +388,16 @@ if (isMain(import.meta.url)) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
       const result = checkTime({ ...q, start: values.at });
-      const next = result.reason === "busy" && !degraded.length ? {
-        ownerMainDM: "Before searching alternatives, call the meetly_movable tool (not a script) with action inspect, this slot as candidates, and the same format/travel or requestId. Read meetly-travel. If a blocker looks flexible, ask once privately, finish NO_REPLY and wait for a new owner message. While awaiting that answer, do not search, grant overlap or offer. Otherwise search --near now and return the nearest times in this reply. Past permission is not a new answer.",
-        otherChats: "Search alternatives without inspecting or disclosing private blockers.",
+      const busy = result.reason === "busy" && !degraded.length;
+      // meetly_movable inspects this slot when the model calls it without candidates.
+      if (busy) writeJson(file(LAST_BUSY), { slot: { start: result.slot.start, end: result.slot.end }, requestId: request?.id,
+        format: q.format, travel: q.travel, checkedAt: new Date(now).toISOString() } satisfies LastBusy);
+      const alternatives = busy ? findSlots({ ...q, near: values.at }).slots : undefined;
+      const next = busy ? {
+        ownerMainDM: "Call the meetly_movable tool with action inspect; it inspects this slot. Read meetly-travel. If a blocker looks flexible, ask once privately, finish NO_REPLY and wait for a new owner message. While awaiting that answer, do not search, grant overlap or offer. Otherwise offer the alternatives in this reply. Past permission is not a new answer.",
+        otherChats: "Offer the alternatives without inspecting or disclosing private blockers.",
       } : result.reason === "unknown" ? { read: "Fetch busy.ts --fetch --from ISO --to ISO covering the meeting and all travel, then check again. Unread time is not free. Never use a calendar write to test availability." } : undefined;
-      return { ...result, degraded, ...(next ? { next } : {}) };
+      return { ...result, degraded, ...(alternatives ? { alternatives } : {}), ...(next ? { next } : {}) };
     }
     return { ...findSlots(q), degraded };
   });

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import type { Config } from "../skills/meetly/scripts/config.ts";
 import { checkTime, findSlots, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
-import { writeJson } from "../skills/meetly/scripts/store.ts";
+import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { addRequest, intersectConstraints } from "../skills/meetly/scripts/ledger.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
@@ -588,4 +588,23 @@ test("search output reports guest exclusions in the effective search, separate f
   const result = findSlots(q({ from: "2026-10-12", to: "2026-10-18", excludedDays: ["mon", "tue", "thu"] }));
   assert.deepEqual((result as any).searched, { from: "2026-10-12", to: "2026-10-18", days: ["wed", "fri"], excludedDays: ["mon", "tue", "thu"] });
   assert.deepEqual(result.resolvedConstraints, { from: "2026-10-12", to: "2026-10-18" });
+});
+
+test("a busy exact-time check returns the nearest free times and leaves its slot for inspect", () => {
+  const home = tmpHome();
+  writeJson(join(home, "config.json"), CONFIG);
+  const busyFile = join(home, "busy.json");
+  writeFileSync(busyFile, JSON.stringify({ busy: [{ start: "2026-09-29T13:00:00.000Z", end: "2026-09-29T14:00:00.000Z", id: "gym", account: "jean@example.com" }],
+    degraded: [], coverage: { from: "2026-09-28T00:00:00.000Z", to: "2026-10-12T00:00:00.000Z" } }));
+  const at = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--at", "2026-09-29T10:00:00-03:00", "--duration", "60"], { MEETLY_HOME: home });
+  assert.equal(at.status, 0, at.stderr);
+  assert.equal(at.json.reason, "busy");
+  assert.ok(at.json.alternatives.length > 0);
+  for (const slot of at.json.alternatives) {
+    assert.ok(Math.abs(Date.parse(slot.start) - Date.parse("2026-09-29T13:00:00.000Z")) <= 26 * 3_600_000, `${slot.start} is near the asked time`);
+    assert.ok(Date.parse(slot.end) <= Date.parse("2026-09-29T13:00:00.000Z") || Date.parse(slot.start) >= Date.parse("2026-09-29T14:00:00.000Z"));
+  }
+  assert.doesNotMatch(at.stdout, /gym/, "the shared result never names the blocker");
+  assert.deepEqual(readJson<{ slot: unknown }>(join(home, "tmp", "last-busy.json"), { slot: null }).slot,
+    { start: "2026-09-29T10:00:00-03:00", end: "2026-09-29T11:00:00-03:00" });
 });

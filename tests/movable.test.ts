@@ -198,3 +198,13 @@ test("a call missing its arguments says which ones to add, while calendar failur
   assert.deepEqual(await movableAction(owner, inspect, f.options), { error: "Could not inspect or remember the overlap decision. No permission was granted." });
   assert.equal(f.calls.length, 1, "argument errors never reach the calendar");
 });
+
+test("inspect without candidates inspects the slot the last exact-time check found busy, while it is fresh", async t => {
+  const f = fixture(t);
+  writeJson(join(f.home, "tmp", "last-busy.json"), { slot, format: "in_person", travel: { beforeMin: 25, afterMin: 25 }, checkedAt: new Date().toISOString() });
+  const result = await movableAction(owner, { action: "inspect" } as MovableArgs, f.options);
+  assert.deepEqual(result, await movableAction(owner, inspect, f.options));
+  assert.equal(result.candidates![0]!.title, "Focus block");
+  writeJson(join(f.home, "tmp", "last-busy.json"), { slot, checkedAt: new Date(Date.now() - 31 * 60_000).toISOString() });
+  assert.equal((await movableAction(owner, { action: "inspect" } as MovableArgs, f.options) as { code?: string }).code, "INVALID_ARGUMENTS");
+});
