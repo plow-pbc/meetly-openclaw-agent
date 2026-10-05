@@ -18,10 +18,14 @@ a bare number corrects travel via `calendar.ts travel`, preserving meeting durat
 Only an explicit meeting-length change belongs here. Read `meetly-travel` before
 format/place changes and pass explicit estimates to availability checks.
 
-For email requests, deliver through `meetly-email`. For in-person bookings or place
-changes, re-estimate `travel` with `meetly-travel`. The writer sends the owner note; never repeat it.
+For email requests, deliver through `meetly-email`. Booking an unchanged offer keeps its saved
+travel estimate. For place changes, re-estimate with `meetly-travel`. Never repeat the owner note.
 
 ## Owner confirms
+
+Approval to offer an exact clock time is a hard condition: save `constraints.startTime`
+with `ledger.ts update`, preserving other conditions, then follow `meetly-group`.
+Do not leave the accepted time in relaxable `proposed` or search nearby times.
 
 In the owner's DM, run `ledger.ts pending` and match their answer by person
 and topic. If ambiguous, ask which one; do not guess. Use the request's recorded

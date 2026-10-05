@@ -162,7 +162,7 @@ for (const conflicting of [[0], [1], [0, 1]]) {
     }
     const offer = calendarAction("r_one", { action: "offer", request: f.offer }, f.options);
     if (conflicting.length === f.offer.offered.length) {
-      await assert.rejects(offer, /previous offer retained/);
+      await assert.rejects(offer, /No offered time fits the meeting plus travel; previous offer retained/);
       assert.deepEqual(f.read().offered, f.input.offered);
       assert.equal(f.events.get("hold-one")!.status, "confirmed");
       assert.equal(f.events.get("hold-two")!.status, "confirmed");
@@ -204,7 +204,7 @@ for (const refused of [[0], [1], [0, 1]]) for (const pending of [false, true]) {
     const options = { ...f.options, command, poll: async () => refusal() };
     const offer = calendarAction("r_one", { action: "offer", request: f.offer }, options);
     if (refused.length === f.offer.offered.length) {
-      await assert.rejects(offer, /previous offer retained/);
+      await assert.rejects(offer, /No offered time fits the meeting plus travel; previous offer retained/);
       assert.deepEqual(f.read().offered, before);
     } else {
       const result = await offer;
@@ -1124,4 +1124,23 @@ for (const [start, end, expected] of [
   const resumed = await calendarCommand(["resume", "--id", "r_one"], f.options);
   assert.equal(resumed.confirmationTime, expected);
   assert.equal(Date.parse(f.read().booked!.start), Date.parse(start!));
+});
+
+test("the calendar seam rejects an offer that changes the owner's exact start", async t => {
+  const f = fixture(t);
+  const request = { ...f.offer, constraints: { startTime: "11:30" }, offered: [{ start: "2026-10-05T11:00:00Z", end: "2026-10-05T11:30:00Z", account }] };
+  await assert.rejects(calendarAction("r_one", { action: "offer", request }, f.options), /exact start/i);
+  assert.deepEqual(f.calls, []);
+});
+
+test("saved exact starts cannot be omitted on reoffer or bypassed at booking", async t => {
+  const f = fixture(t);
+  const request = { ...f.read(), constraints: { startTime: "11:30" } };
+  writeJson(join(f.home, "ledger.json"), { requests: [request] });
+  await assert.rejects(calendarAction("r_one", { action: "offer", request: f.offer }, f.options), /exact start/i);
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /exact start/i);
+  assert.deepEqual(f.calls, []);
+  const offered = [{ start: "2026-10-05T11:30:00Z", end: "2026-10-05T12:00:00Z", account }];
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, offered } }, f.options);
+  assert.equal(f.read().constraints?.startTime, "11:30");
 });

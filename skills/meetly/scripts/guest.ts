@@ -93,7 +93,7 @@ function preferences(args: GuestArgs, timezone: string): Constraints {
     if (!Array.isArray(args.days) || !args.days.every(d => (DAYS as readonly string[]).includes(d))) throw new Error("invalid days");
     out.days = args.days;
   }
-  for (const key of ["after", "before"] as const) if (args[key] !== undefined) out[key] = parseTime(args[key]);
+  for (const key of ["startTime", "after", "before"] as const) if (args[key] !== undefined) out[key] = parseTime(args[key]);
   for (const key of ["from", "to"] as const) if (args[key] !== undefined) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(args[key])) throw new Error("invalid date");
     out[key] = args[key];
@@ -132,7 +132,7 @@ async function notifyOwner(request: Request, config: Config, change: "moved" | "
   }
 }
 
-async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number, travel?: Travel) {
+async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number) {
   if (attendees !== undefined && (!Array.isArray(attendees) || (attendees.length > 0 && (request.channel !== "email" || request.status === "booked"
     || attendees.some(email => typeof email !== "string" || !/^[^\s@,]+@[^\s@,]+$/.test(email)))))) return { error: "Additional invitees need email addresses on an unbooked email request." };
   const requested = checkTime({ now: Date.now(), config, busy: [], start,
@@ -144,7 +144,8 @@ async function pick(request: Request, config: Config, start: string, attendees?:
     && Date.parse(request.reoffer!.offeredAt) < turnStartedAt!)) {
     return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
   }
-  const checked = await check({ ...request, travel: request.travel?.override ? request.travel : travel ?? request.travel }, config, offer.start);
+  const travel = request.travel;
+  const checked = await check(request, config, offer.start);
   if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available.", code: "TIME_UNAVAILABLE",
     recovery: { action: "other_times", tool: "meetly_other_times", retry: false } };
   if (request.status === "booked") {
@@ -295,6 +296,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     let request = await resolveRequest(ctx);
     const config = loadConfig();
     if (!request) return { ownerName: config.ownerName, error: `${config.ownerName} will confirm.` };
+    if (action === "pick" && args.travel !== undefined) return { error: "Picking uses the saved offer. Retry without travel; use set_format only if the meeting place or format changed." };
     if (args.travel !== undefined) {
       checkTravel(args.travel);
       args = { ...args, travel: { beforeMin: args.travel.beforeMin, afterMin: args.travel.afterMin } };
@@ -324,7 +326,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
-    if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt, args.travel);
+    if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt);
     return { error: "Unknown scheduling action." };
   } catch (error) {
     if (error instanceof TravelBaseRequired) return { error: "The owner needs to provide travel information privately before scheduling can continue.",

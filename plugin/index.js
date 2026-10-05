@@ -6,6 +6,7 @@
 //
 // Plain JavaScript on purpose: the image ships it as is, with no build step,
 // and preboot copies it into the state volume's plugin root on every boot.
+import { calendarPolicy } from "./calendar-policy.js";
 import { execFile } from "node:child_process";
 import { registerPipelineHooks } from "./pipeline.js";
 import { guestTurns } from "./guest-turn.js";
@@ -114,7 +115,7 @@ export default {
       api.logger.info(context ? `meetly setup gate prepended: ${context.split("\n")[0]}` : "meetly setup gate: unreadable status; prompt fallback applies");
       return context ? { prependContext: context } : undefined;
     });
-    api.on("before_tool_call", guestTurns.beforeTool);
+    api.on("before_tool_call", (event, ctx) => calendarPolicy(event) ?? guestTurns.beforeTool(event, ctx));
     api.on("agent_end", guestTurns.end);
   },
 };

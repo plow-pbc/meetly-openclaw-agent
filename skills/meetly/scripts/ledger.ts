@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
-import { holdHours, loadConfig, reminderLeadMin } from "./config.ts";
+import { holdHours, parseTime, loadConfig, reminderLeadMin } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { file } from "./paths.ts";
 import { uniqueEvents, type EventRef } from "./busy.ts";
@@ -33,7 +33,8 @@ export const OWNER_QUESTION_LIMIT = 500;
 export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ start: string; end: string } | { question: string });
 export function intersectConstraints(owner: Constraints = {}, guest: Constraints = {}): Constraints {
   return {
-    days: owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
+    ...(owner.startTime || guest.startTime ? { startTime: owner.startTime ?? guest.startTime } : {}),
+    days: owner.startTime && guest.startTime && owner.startTime !== guest.startTime ? [] : owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
     after: [owner.after, guest.after].filter(Boolean).sort().at(-1),
     before: [owner.before, guest.before].filter(Boolean).sort()[0],
     from: [owner.from, guest.from].filter(Boolean).sort().at(-1),
@@ -299,6 +300,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   }
   if (input.origin !== "inbound" && input.origin !== "owner" && input.origin !== "owner-group") throw new Error(`origin must be inbound, owner or owner-group, got ${input.origin}`);
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
+  if (input.constraints?.startTime !== undefined) input = { ...input, constraints: { ...input.constraints, startTime: parseTime(input.constraints.startTime) } };
   requireDuration(input.durationMin);
   if (input.meal !== undefined && !["lunch", "dinner", "coffee"].includes(input.meal)) throw new Error("meal must be lunch, dinner or coffee");
   if (input.excludedDays !== undefined) checkExcludedDays(input.excludedDays);
@@ -373,6 +375,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   for (const key of Object.keys(patch)) {
     if (!PATCH_KEYS.includes(key)) throw new Error(`unknown key: ${key} (allowed: ${PATCH_KEYS.join(", ")})`);
   }
+  if (patch.constraints?.startTime !== undefined) patch = { ...patch, constraints: { ...patch.constraints, startTime: parseTime(patch.constraints.startTime) } };
   if (patch.status !== undefined && !STATUSES.includes(patch.status)) throw new Error(`bad status: ${patch.status}`);
   if (patch.excludedDays !== undefined) checkExcludedDays(patch.excludedDays);
   if (patch.offered !== undefined) checkOffers(patch.offered);

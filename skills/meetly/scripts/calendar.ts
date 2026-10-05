@@ -1,5 +1,6 @@
 // Owns calendar writes and their ledger commits. A durable intent survives a
 // lost Latch response or a failed ledger write; uncertain creates are never replayed.
+import { withinConstraints } from "./slots.ts";
 import { calendarOutput } from "./calendar-output.ts";
 import { checkTravel, checkTravelBase, travelFor, travelRange, travelNote, type Travel } from "./travel.ts";
 import { randomUUID } from "node:crypto";
@@ -46,6 +47,12 @@ const holds = requestHolds;
 // Its slots change; the confirmed event and meeting details remain in place.
 function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledger {
   const request = l.requests.find(r => r.id === id);
+  const startTime = request?.constraints?.startTime ?? input.constraints?.startTime;
+  if (startTime) {
+    if (input.constraints?.startTime && input.constraints.startTime !== startTime) throw new Error("Update the owner’s exact start constraint before replacing the offer.");
+    if (input.offered.some(slot => !withinConstraints(Date.parse(slot.start), Date.parse(slot.end), loadConfig().timezone, { startTime }))) throw new Error("Offered time does not match the owner’s exact start.");
+    input.constraints = { ...input.constraints, startTime };
+  }
   if (request?.status !== "booked") return saveRequest(l, input, now, id);
   if (!sameHandle(request.handle, input.handle) || request.chatUid !== input.chatUid || (input.channel !== undefined && request.channel !== input.channel)) throw new Error("offer belongs to another request");
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
@@ -266,6 +273,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         if (input.action === "book" && request.offered.includes(slot) && Date.parse(slot.end) - Date.parse(slot.start) !== request.durationMin * 60_000) {
           throw new Error("Meeting duration changed; re-offer before booking an old hold.");
         }
+        if (input.action === "book" && request.constraints?.startTime && !withinConstraints(Date.parse(slot.start), Date.parse(slot.end), config.timezone, { startTime: request.constraints.startTime })) throw new Error("Booking does not match the owner’s exact start.");
         let verb: Step["verb"] = slot.holdId ? "update" : "create";
         if (slot.holdId) {
           const output = await call(["event", "primary", slot.holdId, "--json"], slot.account);
@@ -394,7 +402,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       checkedEvent(step, intent.input);
       writeJson(journal, intent);
     }
-    if (intent.input.action === "offer" && intent.steps.every(s => s.skipped)) await fail();
+    if (intent.input.action === "offer" && intent.steps.every(s => s.skipped)) await fail(new Error(`No offered time fits the meeting plus travel; ${intent.input.provisional ? "new request dropped" : "previous offer retained"}. Read busy coverage; ask the owner before changing time. Never test availability with a calendar write.`));
     const completed = intent;
     updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
       let next: Ledger;

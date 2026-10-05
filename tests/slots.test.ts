@@ -5,7 +5,7 @@ import { writeFileSync } from "node:fs";
 import type { Config } from "../skills/meetly/scripts/config.ts";
 import { checkTime, findSlots, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
 import { writeJson } from "../skills/meetly/scripts/store.ts";
-import { addRequest } from "../skills/meetly/scripts/ledger.ts";
+import { addRequest, intersectConstraints } from "../skills/meetly/scripts/ledger.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
 const CONFIG: Config = {
@@ -432,7 +432,8 @@ test("only a known busy exact-time check routes the model to private inspection"
     writeJson(busyFile, input);
     const result = cli("slots.ts", args, { MEETLY_HOME: home });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(!!result.json.next, guided);
+    assert.equal(!!result.json.next?.ownerMainDM, guided);
+    if (result.json.reason === "unknown") assert.match(result.json.next.read, /Fetch busy.ts/);
     if (guided) {
       assert.match(result.json.next.ownerMainDM, /meetly_movable/);
       assert.match(result.json.next.otherChats, /alternatives/);
@@ -451,4 +452,31 @@ test("localized slot labels state the time zone across daylight saving", () => {
     const result = checkTime({ ...q({ config }), start: start!, locale: "en-US" });
     assert.ok(result.slot.label.includes(zone!));
   }
+});
+
+test("an owner-approved exact start cannot widen to an earlier search result", () => {
+  const slots = findSlots(q({ startTime: "11:30", after: "11:00", before: "14:00", durationMin: 60 })).slots;
+  assert.ok(slots.length);
+  assert.ok(slots.every(slot => slot.start.slice(11, 16) === "11:30"));
+  assert.deepEqual(findSlots(q({ startTime: "11:30", durationMin: 60,
+    busy: [{ start: "2026-09-28T11:30:00-03:00", end: "2026-10-10T18:00:00-03:00" }] })).slots, []);
+});
+
+test("exact-time checks and searches reject travel outside fetched coverage", () => {
+  const coverage = { from: "2026-09-28T09:00:00-03:00", to: "2026-09-28T13:00:00-03:00" };
+  const query = q({ coverage, travel: { beforeMin: 20, afterMin: 20 } });
+  for (const start of ["2026-09-28T09:00:00-03:00", "2026-09-28T12:30:00-03:00", "2026-10-01T12:00:00-03:00"]) {
+    assert.equal(checkTime({ ...query, start }).reason, "unknown");
+  }
+  assert.equal(checkTime({ ...query, start: "2026-09-28T11:30:00-03:00" }).free, true);
+  assert.ok(findSlots(query).slots.every(s => s.start.slice(0, 10) === "2026-09-28" && s.end <= coverage.to));
+});
+
+test("exact starts retain minute precision and survive preferred-time fallbacks", () => {
+  const exact = starts({ startTime: "11:45" });
+  assert.equal(exact.length, 3);
+  assert.ok(exact.every(start => start.slice(11, 16) === "11:45"));
+  const constraints = intersectConstraints({ startTime: "11:30" }, { after: "11:00" });
+  assert.equal(constraints.startTime, "11:30");
+  assert.deepEqual(starts(intersectConstraints(constraints, { startTime: "11:00" })), []);
 });

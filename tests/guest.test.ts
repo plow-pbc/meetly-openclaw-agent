@@ -2026,7 +2026,7 @@ test("an invalidated travel pick searches alternatives then exposes bounded exha
   ledger.requests[0]!.travel = {beforeMin: 15, afterMin: 15};
   f.save(ledger);
   f.events.set("blocker", event("blocker", "2026-10-05T09:45:00Z", "2026-10-07T00:00:00Z"));
-  const picked = await guestAction(context, "pick", {start: offers[0]!.start, travel: {beforeMin: 15, afterMin: 15}}) as any;
+  const picked = await guestAction(context, "pick", {start: offers[0]!.start}) as any;
   assert.equal(picked.code, "TIME_UNAVAILABLE");
   assert.equal(picked.recovery.action, "other_times");
   const result = await guestAction(context, "other_times", { offer_week: false }) as any;
@@ -2222,7 +2222,7 @@ test("guest booking returns the exact weekday and owner-zone time to copy in the
   f.ledger.requests[0]!.offered = [slot];
   f.save(f.ledger); f.events.clear();
   f.events.set(slot.holdId, event(slot.holdId, slot.start, slot.end));
-  const result = JSON.parse((await f.tools.get("meetly_pick_time")!.execute("book", { start: slot.start, travel: { beforeMin: 0, afterMin: 0 } })).content[0]!.text);
+  const result = JSON.parse((await f.tools.get("meetly_pick_time")!.execute("book", { start: slot.start })).content[0]!.text);
   assert.equal(result.confirmationTime, "Wed, Oct 14, 10:30 AM PDT");
   const current = await f.act(context, "view") as any;
   assert.equal(current.confirmationTime, result.confirmationTime);
@@ -2279,3 +2279,30 @@ for (const existing of [true, false]) for (const delivery of ["sent", "unknown",
     t.diagnostic(JSON.stringify({ privateDm: sent[0].payloads[0].text, groupResult: result.details, delivery }));
   });
 }
+
+test("a guest pick cannot replace the owner's saved travel estimate", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.travel = { beforeMin: 20, afterMin: 20 };
+  f.ledger.requests[0]!.format = "in_person";
+  f.ledger.requests[0]!.location = "Tartine";
+  f.save(f.ledger);
+  const rejected = await f.act(context, "pick", { start: offers[0]!.start, travel: { beforeMin: 15, afterMin: 15 } });
+  assert.ok("error" in rejected);
+  assert.deepEqual(f.commands, [], "reject before calendar reads or writes");
+  const result = await f.act(context, "pick", { start: offers[0]!.start });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.deepEqual(f.request().travel, { beforeMin: 20, afterMin: 20 });
+  assert.match(f.ownerLines.at(-1)!, /20 min travel before and 20 min after/);
+  assert.doesNotMatch(JSON.stringify(result), /beforeMin|afterMin|20 min/);
+});
+
+test("guest exact-start preferences are validated and applied to replacement searches", async t => {
+  const f = fixture(t);
+  const bad = await f.act(context, "other_times", { startTime: "25:00" });
+  assert.ok("error" in bad);
+  assert.deepEqual(f.commands, []);
+  const result = await f.act(context, "other_times", { startTime: "11:45" }) as any;
+  assert.ok(!result.error, JSON.stringify(result));
+  assert.ok(result.offered.length);
+  assert.ok(result.offered.every((slot: { start: string }) => slot.start.slice(11, 16) === "11:45"));
+});
