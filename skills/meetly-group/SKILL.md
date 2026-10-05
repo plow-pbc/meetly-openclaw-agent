@@ -57,7 +57,8 @@ excluded; saved `excludedDays` apply to every search and offer. Only the guest
 explicitly restoring a weekday removes that exclusion.
 Save accepted clock times in `constraints.startTime` (HH:MM), not `proposed`, before
 searching with `--start-time`. If meeting plus travel cannot fit, ask before alternatives.
-When the owner replaces saved hard conditions, run
+For additional dates, use `ledger.ts widen-dates` in `meetly-confirm`, never reconstruct `constraints`.
+When the owner replaces saved hard conditions (not merely widening dates), run
 `ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
 before searching or calling the group tool, keeping any hard conditions they did not change.
 

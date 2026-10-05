@@ -553,3 +553,57 @@ test("new offers cannot fork the same person's booked conversation without selec
   assert.throws(() => saveRequest({ requests: [booked] }, input({ chatUid: "chat" }), T0, "fork"), /calendar.ts offer --id booked/);
   assert.equal(addRequest({ requests: [booked] }, input({ chatUid: "different-chat" }), T0, "new").requests.length, 2);
 });
+
+function dateWideningFixture() {
+  const home = tmpHome();
+  const first = addRequest(empty(), input({ name: "Guest One", constraints: { days: ["mon", "tue", "wed"], from: "2026-10-12", to: "2026-10-18" } }), T0, "first");
+  const ledger = addRequest(first, input({ handle: "+15551234568", name: "Guest Two", durationMin: 45,
+    constraints: { from: "2026-10-12", to: "2026-10-18" }, excludedDays: ["mon", "thu", "tue"],
+    pendingOwner: { askedAt: new Date(T0).toISOString(), question: "May we widen the dates?" },
+  }), T0, "second");
+  writeJson(join(home, "ledger.json"), ledger);
+  return { home, ledger, env: { MEETLY_HOME: home } };
+}
+
+test("widen-dates extends only the matched request's dates, leaving Friday eligible", () => {
+  const { home, ledger, env } = dateWideningFixture();
+  writeJson(join(home, "config.json"), { ...DEFAULTS, ownerName: "Alex", timezone: "America/Los_Angeles", setupDoneAt: new Date(T0).toISOString(), defaultAccount: "owner@example.test", calendars: [{ account: "owner@example.test", id: "primary" }] });
+  writeJson(join(home, "busy.json"), { busy: [] });
+  const result = cli("ledger.ts", ["widen-dates", "--id", "second", "--from", "2026-10-19", "--to", "2026-10-25"], env);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.json.request.constraints, { from: "2026-10-12", to: "2026-10-25" });
+  assert.deepEqual(result.json.search, { request: "second", from: "2026-10-19", to: "2026-10-25" });
+  const saved = readJson<Ledger>(join(home, "ledger.json"), empty());
+  assert.deepEqual(saved.requests[0], ledger.requests[0]);
+  for (const key of ["excludedDays", "pendingOwner", "offered", "durationMin"] as const) assert.deepEqual(saved.requests[1]![key], ledger.requests[1]![key]);
+  const search = cli("slots.ts", ["--in", join(home, "busy.json"), "--request", "second", "--from", result.json.search.from, "--to", result.json.search.to,
+    "--now", "2026-10-05T09:12:32Z", "--format", "phone", "--travel", '{"beforeMin":0,"afterMin":0}'], env);
+  assert.equal(search.status, 0, search.stderr);
+  assert.deepEqual(search.json.searched.days, ["wed", "fri"]);
+  assert.ok(search.json.slots.some((slot: { dayOfWeek: string }) => slot.dayOfWeek === "fri"));
+});
+
+test("widen-dates preserves the matched meeting's clock, weekdays, and unbounded endpoints", () => {
+  const { home, ledger, env } = dateWideningFixture();
+  for (const bounds of [{ from: "2026-10-12", to: "2026-10-18" }, { from: "2026-10-12" }, { to: "2026-10-18" }, {}]) {
+    const constraints = { ...bounds, days: ["tue", "fri"], startTime: "11:00", after: "10:00", before: "14:00" };
+    writeJson(join(home, "ledger.json"), updateRequest(ledger, "second", { constraints }, T0));
+    const result = cli("ledger.ts", ["widen-dates", "--id", "second", "--from", "2026-10-05", "--to", "2026-10-25"], env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.json.request.constraints, { ...constraints,
+      ...("from" in bounds ? { from: "2026-10-05" } : {}), ...("to" in bounds ? { to: "2026-10-25" } : {}) });
+  }
+});
+
+test("widen-dates rejects unrelated condition fields and invalid ranges without writing", () => {
+  const { home, ledger, env } = dateWideningFixture();
+  for (const flags of [
+    ["--from", "2026-10-19", "--to", "2026-10-25", "--json", '{"constraints":{"days":["mon","tue","wed"]}}'],
+    ["--from", "2026-10-25", "--to", "2026-10-19"],
+    ["--from", "2026-02-30", "--to", "2026-10-25"],
+  ]) {
+    const result = cli("ledger.ts", ["widen-dates", "--id", "second", ...flags], env);
+    assert.equal(result.status, 1);
+    assert.deepEqual(readJson(join(home, "ledger.json"), empty()), ledger);
+  }
+});
