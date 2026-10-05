@@ -8,6 +8,7 @@
 // and preboot copies it into the state volume's plugin root on every boot.
 import { registerOwnerCalendarTool } from "./owner-calendar.js";
 import { calendarPolicy } from "./calendar-policy.js";
+import { sendPolicy } from "./send-policy.js";
 import { execFile } from "node:child_process";
 import { registerPipelineHooks } from "./pipeline.js";
 import { guestTurns } from "./guest-turn.js";
@@ -93,6 +94,16 @@ const runStatus = () => new Promise((resolve, reject) => {
     (error, stdout) => error ? reject(error) : resolve(stdout));
 });
 
+// OpenClaw's run-failure notices ("⚠️ Meetly Movable failed", "⚠️ Agent run
+// failed", a timeout) are error payloads written for an operator. In a phone
+// chat they read as a crash, so the person gets one plain line instead.
+export const FAILURE_TEXT = "Sorry, I couldn't finish that just now. Please send it again in a moment.";
+
+export function plainFailure(event) {
+  if (event?.payload?.isError !== true) return undefined;
+  return { payload: { ...event.payload, text: FAILURE_TEXT, isError: false } };
+}
+
 export default {
   id: "meetly",
   name: "Meetly",
@@ -122,8 +133,9 @@ export default {
     });
     api.on("before_tool_call", (event, ctx) => {
       ownerTurns.beforeTool(event, ctx);
-      return calendarPolicy(event) ?? guestTurns.beforeTool(event, ctx);
+      return calendarPolicy(event) ?? sendPolicy(event) ?? guestTurns.beforeTool(event, ctx);
     });
+    api.on("reply_payload_sending", plainFailure);
     api.on("agent_end", (event, ctx) => {
       guestTurns.end(event, ctx);
       ownerTurns.end(event, ctx);

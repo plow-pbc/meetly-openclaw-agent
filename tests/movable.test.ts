@@ -183,3 +183,18 @@ test("inspection guidance is separate from calendar data and only accompanies ca
     }
   }
 });
+
+test("a call missing its arguments says which ones to add, while calendar failures stay generic", async t => {
+  const f = fixture(t);
+  for (const [args, missing] of [
+    [{ action: "inspect" }, /candidates/], [{ action: "remember" }, /title.*allowed/],
+    [{ action: "inspect", candidates: [{ start: "soon", end: "later" }] }, /ISO start/],
+  ] as const) {
+    const result = await movableAction(owner, args as MovableArgs, f.options);
+    assert.match((result as { error: string }).error, missing);
+    assert.equal((result as { code?: string }).code, "INVALID_ARGUMENTS");
+  }
+  f.set({ events: [event()], errors: ["unavailable"] });
+  assert.deepEqual(await movableAction(owner, inspect, f.options), { error: "Could not inspect or remember the overlap decision. No permission was granted." });
+  assert.equal(f.calls.length, 1, "argument errors never reach the calendar");
+});

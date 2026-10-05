@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyGate, installGate, quietHeartbeat } from "../boot/gate.ts";
-import gate, { gateContext, isOwnerDmTurn } from "../plugin/index.js";
+import { applyGate, guardToolLoops, installGate, quietHeartbeat } from "../boot/gate.ts";
+import gate, { FAILURE_TEXT, gateContext, isOwnerDmTurn, plainFailure } from "../plugin/index.js";
 
 const status = (s: unknown) => JSON.stringify(s) + "\n";
 const DEFAULTS = { days: ["mon", "tue", "wed", "thu", "fri"], windowStart: "09:00", windowEnd: "18:00", durationMin: 30, horizonDays: 14 };
@@ -74,7 +74,7 @@ test("a finished setup is passed along, and output that is not a status adds not
 test("the plugin registers one before_prompt_build hook that skips other turns", async () => {
   const hooks: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
   gate.register({ registerTool() {}, on: (name: string, fn: (event: unknown, ctx: unknown) => unknown) => { hooks[name] = fn; }, logger: { info() {} } });
-  assert.deepEqual(Object.keys(hooks), ["message_received", "before_prompt_build", "before_tool_call", "agent_end"]);
+  assert.deepEqual(Object.keys(hooks), ["message_received", "before_prompt_build", "before_tool_call", "reply_payload_sending", "agent_end"]);
   assert.equal(await hooks.before_prompt_build!({}, { channel: "plow", sessionKey: "agent:main:plow:group:x" }), undefined);
 });
 
@@ -115,4 +115,17 @@ test("heartbeat finals stay private and other heartbeat settings are kept", () =
   assert.deepEqual(quietHeartbeat({}).agents.defaults.heartbeat, { target: "none" });
   assert.deepEqual(quietHeartbeat({ agents: { defaults: { heartbeat: { every: "1h", target: "owner" } } } }).agents.defaults.heartbeat,
     { every: "1h", target: "none" });
+});
+
+test("the main agent runs OpenClaw's tool-loop guard and keeps its other per-agent settings", () => {
+  const config = guardToolLoops({ agents: { entries: { main: { identity: { $include: "identity.json5" } } } } });
+  assert.deepEqual(config.agents.entries.main, { identity: { $include: "identity.json5" }, tools: { loopDetection: { enabled: true } } });
+});
+
+test("an OpenClaw failure notice reaches the chat as one plain line; ordinary replies pass untouched", () => {
+  for (const text of ["⚠️ Meetly Movable failed", "⚠️ Agent run failed (model: plow/z-ai/glm-5.2).", "Request timed out before a response was generated."]) {
+    assert.deepEqual(plainFailure({ payload: { text, isError: true, mediaUrl: null } }), { payload: { text: FAILURE_TEXT, isError: false, mediaUrl: null } });
+  }
+  assert.equal(plainFailure({ payload: { text: "Booked for Tue at noon." } }), undefined);
+  assert.equal(plainFailure({ payload: { text: "Booked.", isError: false } }), undefined);
 });
