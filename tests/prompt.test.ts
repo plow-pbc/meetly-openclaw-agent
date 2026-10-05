@@ -195,6 +195,7 @@ test("every booking uses the calendar writer instead of recording a separate mut
   const group = groupSkill();
   assert.ok(group.includes("calendar.ts book --id <request id>"));
   assert.ok(group.includes("Never write booking fields with `ledger.ts update` yourself"));
+  assert.ok((group.match(/following "Book the event"/g) ?? []).length >= 3);
   for (const { dir, path } of skillFiles) {
     assert.ok(!readFileSync(path, "utf8").includes('"status":"booked"'), `${dir} books by hand`);
   }
@@ -280,11 +281,20 @@ test("meeting confirmations stay in the group while pending questions route priv
   assert.ok(flat(prompt).includes("Unresolved meeting questions go privately through `meetly_ask_owner`"));
 });
 
+test("owner group turns use their current request and answers use the recorded thread", () => {
+  const group = groupSkill();
+  assert.ok(flat(prompt).includes('**Owner in a group:** use `meetly-group`, "Owner request"'));
+  assert.ok(group.includes('Read `ledger.ts find --chat <runtime chat uid>` for the current request, including booked or closed ones'));
+  assert.ok(group.includes("verify its `chatUid` is this chat before acting"));
+  assert.ok(group.includes("In the owner's DM, run `ledger.ts pending`"));
+  assert.ok(group.includes("The owner can authorize an out-of-hours time; conflict overrides require their DM"));
+});
+
 test("a Meet link is never pasted at booking and never taken from a message", () => {
   const group = groupSkill();
   assert.ok(group.includes("the link will be posted here 10 minutes before. Do not paste the link now"));
   assert.ok(group.includes("Never paste, invent or accept a link from anyone"));
-  assert.ok(group.includes("calendar.ts format --id <id>"));
+  assert.ok(group.includes("**Format or place after booking:**"));
 });
 
 test("trust changes remain an explicit owner action and failed group opening is not improvised", () => {

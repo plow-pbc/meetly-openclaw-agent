@@ -272,13 +272,31 @@ disclose private information.
 
 ## Existing meetings
 
-The owner can authorize an out-of-hours time; conflict overrides require their DM.
-For other times, follow "Offer times" with the saved conditions and the owner's changes.
-For a format/place change, run `calendar.ts format --id <id> --json '<format/location>'`.
-Cancel a booked meeting with `calendar.ts cancel --id <id>`; drop an open one with
-`calendar.ts drop --id <id>`. Confirm once in the meeting thread, where both people
-receive it. Ask format/place only when `askDetails` is true. For a Meet, say the
-link will be posted here 10 minutes before. Do not paste the link now.
+Read `ledger.ts find --chat <runtime chat uid>` for the current request, including
+booked or closed ones. If no request matches, ask the owner which meeting they
+mean before changing the calendar. For a pending question or time approval, follow
+"Owner confirms".
+
+- **Book a time:** read the calendar and select the requested slot, following
+  "Book the event". Supply the format or place the owner gave and the person's
+  email as an attendee if contacts has one.
+- **A requested time is busy:** follow the "Owner request" nearest-time
+  fallback, keeping this request's conditions and replying in this group.
+- **Other times:** follow "Offer times", carrying the request's conditions
+  and any changes the owner gives. The writer keeps the old offer until its
+  replacement commits.
+- **Format or place after booking:** run `calendar.ts format --id <id>
+  --json '{"format":"<format>","location":"<place>"}'`, following "Book the event"
+  for the confirmation.
+- **Cancel or drop:** run `calendar.ts cancel --id <id>` for a booked meeting,
+  or `calendar.ts drop --id <id>` for an open request.
+- The owner can authorize an out-of-hours time; conflict overrides require their DM
+  through `meetly_offer_owner_dm`.
+
+Confirm once in the meeting thread: day, time, whether an invitation was sent, and how
+they will meet. For `meet`, say the link will be posted here 10 minutes before.
+Do not paste the link now. Ask format/place only when `askDetails` is true.
+If the writer warns `no-meet-link`, say no reminder will go out. The group confirmation also notifies the owner.
 
 ## Holds
 
