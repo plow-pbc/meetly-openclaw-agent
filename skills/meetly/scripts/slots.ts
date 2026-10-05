@@ -5,6 +5,7 @@
 // Guest preferences only narrow them; other times require owner confirmation.
 // With a locale (the other person's, e.g. pt-BR or en-US) the label follows
 // that locale's date and time conventions; without one it is "tue 29/9 12:00".
+import { travelRange, type TravelInput } from "./travel.ts";
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
@@ -19,7 +20,7 @@ export type Slot = { start: string; end: string; dayOfWeek: Day; label: string }
 export type Constraints = { startTime?: string; days?: string[]; after?: string; before?: string; from?: string; to?: string };
 export type SearchTiming = { week?: "this" | "next"; asap?: boolean };
 
-export type SlotQuery = Constraints & SearchTiming & {
+export type SlotQuery = Constraints & TravelInput & SearchTiming & {
   now: number;
   config: Config;
   busy: Busy[];
@@ -81,7 +82,7 @@ export function searchCoverage(q: SlotQuery): Coverage {
     const [y, m, d] = date.split("-").map(Number);
     return zonedToUtc(y!, m!, d!, 0, 0, q.config.timezone);
   };
-  return { from: new Date(midnight(bounds.from)).toISOString(), to: new Date(midnight(shiftDate(bounds.to, 1))).toISOString() };
+  return travelRange(midnight(bounds.from), midnight(shiftDate(bounds.to, 1)), q);
 }
 
 export function preferredSearchCoverage(query: SlotQuery, preferred?: Constraints): Coverage {
@@ -144,7 +145,7 @@ export function findSlots(q: SlotQuery): SlotResult {
   if (q.asap && q.near) throw new Error("asap searches earliest first; omit near");
   const duration = requireDuration(q.durationMin ?? q.config.durationMin);
   const count = Math.min(q.count ?? SLOT_COUNT, SLOT_COUNT);
-  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, durationMin: duration, busy: [], start: q.near }).slot.start);
+  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, durationMin: duration, busy: [], travel: { beforeMin: 0, afterMin: 0 }, start: q.near }).slot.start);
 
   let [startMin, endMin] = windowFor(config, q.meal, q.ownerStartTime, duration);
   const exactStart = q.startTime === undefined ? undefined : minutes(parseTime(q.startTime));
@@ -173,7 +174,7 @@ export function findSlots(q: SlotQuery): SlotResult {
       const start = zonedToUtc(y, m, d, Math.floor(t / 60), t % 60, tz);
       const end = start + duration * 60_000;
       if (start < earliest || excluded.has(start) || !withinConstraints(start, end, tz, q)) continue;
-      const range = { from: new Date(start).toISOString(), to: new Date(end).toISOString() };
+      const range = travelRange(start, end, q);
       if (unknownAfter !== undefined && Date.parse(range.to) > unknownAfter) {
         incomplete = { reason: "truncated-calendar", requiredCoverage: searchCoverage(q) };
         perDay.push(found);
@@ -227,7 +228,7 @@ export type TimeCheck = {
 // (except allowOverlap), with enough notice, and inside what was read.
 // outsideHours: not on the owner's days or not inside the window, so the
 // owner must confirm before it is held or booked.
-export function checkTime(q: {
+export function checkTime(q: TravelInput & {
   now: number;
   config: Config;
   busy: Busy[];
@@ -254,7 +255,7 @@ export function checkTime(q: {
   const [windowStart, windowEnd] = windowFor(q.config, q.meal, q.ownerStartTime, q.durationMin ?? q.config.durationMin);
   const outsideHours = !q.config.days.includes(s.weekday) || !sameDay ||
     s.hh * 60 + s.mm < windowStart || e.hh * 60 + e.mm > windowEnd;
-  const range = { from: new Date(start).toISOString(), to: new Date(end).toISOString() };
+  const range = travelRange(start, end, q);
   let reason: TimeCheck["reason"];
   if (!covers(q.coverage, range) || (q.unknownAfter !== undefined && Date.parse(range.to) > Date.parse(q.unknownAfter))) reason = "unknown";
   else if (start < q.now + MIN_NOTICE_MIN * 60_000) reason = "too-soon";
@@ -284,6 +285,8 @@ if (isMain(import.meta.url)) {
         request: { type: "string" },
         duration: { type: "string" },
         meal: { type: "string" },
+        format: { type: "string" },
+        travel: { type: "string" },
         days: { type: "string" },
         after: { type: "string" },
         "start-time": { type: "string" },
@@ -320,7 +323,7 @@ if (isMain(import.meta.url)) {
       : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
     if (values.request !== undefined && (!request || !["asked", "offered", "booked"].includes(request.status))) throw new Error("--request needs an asked, offered or booked request");
     if (request) input.busy = input.busy.filter(b => !requestEvents(request).some(o => o.holdId === b.id && o.account === b.account));
-    const q: SlotQuery = { now, config, meal, busy: input.busy, allowOverlap: input.allowOverlap };
+    const q: SlotQuery = { format: values.format as SlotQuery["format"], travel: values.travel ? JSON.parse(values.travel) : undefined, now, config, meal, busy: input.busy, allowOverlap: input.allowOverlap };
     q.coverage = input.coverage;
     if (values["start-time"] !== undefined) q.startTime = parseTime(values["start-time"]);
     if (input.unknownAfter !== undefined) q.unknownAfter = input.unknownAfter;
@@ -351,9 +354,12 @@ if (isMain(import.meta.url)) {
       const narrowed = intersectConstraints(request.constraints, q);
       Object.assign(q, narrowed);
       q.meal ??= request.meal;
+      q.format ??= request.format;
+      q.travel = request.travel?.override && q.format !== "meet" && q.format !== "phone" ? request.travel : q.travel ?? request.travel;
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
       q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);
+      if (request.booked) q.exclude = [...(q.exclude ?? []), request.booked.start];
     }
     if (values["no-overlap"]) q.allowOverlap = [];
     if (values.at !== undefined) {
@@ -361,7 +367,8 @@ if (isMain(import.meta.url)) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
       const result = checkTime({ ...q, start: values.at });
-      return { ...result, degraded };
+      const next = result.reason === "unknown" ? { read: "Fetch busy.ts --fetch --from ISO --to ISO covering the meeting and all travel, then check again. Unread time is not free. Never use a calendar write to test availability." } : undefined;
+      return { ...result, degraded, ...(next ? { next } : {}) };
     }
     return { ...findSlots(q), degraded };
   });

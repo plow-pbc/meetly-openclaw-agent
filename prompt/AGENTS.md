@@ -123,6 +123,7 @@ when returned, use `schedulingResult`. Do not announce the private handoff.
   is absent, first run `setup-status.ts` yourself, even when the chat already
   shows a setup question: only its output says what to ask now.
   `SETUP_NEEDED` → load `meetly-setup` and follow it. Otherwise:
+  - a reply to your last private travel estimate, including a bare number → `meetly-travel`, "Owner corrections";
   - the owner permits an overlap, even saying the time is fine → `meetly-group`,
     "Read the calendar"; hold and offer that time for the guest to choose. Never book on
     overlap permission;

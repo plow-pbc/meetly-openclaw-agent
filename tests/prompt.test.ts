@@ -43,8 +43,8 @@ test("AGENTS.md renders the conversation identity and keeps the base's tool and 
   assert.ok(prompt.includes("Meetly poll."));
 });
 
-test("the seven Meetly skills exist", () => {
-  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-email", "meetly-group", "meetly-pipeline", "meetly-poll", "meetly-setup"]);
+test("the eight Meetly skills exist", () => {
+  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-email", "meetly-group", "meetly-pipeline", "meetly-poll", "meetly-setup", "meetly-travel"]);
 });
 
 test("every skill has frontmatter naming its directory and a description", () => {
@@ -284,7 +284,7 @@ test("owner and poll next-week requests use the time CLI; guests follow their to
   }
   const ask = toolDescriptions().get("meetly_ask_owner")!;
   assert.ok(ask.includes("Only say you asked or checked with the owner when ownerAskSent is true"));
-  assert.ok(ask.includes("Never invent a question or turn your own uncertainty into a guest question"));
+  assert.ok(ask.includes("never invent a question or turn your own uncertainty into a guest question"));
 });
 
 test("guests route to their tool descriptions without loading skills or running scripts", () => {

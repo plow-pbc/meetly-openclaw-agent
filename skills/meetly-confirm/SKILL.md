@@ -14,6 +14,9 @@ other event") is not a time approval or a booking: follow `meetly-group`, "Read 
 
 For email requests, deliver through `meetly-email`.
 
+A reply to your private travel estimate stays in `meetly-travel`, "Owner corrections".
+A bare number there changes travel, not meeting duration.
+
 ## Owner confirms
 
 In the owner's DM, run `ledger.ts pending` and match their answer by person
@@ -55,6 +58,10 @@ tell the owner; do not resend. Only if the owner explicitly authorizes a retry, 
 
 ## Book the event
 
+Read `meetly-travel` before booking or changing format/place. Keep the saved travel
+estimate when choosing an unchanged offer; re-estimate for a changed place or time.
+
+
 On an owner turn, run `calendar.ts book` only when the owner explicitly selects a time
 to book, including yes to a pending request for that exact time; overlap permission
 alone only authorizes an offer. For an existing request, use its saved chat and conditions.
@@ -78,10 +85,11 @@ guest to identify a request. Larger groups are out of scope.
 
 The owner can authorize a time outside the meeting window; conflict overrides require their DM.
 For other times, follow "Offer times" with the saved conditions and the owner's changes.
-**Format or place after booking:** for a format/place change, run `calendar.ts format --id <id> --json '<format/location>'`.
+**Format or place after booking:** for a format/place change, run `calendar.ts format --id <id> --json '<format/location and explicit travel estimate>'`.
 After a format/place change, tell the guest the new format/place once: with a pending question use `meetly_answer_owner` and `outcome: "calendar_change"`; otherwise reply in the meeting thread, using `plow_reply_to` from the owner DM
 (`plow_send_email` for email).
-Do not acknowledge completion in the DM before guest delivery.
+Keep private travel estimates/base out of the guest message; travel-only corrections
+get no guest notice. Do not acknowledge completion in the DM before guest delivery.
 Cancel a booked meeting with `calendar.ts cancel --id <id>`; drop an open one with
 `calendar.ts drop --id <id>`. Confirm once in the meeting thread. For a Meet, say the
 link will be posted here 10 minutes before. Do not paste the link now.
