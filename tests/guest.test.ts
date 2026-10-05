@@ -847,6 +847,13 @@ test("owner DM offers still resolve named overlap permission", async t => {
   const creates = f.commands.filter(c => c[2] === "create");
   assert.equal(creates.length, 1);
   assert.ok(creates[0]!.includes("--confirm-conflict"));
+  assert.equal(f.request().status, "offered");
+  assert.equal(f.request().booked, undefined);
+  assert.ok(creates[0]![creates[0]!.indexOf("--summary") + 1]!.startsWith("Hold:"));
+  assert.equal(cli("ledger.ts", ["update", "--id", request.id, "--json", JSON.stringify({ chatUid: context.nativeChannelId })], { MEETLY_HOME: f.home }).status, 0);
+  const chosen = await f.act(context, "pick", { start: request.offered[0]!.start });
+  assert.equal("status" in chosen && chosen.status, "booked");
+  assert.equal("overlappedWithOwnerApproval" in chosen && chosen.overlappedWithOwnerApproval, true);
 });
 
 test("owner-group binds a same-handle unlinked asked request and the guest can book", async t => {
@@ -974,6 +981,19 @@ for (const [display, contact, expected] of [
   const creates = f.commands.filter(argv => argv[2] === "create");
   assert.equal(creates.length, SLOT_COUNT);
   assert.ok(creates.every(argv => argv[argv.indexOf("--summary") + 1] === `Hold: Lunch with ${expected ?? context.requesterSenderId}`));
+});
+
+test("paused owner-group scheduling stops before reading the calendar", async t => {
+  const f = fixture(t);
+  const config = readJson<object>(join(f.home, "config.json"), {});
+  writeJson(join(f.home, "config.json"), { ...config, paused: true });
+  const before = f.read();
+  const args = { topic: "Planning", durationMin: 30, travel: { beforeMin: 0, afterMin: 0 } };
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, args);
+  writeJson(join(f.home, "config.json"), config);
+  assert.ok("error" in result);
+  assert.deepEqual(f.commands, []);
+  assert.deepEqual(f.read(), before);
 });
 
 test("owner group offers refuse missing or ambiguous guest participants before calendar writes", async t => {
