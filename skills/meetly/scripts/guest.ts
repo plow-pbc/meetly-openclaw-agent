@@ -11,8 +11,9 @@ import { readJson, updateJson } from "./store.ts";
 import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, wallParts, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
 import { plowApi } from "./owner-chat.ts";
+import { resolveOwnerChat } from "./owner-turn.ts";
 
-export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string; senderIsOwner?: boolean;
+export type GuestContext = { sessionKey?: string; turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string; senderIsOwner?: boolean;
   config?: { channels?: { plow?: { apiBase?: string; emailLineUid?: string } } } };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
 export type GuestArgs = Constraints & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string; attendees?: string[]; travel?: Travel };
@@ -27,6 +28,8 @@ function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
   if (ctx.messageChannel !== "plow" || ctx.agentAccountId !== "chat" || !chat || !sender) return;
   const texts = { requests: ledger.requests.filter(r => r.channel === "text") };
   const request = findByChat(texts, chat);
+  // Owner authority comes only from the runtime and stays in the linked group.
+  if (ctx.senderIsOwner === true) return resolveOwnerChat(ctx) && ctx.sessionKey?.includes(":plow:group:") ? request : undefined;
   return request && sameHandle(request.handle, sender) ? request : undefined;
 }
 
@@ -132,7 +135,7 @@ async function notifyOwner(request: Request, config: Config, change: "moved" | "
   }
 }
 
-async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number, restoredDays?: string[]) {
+async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number, restoredDays?: string[], owner = false) {
   if (attendees !== undefined && (!Array.isArray(attendees) || (attendees.length > 0 && (request.channel !== "email" || request.status === "booked"
     || attendees.some(email => typeof email !== "string" || !/^[^\s@,]+@[^\s@,]+$/.test(email)))))) return { error: "Additional invitees need email addresses on an unbooked email request." };
   const requested = checkTime({ now: Date.now(), config, busy: [], start,
@@ -140,7 +143,7 @@ async function pick(request: Request, config: Config, start: string, attendees?:
   const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(requested));
   if (!offer) return { error: "Choose one of the currently offered start times." };
   // Only a replacement held before this run can represent the guest's choice.
-  if (request.status === "booked" && !(Number.isFinite(turnStartedAt)
+  if (!owner && request.status === "booked" && !(Number.isFinite(turnStartedAt)
     && Date.parse(request.reoffer!.offeredAt) < turnStartedAt!)) {
     return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
   }
@@ -151,8 +154,9 @@ async function pick(request: Request, config: Config, start: string, attendees?:
   if (excludedDays.includes(selectedDay)) return { error: "That weekday is excluded. Set restoredDays only if the guest explicitly says it now works." };
   const travel = request.travel;
   const checked = await check(request, config, offer.start);
-  if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available.", code: "TIME_UNAVAILABLE",
-    recovery: { action: "other_times", tool: "meetly_other_times", retry: false } };
+  if (!checked.free || (!owner && checked.outsideHours) || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available.", code: "TIME_UNAVAILABLE",
+    recovery: owner ? { action: "reply", retry: false, message: "That time is no longer available. Use the owner's scheduling flow to offer alternatives." }
+      : { action: "other_times", tool: "meetly_other_times", retry: false } };
   if (restored.length) request = patch(request, { excludedDays });
   if (request.status === "booked") {
     const result = await write(request, { action: "book", start: offer.start, end: offer.end, travel });
@@ -330,14 +334,18 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
   try {
     let request = await resolveRequest(ctx);
     const config = loadConfig();
-    if (!request) return { ownerName: config.ownerName, error: `${config.ownerName} will confirm.` };
-    if (action === "pick" && args.travel !== undefined) return { error: "Picking uses the saved offer. Retry without travel; use set_format only if the meeting place or format changed." };
+    if (!request) return { ownerName: config.ownerName, error: ctx.senderIsOwner === true
+      ? "No scheduling request is available to this owner turn in the current conversation. Use the owner's scheduling flow to select the meeting."
+      : `${config.ownerName} will confirm.` };
+    if (ctx.senderIsOwner === true && action !== "view" && action !== "pick") return {
+      error: "Use the owner's scheduling flow for this change. In this group, meetly_view_request and meetly_pick_time can view and book an existing offer on the guest's behalf." };
+    if (action === "pick" && args.travel !== undefined) return { error: "Picking uses the saved offer. Retry without travel; change the meeting place or format separately if needed." };
     if (args.travel !== undefined) {
       checkTravel(args.travel);
       args = { ...args, travel: { beforeMin: args.travel.beforeMin, afterMin: args.travel.afterMin } };
     }
     if (action === "view") return view(request, config);
-    if (config.paused) return { error: "Scheduling is paused. The owner can resume it." };
+    if (config.paused) return { error: ctx.senderIsOwner === true ? "Scheduling is paused. Resume it before booking." : "Scheduling is paused. The owner can resume it." };
     if (action === "format") {
       if (request.status !== "offered" && request.status !== "booked") return view(request, config);
       if (!["meet", "in_person", "phone", "unknown"].includes(args.format ?? "")) return { error: "Choose meet, in_person, phone, or unknown." };
@@ -361,9 +369,12 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
-    if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt, args.restoredDays);
+    if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt, args.restoredDays, ctx.senderIsOwner === true);
     return { error: "Unknown scheduling action." };
   } catch (error) {
+    if (error instanceof TravelBaseRequired && ctx.senderIsOwner === true) return {
+      error: "Please provide your travel base in your private DM before booking.", code: "TRAVEL_BASE_REQUIRED",
+      recovery: { action: "reply", retry: false, message: "Please provide your travel base in your private DM before booking." } };
     if (error instanceof TravelBaseRequired) return { error: "The owner needs to provide travel information privately before scheduling can continue.",
       code: "TRAVEL_BASE_REQUIRED", recovery: { action: "ask_owner", tool: "meetly_ask_owner", retry: false,
         question: "What home or office base should I use to estimate travel? Please reply in your private DM." } };

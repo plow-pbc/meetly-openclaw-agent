@@ -130,6 +130,120 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   return { home, read, save, ledger, participants, events, commands, fail, lost, hooks, tools, act, ownerLines, deliveries, groupDeliveries, routes, delivery, request: () => read().requests[0]! };
 }
 
+const ownerGroup = { ...context, requesterSenderId: "+15557654321", senderIsOwner: true,
+  sessionKey: "agent:main:plow:group:chat-one" };
+
+test("owner guest tools view and book the linked group offer on the guest's behalf", async t => {
+  const f = fixture(t);
+  const tools = new Map<string, any>();
+  registerGuestTools({ registerTool(factory: (ctx: GuestContext) => any) {
+    const tool = factory(ownerGroup); tools.set(tool.name, tool);
+  } }, (ctx, action, args) => f.act(ctx, action, args));
+  const viewed = JSON.parse((await tools.get("meetly_view_request").execute("owner-view", {})).content[0].text);
+  assert.equal(viewed.status, "offered");
+  assert.equal(viewed.offered.length, 2);
+  const picked = JSON.parse((await tools.get("meetly_pick_time").execute("owner-pick", { start: offers[0]!.start })).content[0].text);
+  assert.equal(picked.status, "booked", JSON.stringify(picked));
+  assert.equal(picked.invitationSent, true);
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse(offers[0]!.start));
+  assert.equal(f.events.get("hold-two")!.status, "cancelled");
+  const booking = f.commands.find(c => c[2] === "update")!;
+  assert.equal(booking[booking.indexOf("--attendees") + 1], "guest@example.net");
+  assert.doesNotMatch(JSON.stringify(picked), /will confirm/);
+});
+
+test("owner guest tools authorize only the trusted owner in the linked text group", async t => {
+  const f = fixture(t);
+  for (const ctx of [
+    { ...ownerGroup, sessionKey: "agent:main:main" }, { ...ownerGroup, sessionKey: undefined },
+    { ...ownerGroup, nativeChannelId: "other-chat" }, { ...ownerGroup, requesterSenderId: undefined },
+    { ...ownerGroup, messageChannel: "webchat" }, { ...ownerGroup, agentAccountId: "email" },
+  ]) {
+    for (const action of ["view", "pick"] as const) {
+      const result = await f.act(ctx, action, { start: offers[0]!.start });
+      assert.ok("error" in result, JSON.stringify(result));
+      assert.doesNotMatch(JSON.stringify(result), /Alex will confirm|ask_owner/);
+    }
+  }
+  const spoofed = await f.act({ ...ownerGroup, senderIsOwner: false }, "pick",
+    { start: offers[0]!.start, senderIsOwner: true, ...context } as GuestArgs);
+  assert.match(JSON.stringify(spoofed), /Alex will confirm/);
+  assert.deepEqual(f.read(), f.ledger);
+  assert.deepEqual(f.commands, []);
+});
+
+test("owner guest tools can confirm a replacement held in this turn", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  await f.act(context, "other_times", { start: "2026-10-06T12:00" });
+  const start = f.request().reoffer!.offered[0]!.start;
+  const guest = await f.act({ ...context, turnStartedAt: now }, "pick", { start });
+  assert.match(JSON.stringify(guest), /later turn/);
+  const owner = await f.act({ ...ownerGroup, turnStartedAt: now }, "pick", { start });
+  assert.equal("status" in owner && owner.status, "booked", JSON.stringify(owner));
+  assert.equal(f.request().eventId, "hold-one");
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse(start));
+});
+
+test("owner guest tools retain current-offer and busy-calendar checks", async t => {
+  const f = fixture(t);
+  const unoffered = await f.act(ownerGroup, "pick", { start: "2026-10-05T12:00:00Z" });
+  assert.match(JSON.stringify(unoffered), /currently offered/);
+  f.events.set("new-conflict", event("new-conflict", offers[0]!.start, offers[0]!.end));
+  const busy = await f.act(ownerGroup, "pick", { start: offers[0]!.start });
+  assert.equal("code" in busy && busy.code, "TIME_UNAVAILABLE");
+  assert.deepEqual(f.read(), f.ledger);
+  assert.ok(f.commands.every(c => c[2] === "events"));
+});
+
+test("owner guest tools preserve the stale-offer check inside the writer", async t => {
+  const f = fixture(t);
+  f.hooks.before = async argv => {
+    if (argv[0] !== "/bin/sh") return;
+    const ledger = f.read();
+    ledger.requests[0]!.offered = [offers[1]!];
+    f.save(ledger);
+  };
+  const result = await f.act(ownerGroup, "pick", { start: offers[0]!.start });
+  assert.equal("code" in result && result.code, "REQUEST_CHANGED");
+  assert.equal(f.request().status, "offered");
+  assert.ok(!f.commands.some(c => ["update", "create", "delete"].includes(c[2]!)));
+});
+
+test("owner guest tools use sender-appropriate refusal and recovery text", async t => {
+  const f = fixture(t);
+  for (const action of ["ask_owner", "other_times", "format", "decline"] as const) {
+    const result = await f.act(ownerGroup, action);
+    assert.match(JSON.stringify(result), /owner's scheduling flow/);
+    assert.doesNotMatch(JSON.stringify(result), /Alex will confirm|asked Alex/);
+  }
+  const configPath = join(f.home, "config.json");
+  const config = readJson<Record<string, unknown>>(configPath, {});
+  try {
+    writeJson(configPath, { ...config, paused: true });
+    assert.match(JSON.stringify(await f.act(ownerGroup, "pick", { start: offers[0]!.start })), /Resume it/);
+    writeJson(configPath, { ...config, travelBase: undefined });
+    f.ledger.requests[0]!.travel = { beforeMin: 15, afterMin: 15 };
+    f.save(f.ledger);
+    const result = await f.act(ownerGroup, "pick", { start: offers[0]!.start });
+    assert.equal("code" in result && result.code, "TRAVEL_BASE_REQUIRED");
+    assert.doesNotMatch(JSON.stringify(result), /ask_owner/);
+    assert.match(JSON.stringify(result), /your private DM/);
+  } finally { writeJson(configPath, config); }
+  assert.deepEqual(f.ownerLines, []);
+});
+
+test("owner guest tools accept an offered time outside the default window without asking the owner again", async t => {
+  const f = fixture(t);
+  const configPath = join(f.home, "config.json");
+  const config = readJson<Record<string, unknown>>(configPath, {});
+  try {
+    writeJson(configPath, { ...config, windowStart: "11:00" });
+    const result = await f.act(ownerGroup, "pick", { start: offers[0]!.start });
+    assert.equal("status" in result && result.status, "booked", JSON.stringify(result));
+  } finally { writeJson(configPath, config); }
+});
+
 for (const [action, args] of actions) test(`${action} refuses missing or mismatched runtime sender/chat and ignores identity arguments`, async t => {
   const f = fixture(t);
   for (const ctx of [ {}, { ...context, requesterSenderId: "+15557654321" }, { ...context, nativeChannelId: "other-chat" },
