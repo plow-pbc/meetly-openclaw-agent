@@ -4,7 +4,7 @@ import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
-import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findByChat, meetingTopic, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findByChat, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { checkTime, findPreferredSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -15,7 +15,7 @@ import { plowApi } from "./owner-chat.ts";
 export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string; senderIsOwner?: boolean;
   config?: { channels?: { plow?: { apiBase?: string; emailLineUid?: string } } } };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
-export type GuestArgs = Constraints & { excludedDays?: string[]; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string; attendees?: string[]; travel?: Travel };
+export type GuestArgs = Constraints & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string; attendees?: string[]; travel?: Travel };
 type SendOwner = (text: string) => Promise<void>;
 const EMPTY: Ledger = { requests: [] };
 
@@ -93,7 +93,7 @@ function preferences(args: GuestArgs, timezone: string): Constraints {
     if (!Array.isArray(args.days) || !args.days.every(d => (DAYS as readonly string[]).includes(d))) throw new Error("invalid days");
     out.days = args.days;
   }
-  for (const key of ["after", "before"] as const) if (args[key] !== undefined) out[key] = parseTime(args[key]);
+  for (const key of ["startTime", "after", "before"] as const) if (args[key] !== undefined) out[key] = parseTime(args[key]);
   for (const key of ["from", "to"] as const) if (args[key] !== undefined) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(args[key])) throw new Error("invalid date");
     out[key] = args[key];
@@ -114,13 +114,15 @@ async function check(request: Request, config: Config, requested: string | Weekd
   return { ...checked, overlap };
 }
 
-async function notifyOwner(request: Request, config: Config, change: "moved" | "cancelled" | "travel", sendOwner?: SendOwner, note = travelNote(request)) {
-  const when = localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(request.booked!.start));
-  const subject = `${meetingTopic(request)} with ${request.name ?? request.handle}`;
+async function notifyOwner(request: Request, config: Config, change: "moved" | "cancelled" | "declined" | "travel", sendOwner?: SendOwner, note = travelNote(request)) {
+  const when = request.booked ? localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(request.booked.start)) : undefined;
+  const subject = `${request.topic} with ${request.name ?? request.handle}`;
   if (change === "travel" && !note) return {};
-  const text = change === "travel" ? note! : change === "moved" ? `${subject} moved to ${when} (${config.timezone}).${note ? ` ${note}` : ""}`
-    : request.holdCleanup?.length ? `${request.name ?? request.handle} requested cancellation of ${meetingTopic(request)} on ${when} (${config.timezone}); calendar cleanup is pending.`
-    : `${request.name ?? request.handle} cancelled ${meetingTopic(request)} on ${when} (${config.timezone}).`;
+  const text = change === "declined" ? `${request.name ?? request.handle} declined ${request.topic}; the scheduling request was dropped.${request.holdCleanup?.length ? " Hold cleanup is pending." : ""}`
+    : change === "travel" ? note! : change === "moved" ? `${subject} moved to ${when} (${config.timezone}).${note ? ` ${note}` : ""}`
+    : request.holdCleanup?.length ? `${request.name ?? request.handle} requested cancellation of ${request.topic} on ${when} (${config.timezone}); calendar cleanup is pending.`
+    : `${request.name ?? request.handle} cancelled ${request.topic} on ${when} (${config.timezone}).`;
+  if (change === "declined" && request.channel === "email") return { ownerNotice: text };
   try {
     if (!sendOwner) throw new Error("owner messaging unavailable");
     await sendOwner(text);
@@ -130,7 +132,7 @@ async function notifyOwner(request: Request, config: Config, change: "moved" | "
   }
 }
 
-async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number, travel?: Travel) {
+async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number) {
   if (attendees !== undefined && (!Array.isArray(attendees) || (attendees.length > 0 && (request.channel !== "email" || request.status === "booked"
     || attendees.some(email => typeof email !== "string" || !/^[^\s@,]+@[^\s@,]+$/.test(email)))))) return { error: "Additional invitees need email addresses on an unbooked email request." };
   const requested = checkTime({ now: Date.now(), config, busy: [], start,
@@ -142,7 +144,8 @@ async function pick(request: Request, config: Config, start: string, attendees?:
     && Date.parse(request.reoffer!.offeredAt) < turnStartedAt!)) {
     return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
   }
-  const checked = await check({ ...request, travel: request.travel?.override ? request.travel : travel ?? request.travel }, config, offer.start);
+  const travel = request.travel;
+  const checked = await check(request, config, offer.start);
   if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available.", code: "TIME_UNAVAILABLE",
     recovery: { action: "other_times", tool: "meetly_other_times", retry: false } };
   if (request.status === "booked") {
@@ -158,38 +161,41 @@ async function pick(request: Request, config: Config, start: string, attendees?:
     ...await notifyOwner(request, config, "travel", sendOwner) };
 }
 
-// Tool arguments may encode a weekday object as JSON inside a string.
-function otherTimesStart(start: GuestArgs["start"]): GuestArgs["start"] {
-  if (typeof start === "string") {
-    const text = start.trim();
-    if (/^(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)$/i.test(text)) {
-      return { weekday: text.slice(0, 3).toLowerCase() as WeekdayTime["weekday"] };
-    }
-    if (text.startsWith("{")) start = JSON.parse(text);
-  }
-  if (start && typeof start === "object" && typeof start.time === "string" && !start.time.trim()) {
-    return { ...start, time: undefined };
-  }
-  return start;
-}
-
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
+  if (typeof args.offer_week !== "boolean") {
+    const message = "Set offer_week explicitly: true for that week or the same week; false when the guest asks for a new date range or a broader search. Include every named unavailable weekday in excludedDays. No search or holds were made; retry with this scope.";
+    return { error: message, code: "DATE_SCOPE_REQUIRED", recovery: { action: "retry", retry: true, message } };
+  }
+  if (args.offer_week && args.next_week !== undefined) {
+    const message = "For that week, keep offer_week: true and omit next_week entirely. Retain excludedDays and any preferred weekday. next_week is only for a new week relative to a source timestamp, with offer_week: false. No search or holds were made; retry using only the intended scope.";
+    return { error: message, code: "DATE_SCOPE_CONFLICT", recovery: { action: "retry", retry: true, message } };
+  }
   const travel = request.travel?.override ? request.travel : args.travel ?? request.travel;
   try {
-    args = { ...args, start: otherTimesStart(args.start) };
+    if (typeof args.start === "string" && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(args.start)) {
+      throw new Error("invalid start");
+    }
+    if (args.start && typeof args.start === "object" && typeof args.start.time === "string" && !args.start.time.trim()) {
+      args = { ...args, start: { ...args.start, time: undefined } };
+    }
     if (args.start !== undefined && typeof args.start !== "string") {
       resolveWeekday(args.start!, request.reoffer?.offered ?? request.offered, config.timezone);
     }
   } catch (error) {
     if (error instanceof WeekdayDateRequired) throw error;
-    return { error: "Provide a valid weekday (mon–sun) and time (HH:MM), or an explicit calendar date and time." };
+    const message = 'Provide a nested weekday object, for example arguments {"start":{"weekday":"thu"}} for Thursday. Allowed weekday values: mon, tue, wed, thu, fri, sat, sun. Optional time must be HH:MM; omit it for a day-only preference. Do not quote the object as a JSON string or pass a bare weekday. Only for an explicitly dated time, start may be an ISO string YYYY-MM-DDTHH:MM[:SS[.sss]][Z|±HH:MM]. Never invent a clock time to repair a weekday-only request.';
+    return { error: message, code: "INVALID_START", recovery: { action: "retry", retry: true, message } };
   }
   const preferred = preferences(args, config.timezone);
-  const excludedDays = preferences({ days: args.excludedDays }, config.timezone).days ?? [];
+  const newlyExcluded = preferences({ days: args.excludedDays }, config.timezone).days ?? [];
+  const restored = preferences({ days: args.restoredDays }, config.timezone).days ?? [];
+  if (newlyExcluded.some(day => restored.includes(day))) throw new Error("a weekday cannot be both excluded and restored");
+  const excludedDays = [...new Set([...(request.excludedDays ?? []).filter(day => !restored.includes(day)), ...newlyExcluded])];
   const availableDays = { days: DAYS.filter(day => !excludedDays.includes(day)) };
-  const relative = typeof args.start === "object" || (!args.start && args.days?.length && !args.from && !args.to && !args.next_week);
+  const relative = args.offer_week === true || typeof args.start === "object" || (!args.start && args.days?.length && !args.from && !args.to && !args.next_week);
   const window = relative ? offerDateWindow(request.reoffer?.offered ?? request.offered, config.timezone) : undefined;
   const bounds = intersectConstraints(intersectConstraints(request.constraints, window), availableDays);
+  if (args.excludedDays !== undefined || args.restoredDays !== undefined) request = patch(request, { excludedDays });
   let start = args.start;
   if (typeof start === "object" && !start.time?.trim()) {
     preferred.from = preferred.to = resolveWeekday({ weekday: start.weekday }, request.reoffer?.offered ?? request.offered, config.timezone);
@@ -206,10 +212,10 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) {
       return { error: "That weekday was ruled out. Choose a different day." };
     }
-    const { days, from, to } = request.constraints ?? {};
+    const { days, from, to } = bounds;
     const allowedDay = withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, { days, from, to });
     if (allowedDay && checked.free && checked.outsideHours) return askOwner(request, config, { start: checked.slot.start }, sendOwner);
-    if (checked.free && withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) exact = checked.slot;
+    if (checked.free && withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, bounds)) exact = checked.slot;
     preferred.from = preferred.to = checked.slot.start.slice(0, 10);
     preferred.after = checked.slot.start.slice(11, 16);
     preferred.before = checked.slot.end.slice(11, 16);
@@ -238,7 +244,6 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
 async function askOwner(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
   args = { ...args,
     start: typeof args.start === "string" ? args.start.trim() || undefined : args.start,
-    question: typeof args.question === "string" ? args.question.trim() || undefined : args.question,
   };
   if (request.pendingOwner) return { error: "A question is already open with the owner. Wait for their answer." };
   if ((args.question === undefined) === (args.start === undefined)) return { error: "Provide either a question or a start time, not both." };
@@ -248,11 +253,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   const askedAt = new Date(Date.now()).toISOString();
   if (args.question !== undefined) {
     if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
-    question = args.question.replace(/\s+/g, " ").trim();
-    const closingQuote: Record<string, string> = { '"': '"', "'": "'", "“": "”", "‘": "’" };
-    while (question.length >= 2 && closingQuote[question[0]!] === question.at(-1)) question = question.slice(1, -1).trim();
-    if (!question) return { error: "Provide a question about this meeting." };
-    question = question.slice(0, OWNER_QUESTION_LIMIT);
+    if (args.question.length > OWNER_QUESTION_LIMIT) return { error: `Provide a question of ${OWNER_QUESTION_LIMIT} characters or fewer; received ${args.question.length}. Nothing was sent.` };
+    question = args.question;
     pendingOwner = { question, askedAt };
   } else {
     const checked = await check(request, config, args.start!);
@@ -274,14 +276,14 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
       at: new Date(Date.now()).toISOString(),
     } } : r) };
   });
-  if (request.channel === "email") return { ownerQuestion: question, guestName: request.name, topic: meetingTopic(request),
+  if (request.channel === "email") return { ownerQuestion: question, guestName: request.name, topic: request.topic,
     replyToOwner: true, message: "Ask the owner in your final text. Do not send an email to the thread or send a separate DM." };
   // Keep the slot on an uncertain send so another turn cannot duplicate it.
   try {
     const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
     await sendOwner!("question" in pendingOwner
-      ? `${label(request.name ?? "Your guest")} asked in your ${label(meetingTopic(request))} thread. Guest question: ${JSON.stringify(question)}. Reply there, or tell me what to say.`
-      : `${label(request.name ?? "Your guest")} in your ${label(meetingTopic(request))} group asks: ${JSON.stringify(question)} — what should I tell them?`);
+      ? `${label(request.name ?? "Your guest")} asked in your ${label(request.topic)} thread. Guest question: ${JSON.stringify(question)}. Reply there, or tell me what to say.`
+      : `${label(request.name ?? "Your guest")} in your ${label(request.topic)} group asks: ${JSON.stringify(question)} — what should I tell them?`);
   } catch {
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
   }
@@ -294,6 +296,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     let request = await resolveRequest(ctx);
     const config = loadConfig();
     if (!request) return { ownerName: config.ownerName, error: `${config.ownerName} will confirm.` };
+    if (action === "pick" && args.travel !== undefined) return { error: "Picking uses the saved offer. Retry without travel; use set_format only if the meeting place or format changed." };
     if (args.travel !== undefined) {
       checkTravel(args.travel);
       args = { ...args, travel: { beforeMin: args.travel.beforeMin, afterMin: args.travel.afterMin } };
@@ -318,11 +321,12 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     if (action === "decline") {
       const booked = request.status === "booked";
       request = (await write(request, { action: request.status === "booked" ? "cancel" : "drop" })).request;
-      return { ...view(request, config), ...(booked ? await notifyOwner(request, config, "cancelled", sendOwner) : { message: "I've cancelled this scheduling request." }) };
+      return { ...view(request, config), ...await notifyOwner(request, config, booked ? "cancelled" : "declined", sendOwner),
+        ...(!booked ? { message: "I've cancelled this scheduling request." } : {}) };
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
-    if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt, args.travel);
+    if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt);
     return { error: "Unknown scheduling action." };
   } catch (error) {
     if (error instanceof TravelBaseRequired) return { error: "The owner needs to provide travel information privately before scheduling can continue.",

@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { join } from "node:path";
+import { writeJson } from "../skills/meetly/scripts/store.ts";
+import { tmpHome } from "./helpers.ts";
 import { addDays, DAYS, resolveWeekday, WeekdayDateRequired, localIso, offsetMs, wallParts, zonedToUtc } from "../skills/meetly/scripts/time.ts";
 
 test("DAYS is in week order starting Monday", () => {
@@ -47,7 +50,9 @@ test("next_week CLI resolves the anchor's local calendar week across timezone an
     ["2026-10-27T12:00:00-07:00", "America/Los_Angeles", "2026-11-02", "2026-11-08"],
     ["2026-12-31T12:00:00Z", "UTC", "2027-01-04", "2027-01-10"],
   ]) {
-    const result = cli("time.ts", ["next_week", "--anchor", anchor!, "--timezone", timezone!], {});
+    const home = tmpHome();
+    writeJson(join(home, "config.json"), { timezone, setupDoneAt: "2026-10-01T00:00:00Z", calendars: [] });
+    const result = cli("time.ts", ["next_week", "--anchor", anchor!], { MEETLY_HOME: home });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(result.json, { from, to });
   }
@@ -56,7 +61,9 @@ test("next_week CLI resolves the anchor's local calendar week across timezone an
 test("next_week requires an unambiguous source timestamp", async () => {
   const { cli } = await import("./helpers.ts");
   for (const anchor of ["2026-10-05", "2026-10-05T12:00:00", "not a timestamp"]) {
-    const result = cli("time.ts", ["next_week", "--anchor", anchor, "--timezone", "UTC"], {});
+    const home = tmpHome();
+    writeJson(join(home, "config.json"), { timezone: "UTC", setupDoneAt: "2026-10-01T00:00:00Z", calendars: [] });
+    const result = cli("time.ts", ["next_week", "--anchor", anchor], { MEETLY_HOME: home });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /anchor timestamp with a timezone offset/);
   }
@@ -83,4 +90,17 @@ test("weekday resolution requires one date in the bounded offer window and a rea
   assert.equal(resolveWeekday(requested, offered, "UTC", { from: "2026-10-14", to: "2026-10-25" }), "2026-10-20T16:00:00+00:00");
   assert.throws(() => resolveWeekday({ weekday: "tue", time: "25:00" }, offered, "UTC"), /Invalid weekday or clock time/);
   assert.throws(() => resolveWeekday({ weekday: "sun", time: "02:30" }, [{ start: "2026-03-06T11:30:00-08:00" }], "America/Los_Angeles"), /does not exist/);
+});
+
+test("next_week rejects model timezone overrides and missing owner timezone", async () => {
+  const { cli } = await import("./helpers.ts");
+  const home = tmpHome();
+  writeJson(join(home, "config.json"), { timezone: "America/Los_Angeles", setupDoneAt: "2026-10-01T00:00:00Z", calendars: [] });
+  const override = cli("time.ts", ["next_week", "--anchor", "2026-10-05T00:03:49Z", "--timezone", "UTC"], { MEETLY_HOME: home });
+  assert.equal(override.status, 1);
+  assert.match(override.stderr, /timezone/);
+  writeJson(join(home, "config.json"), { setupDoneAt: "2026-10-01T00:00:00Z", calendars: [] });
+  const missing = cli("time.ts", ["next_week", "--anchor", "2026-10-05T00:03:49Z"], { MEETLY_HOME: home });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /timezone/);
 });

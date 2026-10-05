@@ -1,15 +1,17 @@
 // Meetly's record of every scheduling request: who, which group, which times
 // were offered and held, and how it ended. Cleanup records event ids or exact
 // operation markers for creates whose event ids were never received.
+import { withoutPrivateTravel } from "./calendar-output.ts";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
-import { holdHours, loadConfig, reminderLeadMin } from "./config.ts";
+import { holdHours, parseTime, loadConfig, reminderLeadMin } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { file } from "./paths.ts";
 import { uniqueEvents, type EventRef } from "./busy.ts";
 import { checkTravel, type Travel } from "./travel.ts";
+import { DAYS } from "./time.ts";
 import type { Constraints } from "./slots.ts";
 export type { Constraints } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -31,7 +33,8 @@ export const OWNER_QUESTION_LIMIT = 500;
 export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ start: string; end: string } | { question: string });
 export function intersectConstraints(owner: Constraints = {}, guest: Constraints = {}): Constraints {
   return {
-    days: owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
+    ...(owner.startTime || guest.startTime ? { startTime: owner.startTime ?? guest.startTime } : {}),
+    days: owner.startTime && guest.startTime && owner.startTime !== guest.startTime ? [] : owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
     after: [owner.after, guest.after].filter(Boolean).sort().at(-1),
     before: [owner.before, guest.before].filter(Boolean).sort()[0],
     from: [owner.from, guest.from].filter(Boolean).sort().at(-1),
@@ -68,6 +71,8 @@ export type Request = {
   meal?: Meal;
   // The owner's conditions, kept for every offer of this request.
   constraints?: Constraints;
+  // Weekdays the guest has ruled out, retained across searches and booking.
+  excludedDays?: string[];
   // Times the person proposed; only the first offer uses them.
   proposed?: Constraints;
   allowOverlap?: EventRef[];
@@ -110,7 +115,7 @@ export type NewRequest = Omit<Request,
   | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { channel?: Request["channel"]; status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
-  "travel" | "travelEvents" | "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale">> & {
+  "travel" | "travelEvents" | "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "excludedDays" | "topic" | "format" | "locale">> & {
   reoffer?: Request["reoffer"] | null;
   pendingOwner?: PendingOwner | null;
   booked?: Booked | null;
@@ -123,7 +128,7 @@ const OPEN: readonly Status[] = ["asked", "offered"];
 const FORMATS: readonly Format[] = ["meet", "in_person", "phone", "unknown"];
 const OUTCOMES: readonly Reminder["outcome"][] = ["sent", "cancelled", "no-link"];
 const PATCH_KEYS = [
-  "travel", "travelEvents", "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "topic", "pendingOwner",
+  "travel", "travelEvents", "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "excludedDays", "topic", "pendingOwner",
   "format", "locale", "booked", "meetUrl", "reminder", "reoffer",
 ];
 // Keys a patch can clear with null.
@@ -257,6 +262,10 @@ export function findByChat(ledger: Ledger, chatUid: string, handle?: string): Re
     ?? ledger.requests.findLast((r) => r.chatUid === chatUid && r.status !== "asked");
 }
 
+function checkExcludedDays(days: unknown): void {
+  if (!Array.isArray(days) || days.some(day => !DAYS.includes(day))) throw new Error("excludedDays must contain weekdays mon–sun");
+}
+
 function checkOffers(offered: unknown): Offer[] {
   if (!Array.isArray(offered) || offered.length === 0) throw new Error("offered must be a non-empty list");
   for (const o of offered as Offer[]) {
@@ -266,16 +275,6 @@ function checkOffers(offered: unknown): Offer[] {
     if (typeof o.account !== "string" || !o.account) throw new Error(`each offer needs an account: ${JSON.stringify(o)}`);
   }
   return offered as Offer[];
-}
-
-// The guest is a separate field; calendar titles append it and owner messages name it first.
-export function meetingTopic(request: Pick<Request, "topic" | "name" | "handle">): string {
-  let topic = request.topic.trim();
-  const suffix = ` with ${request.name?.trim() || request.handle}`.toLowerCase();
-  while (topic.length > suffix.length && topic.toLowerCase().endsWith(suffix)) {
-    topic = topic.slice(0, -suffix.length).trimEnd();
-  }
-  return topic;
 }
 
 export function requireDuration(value: number | undefined): number {
@@ -301,9 +300,10 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   }
   if (input.origin !== "inbound" && input.origin !== "owner" && input.origin !== "owner-group") throw new Error(`origin must be inbound, owner or owner-group, got ${input.origin}`);
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
-  input = { ...input, topic: meetingTopic(input) };
+  if (input.constraints?.startTime !== undefined) input = { ...input, constraints: { ...input.constraints, startTime: parseTime(input.constraints.startTime) } };
   requireDuration(input.durationMin);
   if (input.meal !== undefined && !["lunch", "dinner", "coffee"].includes(input.meal)) throw new Error("meal must be lunch, dinner or coffee");
+  if (input.excludedDays !== undefined) checkExcludedDays(input.excludedDays);
   const status = input.status ?? "offered";
   if (status === "offered") checkOffers(input.offered);
   else if (status !== "asked") throw new Error(`a new request is asked or offered, got ${status}`);
@@ -375,7 +375,9 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   for (const key of Object.keys(patch)) {
     if (!PATCH_KEYS.includes(key)) throw new Error(`unknown key: ${key} (allowed: ${PATCH_KEYS.join(", ")})`);
   }
+  if (patch.constraints?.startTime !== undefined) patch = { ...patch, constraints: { ...patch.constraints, startTime: parseTime(patch.constraints.startTime) } };
   if (patch.status !== undefined && !STATUSES.includes(patch.status)) throw new Error(`bad status: ${patch.status}`);
+  if (patch.excludedDays !== undefined) checkExcludedDays(patch.excludedDays);
   if (patch.offered !== undefined) checkOffers(patch.offered);
   if (patch.reoffer) {
     checkOffers(patch.reoffer.offered);
@@ -409,7 +411,6 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
     else if (value !== undefined) (updated as Record<string, unknown>)[key] = value;
   }
   if (updated.reoffer && updated.status !== "booked") throw new Error("reoffer needs a booked request");
-  updated.topic = meetingTopic(updated);
   // A link belongs to a Meet: moving to another format drops it, and a link
   // is never set on a meeting that is not one.
   if (updated.meetUrl !== undefined && updated.format !== "meet") {
@@ -598,5 +599,5 @@ if (isMain(import.meta.url)) {
       default:
         throw new Error("usage: ledger.ts find | add | save | update | delivery | expired | asked | booked | pending | cleanup | reminders");
     }
-  });
+  }, withoutPrivateTravel);
 }

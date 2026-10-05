@@ -1,5 +1,7 @@
 // Owns calendar writes and their ledger commits. A durable intent survives a
 // lost Latch response or a failed ledger write; uncertain creates are never replayed.
+import { withinConstraints } from "./slots.ts";
+import { calendarOutput } from "./calendar-output.ts";
 import { checkTravel, checkTravelBase, travelFor, travelRange, travelNote, type Travel } from "./travel.ts";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -10,9 +12,10 @@ import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
-import { checkContact, addRequest, requestEvents, requestHolds, sameHandle, expiredRequests, findOpenByHandle, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, meetingTopic, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
+import { checkContact, addRequest, requestEvents, requestHolds, sameHandle, expiredRequests, findOpenByHandle, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
 import { file } from "./paths.ts";
+import { formatMeetingTime } from "./time.ts";
 import { recordBooking } from "./record-booking.ts";
 import { readJson, updateJson, withLock, writeJson } from "./store.ts";
 
@@ -22,9 +25,10 @@ export type CalendarAction =
   | { action: "book"; start: string; end?: string; attendees?: string; timeApproval?: boolean; travel?: Travel }
   | { action: "format"; format: Request["format"]; location?: string; travel?: Travel }
   | { action: "travel"; travel: Travel }
+  | { action: "attendee"; operation: "add" | "remove"; email: string }
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
 type Step = { travel?: boolean; checkFrom?: string; checkTo?: string; verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
-type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" | "travel" }>; steps: Step[]; failed?: boolean };
+type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" | "travel" | "attendee" }>; steps: Step[]; failed?: boolean };
 export type CalendarOptions = { confirmContact?: boolean; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
 class TimeApprovalBusy extends Error {
   constructor() { super("Time approval cannot book a busy slot; no overlap was authorized."); }
@@ -43,6 +47,12 @@ const holds = requestHolds;
 // Its slots change; the confirmed event and meeting details remain in place.
 function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledger {
   const request = l.requests.find(r => r.id === id);
+  const startTime = request?.constraints?.startTime ?? input.constraints?.startTime;
+  if (startTime) {
+    if (input.constraints?.startTime && input.constraints.startTime !== startTime) throw new Error("Update the owner’s exact start constraint before replacing the offer.");
+    if (input.offered.some(slot => !withinConstraints(Date.parse(slot.start), Date.parse(slot.end), loadConfig().timezone, { startTime }))) throw new Error("Offered time does not match the owner’s exact start.");
+    input.constraints = { ...input.constraints, startTime };
+  }
   if (request?.status !== "booked") return saveRequest(l, input, now, id);
   if (!sameHandle(request.handle, input.handle) || request.chatUid !== input.chatUid || (input.channel !== undefined && request.channel !== input.channel)) throw new Error("offer belongs to another request");
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
@@ -52,10 +62,16 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
     holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
   }, now);
 }
-const checkedEvent = (step: Step) => {
+const checkedEvent = (step: Step, input: Intent["input"]) => {
   const event = parseEvent(step.output!);
   if (event.status === "cancelled" || Date.parse(event.start) !== Date.parse(step.start) || Date.parse(event.end) !== Date.parse(step.end)
     || (step.verb === "update" && event.id !== step.eventId)) throw new Error("unexpected calendar event; operation kept for reconciliation");
+  if (input.action === "attendee") {
+    const raw = parseCalendarObject(step.output!);
+    const updated = (raw.event ?? raw) as { attendees?: { email?: string }[]; attendeesOmitted?: boolean };
+    const present = updated.attendees?.some(a => a.email?.toLowerCase() === input.email) ?? false;
+    if (updated.attendeesOmitted || present !== (input.operation === "add")) throw new Error("Attendee change not confirmed; run resume, do not repeat the write.");
+  }
   return event;
 };
 
@@ -192,7 +208,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           travel: input.travel });
         return { request: requestById(id) };
       }
-      if (input.action === "format" || input.action === "travel" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(request.status === "booked" && ((input.action === "book" && wasBooked) || input.action === "offer"))) throw new Error(`request is ${request.status}`);
+      if (input.action === "format" || input.action === "travel" || input.action === "attendee" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(request.status === "booked" && ((input.action === "book" && wasBooked) || input.action === "offer"))) throw new Error(`request is ${request.status}`);
       if (input.action === "duration") {
         const { origin, handle, name, channel, travel, meal, sourceRowid, chatUid, constraints, proposed, format, location, locale, askDetails } = request;
         const config = loadConfig();
@@ -218,7 +234,33 @@ export async function calendarAction(id: string, action: CalendarAction, options
         input.request.travel = saved.travel;
         input.request.format = saved.format;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
-        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${meetingTopic(input.request)} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, input.request));
+        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, input.request));
+      } else if (input.action === "attendee") {
+        if (!["add", "remove"].includes(input.operation) || typeof input.email !== "string" || !/^[^\s,;@]+@[^\s,;@]+\.[^\s,;@]+$/.test(input.email.trim())) {
+          throw new Error("Supply operation add or remove and one attendee email.");
+        }
+        const email = input.email = input.email.trim().toLowerCase();
+        if (input.operation === "add") checkContact(ledger(), input.email, options.confirmContact);
+        if (!request.eventId || !request.booked) throw new Error("Booked request has no calendar event.");
+        const output = await call(["event", "primary", request.eventId, "--json"], request.booked.account);
+        if (output === undefined) throw new Error("Cannot read the booked event's attendees.");
+        const event = parseEvent(output);
+        const raw = parseCalendarObject(output);
+        const current = (raw.event ?? raw) as { attendees?: { email: string; organizer?: boolean; self?: boolean; optional?: boolean; resource?: boolean; comment?: string }[]; attendeesOmitted?: boolean };
+        if (event.id !== request.eventId || event.status === "cancelled") throw new Error("Booked event is unavailable.");
+        if (current.attendeesOmitted) throw new Error("Cannot edit an incomplete attendee list.");
+        const attendees = current.attendees ?? [];
+        const target = attendees.find(a => a.email.toLowerCase() === email);
+        if (input.operation === "remove" && (target?.organizer || target?.self || sameHandle(input.email, request.booked.account))) throw new Error("Cannot remove the calendar owner; cancel the meeting instead.");
+        if (!!target === (input.operation === "add")) return { request, invitationUpdated: false };
+        const remaining = attendees.filter(a => a.email.toLowerCase() !== email);
+        if (input.operation === "remove" && !remaining.some(a => !a.organizer && !a.self && !sameHandle(a.email, request.booked!.account))) {
+          throw new Error("Cannot remove the last attendee; ask the owner whether to cancel the meeting instead.");
+        }
+        const emails = remaining.map(a => [a.email, ...(a.optional ? ["optional"] : []), ...(a.resource ? ["resource"] : []), ...(a.comment ? [`comment=${a.comment}`] : [])].join(";"));
+        if (input.operation === "remove" && remaining.some(a => /[,;]/.test(a.email) || /[,;]/.test(a.comment ?? ""))) throw new Error("Cannot preserve this attendee list through the calendar command.");
+        steps.push({ verb: "update", account: request.booked.account, eventId: event.id, start: event.start, end: event.end,
+          args: [input.operation === "add" ? "--add-attendee" : "--attendees", input.operation === "add" ? input.email : emails.join(","), "--send-updates", "all"], token: randomUUID() });
       } else {
         const config = loadConfig();
         if (input.action === "format") updateRequest(ledger(), id, { format: input.format, location: input.location }, now());
@@ -231,6 +273,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         if (input.action === "book" && request.offered.includes(slot) && Date.parse(slot.end) - Date.parse(slot.start) !== request.durationMin * 60_000) {
           throw new Error("Meeting duration changed; re-offer before booking an old hold.");
         }
+        if (input.action === "book" && request.constraints?.startTime && !withinConstraints(Date.parse(slot.start), Date.parse(slot.end), config.timezone, { startTime: request.constraints.startTime })) throw new Error("Booking does not match the owner’s exact start.");
         let verb: Step["verb"] = slot.holdId ? "update" : "create";
         if (slot.holdId) {
           const output = await call(["event", "primary", slot.holdId, "--json"], slot.account);
@@ -254,12 +297,12 @@ export async function calendarAction(id: string, action: CalendarAction, options
           if (!min) continue;
           add("create", { account: slot.account, start: side === "before" ? range.from : slot.end,
             end: side === "before" ? slot.start : range.to },
-          ["--summary", `Travel ${side === "before" ? "→" : "←"} ${effective.location || meetingTopic(request)} (${min} min)`,
+          ["--summary", `Travel ${side === "before" ? "→" : "←"} ${effective.location || request.topic} (${min} min)`,
             "--send-updates", "none", "--visibility", "private", "--transparency", "opaque"], range, true);
         }
         const format = effective.format;
         const location = input.action === "format" ? input.location ?? "" : request.location;
-        if (input.action !== "travel") add(verb, slot, ["--summary", `${meetingTopic(request)} with ${request.name ?? request.handle}`, "--send-updates", "all",
+        if (input.action !== "travel") add(verb, slot, ["--summary", `${request.topic} with ${request.name ?? request.handle}`, "--send-updates", "all",
           ...(format === "meet" ? ["--with-meet"] : []),
           ...(format === "phone" ? ["--location=Phone call"] : location !== undefined ? [`--location=${location}`] : []),
           ...(input.action === "book" && input.attendees ? ["--attendees", input.attendees] : [])], range);
@@ -281,8 +324,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
     if (intent.failed) await fail();
     for (const step of intent.steps) {
       if (step.skipped) continue;
-      if (step.output !== undefined) { checkedEvent(step); continue; }
-      if (step.sentAt === undefined && !intent.failed) {
+      if (step.output !== undefined) { checkedEvent(step, intent.input); continue; }
+      if (step.sentAt === undefined && !intent.failed && intent.input.action !== "attendee") {
         const config = loadConfig();
         const results: unknown[] = [];
         for (const account of new Set(config.calendars.map(c => c.account))) {
@@ -313,7 +356,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (step.sentAt === undefined && !intent.failed) {
         step.sentAt = now(); writeJson(journal, intent);
         const outcome = await send([step.verb, "primary", ...(step.verb === "update" ? [step.eventId!] : []),
-          ...step.args, "--from", step.start, "--to", step.end, "--private-prop", `meetlyOperation=${step.token}`, "--private-prop", `meetlyRequest=${id}`, "--json"], step.account);
+          ...step.args, ...(intent.input.action === "attendee" ? [] : ["--from", step.start, "--to", step.end]), "--private-prop", `meetlyOperation=${step.token}`, "--private-prop", `meetlyRequest=${id}`, "--json"], step.account);
         if (outcome && "output" in outcome) step.output = outcome.output;
         if (outcome && "handle" in outcome) step.handle = outcome.handle;
         if (outcome && "error" in outcome) {
@@ -356,16 +399,18 @@ export async function calendarAction(id: string, action: CalendarAction, options
         }
         throw new Error(`calendar write unresolved for ${id}; run resume, do not repeat the write`);
       }
-      checkedEvent(step);
+      checkedEvent(step, intent.input);
       writeJson(journal, intent);
     }
-    if (intent.input.action === "offer" && intent.steps.every(s => s.skipped)) await fail();
+    if (intent.input.action === "offer" && intent.steps.every(s => s.skipped)) await fail(new Error(`No offered time fits the meeting plus travel; ${intent.input.provisional ? "new request dropped" : "previous offer retained"}. Read busy coverage; ask the owner before changing time. Never test availability with a calendar write.`));
     const completed = intent;
     updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
       let next: Ledger;
       if (completed.input.action === "offer") {
         const offered = completed.steps.filter(s => !s.skipped).map(s => { const e = parseEvent(s.output!); return { start: e.start, end: e.end, holdId: e.id, account: s.account }; });
         next = saveOffer(l, { ...completed.input.request, offered }, now(), id);
+      } else if (completed.input.action === "attendee") {
+        next = l;
       } else {
         if (completed.input.action === "format") l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location ?? "" }, now());
         const step = completed.steps.find(s => !s.travel);
@@ -388,6 +433,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
     });
     rmSync(journal);
     await cleanup();
+    if (completed.input.action === "attendee") return { request: requestById(id), invitationUpdated: true };
     const releasedTravel = !!request.travelEvents?.length;
     request = requestById(id);
     let invitationUpdated = false;
@@ -399,10 +445,13 @@ export async function calendarAction(id: string, action: CalendarAction, options
         && event.attendees.some(a => typeof a?.email === "string" && !a.organizer && !a.self && !sameHandle(a.email, step.account));
     }
     return { request, ownerTravelNote: request.status === "booked" ? travelNote(request)
-      ?? (releasedTravel ? `Travel time for ${meetingTopic(request)} was released.` : undefined) : undefined, invitationSent: completed.input.action === "book" && !!completed.input.attendees,
+      ?? (releasedTravel ? `Travel time for ${request.topic} was released.` : undefined) : undefined, invitationSent: completed.input.action === "book" && !!completed.input.attendees,
       invitationUpdated,
       meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
-  });
+  }).then(result => ({
+    ...result,
+    ...(result.request.booked ? { confirmationTime: formatMeetingTime(result.request.booked.start, loadConfig().timezone, result.request.locale) } : {}),
+  }));
 }
 
 // A yes to a time is distinct from permission to overlap a calendar event.
@@ -478,17 +527,23 @@ export async function resumePending(options: CalendarOptions = {}) {
   return { results };
 }
 
-if (isMain(import.meta.url)) run(async () => {
-  const { values, positionals } = parseArgs({ allowPositionals: true, options: { id: { type: "string" }, json: { type: "string" }, "json-file": { type: "string" }, "confirm-contact": { type: "boolean" } } });
+export async function calendarCommand(argv: string[], options: CalendarOptions & { sendOwner?: (text: string) => Promise<void> } = {}) {
+  return calendarOutput(await executeCalendarCommand(argv, options), options.sendOwner);
+}
+
+async function executeCalendarCommand(argv: string[], options: CalendarOptions) {
+  const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: { id: { type: "string" }, json: { type: "string" }, "json-file": { type: "string" }, "confirm-contact": { type: "boolean" } } });
   const action = positionals[0];
   const args = values["json-file"] ? JSON.parse(readFileSync(values["json-file"], "utf8")) : JSON.parse(values.json ?? "{}");
-  if (action === "resume-pending") return resumePending();
+  if (action === "resume-pending") return resumePending(options);
   if (action === "pending") return { ids: pendingCalendarWrites() };
   if ("allowOverlap" in args || "allowOverlapTitles" in args) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
   if (action === "offer") checkContact(ledger(), args.handle, values["confirm-contact"]);
   if ((action === "book" || action === "approve-time") && values.id) checkContact(ledger(), requestById(values.id).handle, values["confirm-contact"]);
-  if (action === "approve-time" && values.id) return approveTime(values.id, args);
-  if (action === "offer") return values.id ? calendarAction(values.id, { action: "offer", request: args }) : offerRequest(args, { confirmContact: values["confirm-contact"] });
-  if (!values.id || !["duration", "book", "format", "travel", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | duration|approve-time|book|format|travel|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
-  return calendarAction(values.id, { ...args, action } as CalendarAction);
-});
+  if (action === "approve-time" && values.id) return approveTime(values.id, args, options);
+  if (action === "offer") return values.id ? calendarAction(values.id, { action: "offer", request: args }, options) : offerRequest(args, { ...options, confirmContact: values["confirm-contact"] });
+  if (!values.id || !["duration", "book", "format", "travel", "attendee", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | duration|approve-time|book|format|travel|attendee|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
+  return calendarAction(values.id, { ...args, action } as CalendarAction, { ...options, confirmContact: values["confirm-contact"] });
+}
+
+if (isMain(import.meta.url)) run(() => calendarCommand(process.argv.slice(2)));

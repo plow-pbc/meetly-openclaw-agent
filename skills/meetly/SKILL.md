@@ -31,9 +31,10 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `contact --handle H [--blocked true\|false] [--name NAME]` | `{doNotContact}`: read the flag, or set/clear it only on the owner's DM instruction |
 | `calendar.ts` | `approve-time --id ID [--json '{"start":"ISO","attendees":"email"}']` | Books only if free; `TIME_APPROVAL_BUSY` returns `near` for `slots.ts --near ... --no-overlap`. Never grants overlap permission. |
 | `calendar.ts` | `offer [--id X] [--confirm-contact] --json '<request with slots, no hold ids>'` | `{request}`: hold offers atomically; `--id` selects a booked reoffer. Failure retains prior offers or drops a new request with cleanup |
-| | `book --id X [--confirm-contact] --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book/move with optional `travel`; returns `ownerTravelNote` for the DM |
-| | `travel --id X --json '{"travel":{"beforeMin":45,"afterMin":45,"override":true}}'` | Save override; resize booked travel. |
-| | `format --id X --json '{"format":"meet", "location":"<optional place>"}'` | save format/location and optional `travel`; resize booked children under the lock |
+| | `book --id X [--confirm-contact] --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book/move with optional `travel`; DMs travel privately; returns only `ownerNotified` status |
+| | `attendee --id X [--confirm-contact] --json '{"operation":"add\|remove","email":"person@example.com"}'` | `{request, invitationUpdated}`: owner-requested attendee edit on a booked event; sends updates to all guests, refuses last-attendee removal |
+| | `travel --id X --json '{"travel":{"beforeMin":45,"afterMin":45,"override":true}}'` | Save override; resize booked travel and DM the owner. |
+| | `format --id X --json '{"format":"meet", "travel":{"beforeMin":0,"afterMin":0}, "location":"<optional place>"}'` | save format/location and required explicit `travel`; resize booked children under the lock |
 | | `duration --id X --json '{"durationMin":60,"topic":"…","offered":[{"start":"…","end":"…"}]}'` | `{request}`: atomically replace duration, topic and holds on an open request |
 | | `resume-pending` | `{results:[{id, request?, error?}]}`: resume all pending writes, continuing past individual failures |
 | | `pending` | `{ids}`: pending durable calendar writes |
@@ -42,7 +43,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `--id X --sent` | `{request}`: the reminder went out; refused if already handled |
 | `busy.ts` | `--fetch [--allow-overlap-title <owner-supplied name>]` (reads the Mac, writes `tmp/busy.json`) | `{file, busy:<count>, degraded, unknownAfter?}` |
 | | `--in F [--in F2…] [--max 100]` | `{busy:[{start,end,id,account}], unknownAfter?, degraded}` |
-| `time.ts` | `next_week --anchor ISO --timezone IANA` | `{from,to}` in the owner's timezone, anchored to the source message timestamp; pass weekdays separately |
+| `time.ts` | `next_week --anchor ISO` | `{from,to}` in the owner's timezone, anchored to the source message timestamp; pass weekdays separately |
 | `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], durationMin, unknownAfter?, degraded}` |
 | | `--in busy.json [--request ID] --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
 | `travel-context.ts` | `--from ISO --to ISO --start ISO --end ISO [--request ID]` | Private untrusted `{before,after}` locations. |

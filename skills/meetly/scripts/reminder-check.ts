@@ -28,7 +28,7 @@ export type Options = { leadMin: number; tz: string; graceMin?: number };
 const MIN = 60_000;
 
 function timeLabel(ms: number, locale: string, tz: string): string {
-  return new Intl.DateTimeFormat(locale, { timeZone: tz, hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
+  return new Intl.DateTimeFormat(locale, { timeZone: tz, timeZoneName: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
 }
 
 export function checkReminder(request: Request, event: EventInfo, now: number, opts: Options): Decision {

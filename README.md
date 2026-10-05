@@ -233,8 +233,12 @@ Existing model settings in the state volume are left unchanged.
 - One person per request.
 - Groups require a phone number; Meetly asks you for one before reading the
   calendar or creating holds if only an email is known.
+- Ask Meetly to add or remove an attendee on a booked event. It updates the same
+  event and sends updates to guests. Removing the last attendee is refused; ask
+  to cancel instead. Attendee edits leave the meeting time unchanged.
 - Ask Meetly to cancel a booked meeting; it deletes the event and notifies invitees.
-  Rescheduling a booked meeting is still left to you.
+- Meeting times include a time zone. If a specific requested time is unavailable,
+  Meetly asks before proposing alternatives.
 - If the model provider is unreachable, that five-minute check is skipped and
   the next one catches up from the same cursor.
 
