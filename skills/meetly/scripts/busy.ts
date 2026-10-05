@@ -17,7 +17,7 @@ export const allowsOverlap = (event: Partial<EventRef>, refs: EventRef[] = []) =
 export const uniqueEvents = (refs: EventRef[]) => refs.filter((ref, i) => allowsOverlap(ref, [ref]) && !allowsOverlap(ref, refs.slice(0, i)));
 export type Busy = { start: string; end: string; id?: string; account?: string };
 export type Coverage = { from: string; to: string };
-export const covers = (coverage: Coverage | undefined, range: Coverage) => !coverage ||
+export const covers = (coverage: Coverage | undefined, range: Coverage) => coverage !== undefined &&
   (Date.parse(range.from) >= Date.parse(coverage.from) && Date.parse(range.to) <= Date.parse(coverage.to));
 export type BusyResult = { busy: Busy[]; coverage?: Coverage; unknownAfter?: string; degraded: string[]; allowOverlap?: EventRef[] };
 

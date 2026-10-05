@@ -21,7 +21,8 @@ const CONFIG: Config = {
   setupDoneAt: "2026-09-26T12:00:00.000Z",
 };
 const NOW = Date.parse("2026-09-28T08:00:00-03:00");
-const q = (over: Partial<SlotQuery> = {}): SlotQuery => ({ now: NOW, config: CONFIG, durationMin: 30, busy: [], ...over });
+const coverage = { from: "2026-09-28T00:00:00Z", to: "2026-11-10T00:00:00Z" };
+const q = (over: Partial<SlotQuery> = {}): SlotQuery => ({ now: NOW, config: CONFIG, durationMin: 30, busy: [], coverage, ...over });
 const starts = (over: Partial<SlotQuery> = {}) => findSlots(q(over)).slots.map((s) => s.start);
 const labels = (over: Partial<SlotQuery> = {}) => findSlots(q(over)).slots.map((s) => s.label);
 
@@ -92,7 +93,7 @@ test("daylight saving ends: 09:00 stays 09:00 local", () => {
     windowEnd: "10:00",
     horizonDays: 5,
   };
-  const r = findSlots({ now: Date.parse("2026-10-30T12:00:00-07:00"), config, busy: [], durationMin: 60 });
+  const r = findSlots(q({ now: Date.parse("2026-10-30T12:00:00-07:00"), config, durationMin: 60 }));
   assert.deepEqual(r.slots.map((s) => s.start), [
     "2026-10-31T09:00:00-07:00",
     "2026-11-01T09:00:00-08:00",
@@ -114,7 +115,7 @@ test("the CLI reads busy.ts output and the stored config", () => {
   const busyFile = join(home, "busy.json");
   writeFileSync(busyFile, JSON.stringify({
     busy: [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly", account: "jean@example.com" }],
-    degraded: ["other@example.com"],
+    degraded: ["other@example.com"], coverage,
   }));
   const env = { MEETLY_HOME: home };
   const now = ["--now", "2026-09-28T08:00:00-03:00", "--duration", "30"];
@@ -135,7 +136,7 @@ test("the CLI reads busy.ts output and the stored config", () => {
   assert.equal(cli("slots.ts", ["--in", busyFile, "--at", "2026-10-03T10:00:00-03:00", "--days", "sat"], env).status, 1);
   assert.equal(cli("slots.ts", ["--in", busyFile, "--owner"], env).status, 1);
   const authorizedFile = join(home, "authorized-busy.json");
-  writeJson(authorizedFile, { busy: [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly", account: "jean@example.com" }], allowOverlap: [{ account: "jean@example.com", id: "weekly" }] });
+  writeJson(authorizedFile, { coverage, busy: [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly", account: "jean@example.com" }], allowOverlap: [{ account: "jean@example.com", id: "weekly" }] });
   const authorized = cli("slots.ts", ["--in", authorizedFile, ...now, "--count", "1"], env);
   assert.deepEqual(authorized.json.slots, allowed.json.slots);
   assert.equal(cli("slots.ts", ["--in", authorizedFile, ...now, "--at", "2026-09-28T10:00:00-03:00"], env).json.free, true);
@@ -176,7 +177,7 @@ test("owner re-offer uses saved week bounds and ignores only its own holds", () 
   const busy = offered.map(o => ({ start: o.start, end: o.end, id: o.holdId, account }));
   const args = ["--in", busyFile, "--request", "lunch", "--now", "2026-10-02T20:00:00-03:00", "--duration", "60", "--days", "tue", "--from", "2026-10-01", "--to", "2026-10-20"];
   const run = (extra: object[] = []) => {
-    writeJson(busyFile, { busy: [...busy, ...extra], degraded: [] });
+    writeJson(busyFile, { coverage, busy: [...busy, ...extra], degraded: [] });
     return cli("slots.ts", args, { MEETLY_HOME: home });
   };
   const result = run();
@@ -193,7 +194,7 @@ test("owner re-offer uses saved week bounds and ignores only its own holds", () 
 
 test("checkTime: a time the person insists on", () => {
   const check = (start: string, over: Partial<Parameters<typeof checkTime>[0]> = {}) =>
-    checkTime({ now: NOW, config: CONFIG, durationMin: 30, busy: [], start, ...over });
+    checkTime({ ...q(), start, ...over });
   assert.deepEqual(check("2026-09-28T10:00:00-03:00"), {
     slot: { start: "2026-09-28T10:00:00-03:00", end: "2026-09-28T10:30:00-03:00", dayOfWeek: "mon", label: "mon 28/9 10:00" },
     free: true,
@@ -228,7 +229,7 @@ test("replacement slot search keeps saved and newly resolved overlap authorizati
     allowOverlap: [{ account: "jean@example.com", id: "saved" }], offered: [{ start, end, holdId: "own-hold", account: "jean@example.com" }],
   }, Date.parse(start), "r_one"));
   const busyFile = join(home, "busy.json");
-  writeJson(busyFile, { busy: ["saved", "new", "own-hold"].map(id => ({ id, start, end, account: "jean@example.com" })), allowOverlap: [{ account: "jean@example.com", id: "new" }] });
+  writeJson(busyFile, { coverage, busy: ["saved", "new", "own-hold"].map(id => ({ id, start, end, account: "jean@example.com" })), allowOverlap: [{ account: "jean@example.com", id: "new" }] });
   const result = cli("slots.ts", ["--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--after", "10:00", "--count", "1"], env);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.json.slots[0].start, start);
@@ -239,7 +240,7 @@ test("replacement slot search keeps saved and newly resolved overlap authorizati
   assert.equal(checked.json.free, true);
   assert.equal(checked.json.slot.end, end);
   assert.doesNotMatch(checked.stdout, /saved|new|own-hold|allowOverlap/);
-  writeJson(busyFile, { busy: [{ id: "saved", start, end, account: "other@example.com" }] });
+  writeJson(busyFile, { coverage, busy: [{ id: "saved", start, end, account: "other@example.com" }] });
   const blocked = cli("slots.ts", args, env);
   assert.equal(blocked.status, 0, blocked.stderr);
   assert.equal(blocked.json.reason, "busy");
@@ -259,6 +260,25 @@ test("explicit dates beyond the default horizon are searched", () => {
     "2026-10-29T09:00:00-03:00", "2026-10-29T09:30:00-03:00", "2026-10-29T10:00:00-03:00",
   ]);
   assert.equal(starts({ from: "2026-10-29" })[0], "2026-10-29T09:00:00-03:00");
+});
+
+test("raw busy CLI output without coverage cannot make unread dates available", () => {
+  const home = tmpHome(), env = { MEETLY_HOME: home };
+  writeJson(join(home, "config.json"), CONFIG);
+  const raw = join(home, "raw.json"), busy = join(home, "busy.json");
+  writeJson(raw, { events: [] });
+  const normalized = cli("busy.ts", ["--in", raw], env);
+  assert.equal(normalized.status, 0, normalized.stderr);
+  writeFileSync(busy, normalized.stdout);
+  const args = ["--in", busy, "--now", new Date(NOW).toISOString()];
+  const search = cli("slots.ts", [...args, "--from", "2026-10-29", "--to", "2026-10-29"], env);
+  assert.equal(search.status, 0, search.stderr);
+  assert.deepEqual(search.json.slots, []);
+  assert.equal(search.json.incomplete.reason, "calendar-coverage");
+  const exact = cli("slots.ts", [...args, "--at", "2026-10-29T10:00:00-03:00"], env);
+  assert.equal(exact.status, 0, exact.stderr);
+  assert.equal(exact.json.free, false);
+  assert.equal(exact.json.reason, "unknown");
 });
 
 test("unread explicit dates return incomplete coverage, not apparent unavailability", () => {
@@ -309,7 +329,7 @@ test("CLI searches an asked request using a typed next week", () => {
 test("CLI next week replaces saved date bounds and retains non-date policy", () => {
   const home = tmpHome();
   writeJson(join(home, "config.json"), { ...CONFIG, timezone: "UTC" });
-  writeJson(join(home, "busy.json"), { busy: [] });
+  writeJson(join(home, "busy.json"), { busy: [], coverage });
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
     status: "asked", origin: "owner", handle: "+15550107812", topic: "call", durationMin: 45, offered: [],
     constraints: { from: "2026-10-12", to: "2026-10-18", days: ["tue", "thu"], after: "13:00", before: "15:00", startTime: "13:15" },
@@ -336,7 +356,7 @@ test("typed meal defaults and saved exact owner starts survive slot planning", (
 test("request CLI re-offers retain saved excluded weekdays", () => {
   const home = tmpHome();
   writeJson(join(home, "config.json"), CONFIG);
-  writeJson(join(home, "busy.json"), { busy: [] });
+  writeJson(join(home, "busy.json"), { busy: [], coverage });
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
     origin: "owner", status: "asked", handle: "+15550107812", topic: "Call", durationMin: 30,
     constraints: { days: ["mon", "tue"] }, excludedDays: ["mon"], offered: [],

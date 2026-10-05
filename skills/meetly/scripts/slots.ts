@@ -134,7 +134,6 @@ export function findSlots(q: SlotQuery): SlotResult {
   const tz = config.timezone;
   const resolvedConstraints = resolveSearchConstraints(q, q.week, now, tz);
   q = { ...q, ...resolvedConstraints };
-  if (q.asap !== undefined && typeof q.asap !== "boolean") throw new Error("asap must be a boolean");
   if (q.asap && q.near) throw new Error("asap searches earliest first; omit near");
   const duration = meetingDuration(q.durationMin, q.meal, q.config.durationMin);
   const count = q.count ?? SLOT_COUNT;
