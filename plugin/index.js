@@ -9,6 +9,7 @@
 import { registerOwnerCalendarTool } from "./owner-calendar.js";
 import { calendarPolicy } from "./calendar-policy.js";
 import { sendPolicy } from "./send-policy.js";
+import { silentRuns } from "./silent-runs.js";
 import { execFile } from "node:child_process";
 import { registerPipelineHooks } from "./pipeline.js";
 import { guestTurns } from "./guest-turn.js";
@@ -133,10 +134,11 @@ export default {
     });
     api.on("before_tool_call", (event, ctx) => {
       ownerTurns.beforeTool(event, ctx);
-      return calendarPolicy(event) ?? sendPolicy(event) ?? guestTurns.beforeTool(event, ctx);
+      return calendarPolicy(event) ?? sendPolicy(event, ctx) ?? guestTurns.beforeTool(event, ctx);
     });
-    api.on("reply_payload_sending", plainFailure);
+    api.on("reply_payload_sending", event => silentRuns.sending(event) ?? plainFailure(event));
     api.on("agent_end", (event, ctx) => {
+      silentRuns.end(event);
       guestTurns.end(event, ctx);
       ownerTurns.end(event, ctx);
     });
