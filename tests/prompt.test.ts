@@ -339,6 +339,21 @@ test("owner format changes reach the guest and visible answers still clear their
   assert.ok(flat(prompt).includes("never another scheduling outcome in the same guest turn"));
 });
 
+test("owner answers apply calendar changes before clearing the question", () => {
+  const question = confirmSkill().split("- **Question (`pendingOwner.question`):**")[1]!.split("- **Yes to a time**")[0]!;
+  assert.match(question, /location, format or time/);
+  assert.match(question, /calendar\.ts format/);
+  assert.match(question, /Book the event.*Changes after booking/);
+  assert.match(question, /writer succeeds before calling `meetly_answer_owner` or acknowledging/);
+  assert.match(question, /failed or unresolved write, leave the question pending/);
+  registerOwnerTools({ registerTool(factory: (ctx: object) => { description: string }) {
+    const description = factory({}).description;
+    assert.match(description, /Before calling this tool, apply any location, format or time change/);
+    assert.match(description, /calendar writer succeeds/);
+    assert.match(description, /failed or unresolved writes leave the question pending/);
+  } });
+});
+
 test("owner-started groups introduce Meetly and name the owner in the first reply or offer", () => {
   const group = groupSkill();
   const identity = "<agentName>, <ownerName>'s scheduling assistant";

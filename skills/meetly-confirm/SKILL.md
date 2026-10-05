@@ -36,8 +36,14 @@ group and clears the pending item only after the send succeeds. If delivery is u
 tell the owner; do not resend. Only if the owner explicitly authorizes a retry, run
 `ledger.ts delivery --id <id> --kind answer --action clear` first.
 
-- **Question (`pendingOwner.question`):** `text` is Meetly relaying the owner's answer.
-  Apply any requested calendar change first. On failure or an unresolved write, leave the question pending. For a successful change set `outcome: "calendar_change"`: the tool delivers the confirmed result even in the same group. Otherwise set `outcome: "answer"`; in the same group the tool clears silently without
+- **Question (`pendingOwner.question`):** if the owner's answer changes location, format or time,
+  apply it first: use `calendar.ts format` with `meetly-travel` for place/format, or
+  "Book the event" / "Changes after booking" for time changes. Wait until the
+  calendar writer succeeds before calling `meetly_answer_owner` or acknowledging.
+  On a failed or unresolved write, leave the question pending; resume unresolved
+  writes and never claim the change completed. `text` relays the confirmed result,
+  or the owner's answer when no calendar change is needed.
+  For a successful change set `outcome: "calendar_change"`: the tool delivers the confirmed result even in the same group. Otherwise set `outcome: "answer"`; in the same group the tool clears silently without
   sending or acknowledging; after `silent: true`, output nothing. If the owner answers
   a different question already visible in the group, leave the unrelated pending
   question open and output nothing. Never send the answer separately.
