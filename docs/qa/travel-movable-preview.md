@@ -26,3 +26,23 @@ Replay overlays must preserve v4's explicit-duration code, pipeline split and
 than copying older feature-branch skills wholesale. Evidence and overlay recipe:
 `notes/preview4-flow-fixes/` in the kitchen workspace. These are captured-image
 fixture replays, not a rebuilt or deployed preview.
+
+Movable: v4's group flow said “Otherwise use --near” without an explicit wait
+branch; the tool allowed an inspection-turn search while forbidding only remember
+and offer. Keep the revised conditional wait in both group and travel, and the
+updated movable tool description/result guidance. The `slots.ts --at` busy result
+now routes owner-DM checks to the actual `meetly_movable` tool before alternatives;
+other chats retain alternatives. Port that return block into v4's current CLI
+(`checkTime({ ...q, start: values.at })`), preserving its duration implementation.
+Code does not classify titles or owner language and grants no permission.
+
+V4 follow-up validation: travel 532 and movable 551 tests, both typechecks pass;
+two new routing-result tests failed before their fixes. The original captured v4
+travel failure is retained; a repeat was intermittent. Corrected travel replays
+passed 3/3, and their generated commands passed the captured calendar seam against
+a fake calendar: two travel creates, unchanged meeting and duration. Final movable
+trace inspects, asks once privately and stops without alternatives/remember/offer.
+Strict replay remains red because of an unhandled `sessions_yield` call after the
+question; it also claims Ned is free without evidence. These are concerns, not a
+fully green preview. Model budget exhausted at 64/64 calls, including failed
+candidates and one invalid overlay run. No push or live execution.
