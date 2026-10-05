@@ -9,7 +9,7 @@ import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig, SLOT_COUNT } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
-import { expiredRequests, findOpenByHandle, meetingDuration, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
+import { addRequest, requestHolds, sameHandle, expiredRequests, findOpenByHandle, meetingDuration, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
 import { formatMeetingTime } from "./time.ts";
 import { file } from "./paths.ts";
@@ -37,7 +37,20 @@ const requestById = (id: string) => {
   if (!request) throw new Error(`no request ${id}`);
   return request;
 };
-const holds = (r: Request): HoldRef[] => r.offered.flatMap(o => o.holdId ? [{ holdId: o.holdId, account: o.account }] : []);
+const holds = requestHolds;
+// A replacement offer belongs to the booked record explicitly selected by id.
+// Its slots change; the confirmed event and meeting details remain in place.
+function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledger {
+  const request = l.requests.find(r => r.id === id);
+  if (request?.status !== "booked") return saveRequest(l, input, now, id);
+  if (!sameHandle(request.handle, input.handle) || request.chatUid !== input.chatUid) throw new Error("offer belongs to another request");
+  const validated = addRequest(EMPTY, input, now, id).requests[0]!;
+  if (validated.status !== "offered") throw new Error("replacement needs offered times");
+  return updateRequest(l, id, {
+    reoffer: { offered: validated.offered, offeredAt: new Date(now).toISOString() },
+    holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
+  }, now);
+}
 const checkedEvent = (step: Step) => {
   const event = parseEvent(step.output!);
   if (event.status === "cancelled" || Date.parse(event.start) !== Date.parse(step.start) || Date.parse(event.end) !== Date.parse(step.end)
@@ -127,6 +140,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (removed) patch({ holdCleanup: (requestById(id).holdCleanup ?? []).filter(h => !sameCleanup(h, ref)) });
     }
   };
+  // A queued initial pick must not become a move when another booking wins the lock.
+  const wasBooked = action.action === "book" && requestById(id).status === "booked";
   return locked(id, async () => {
     const journal = file(`calendar/${encodeURIComponent(id)}.json`);
     let intent = readJson<Intent | undefined>(journal, undefined);
@@ -140,17 +155,28 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (input.action === "resume" || input.action === "cleanup") { await cleanup(); return { request: requestById(id) }; }
       if (input.action === "expire" && !expiredRequests(ledger(), holdHours(), now()).some(r => r.id === id)) return { request, skipped: true };
       if (input.action === "expire" || input.action === "drop" || input.action === "cancel") {
-        if (request.status === "booked" && input.action !== "cancel") return { request, skipped: true };
+        if (request.status === "booked" && input.action === "drop") return { request, skipped: true };
+        if (request.status === "booked" && input.action === "expire") {
+          patch({ reoffer: null, holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]) });
+          await cleanup();
+          request = requestById(id);
+          return { request, groupNotice: request.chatUid ? {
+            chatUid: request.chatUid,
+            text: request.holdCleanup?.length
+              ? "The replacement offer expired; some holds still need cleanup. The original booking remains unchanged."
+              : "The replacement times were released. The original booking remains unchanged.",
+          } : undefined };
+        }
         const refs: HoldCleanup[] = holds(request);
         if (input.action === "cancel" && request.eventId && request.booked) refs.push({ holdId: request.eventId, account: request.booked.account, sendUpdates: "all" });
-        patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null,
+        patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null, reoffer: null,
           holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...refs]) }); await cleanup(); return { request: requestById(id) };
       }
       if (input.action === "format" && request.status === "offered") {
         patch({ format: input.format, location: input.location ?? "" });
         return { request: requestById(id) };
       }
-      if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked") throw new Error(`request is ${request.status}`);
+      if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(request.status === "booked" && ((input.action === "book" && wasBooked) || input.action === "offer"))) throw new Error(`request is ${request.status}`);
       if (input.action === "duration") {
         const { origin, handle, name, sourceRowid, chatUid, constraints, proposed, format, location, locale, askDetails } = request;
         const config = loadConfig();
@@ -170,7 +196,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         if (input.request.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
         // Validate before any external effect; only the final commit replaces the old offer.
         const before = ledger();
-        const validated = saveRequest(before, input.request, now(), id);
+        const validated = saveOffer(before, input.request, now(), id);
         input.request.allowOverlap = validated.requests.find(r => r.id === id)!.allowOverlap;
         input.request.name = validated.requests.find(r => r.id === id)!.name;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
@@ -181,6 +207,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         const start = input.action === "book" ? input.start : undefined;
         const slot: Offer = input.action === "format"
           ? { start: request.booked!.start, end: request.booked!.end, account: request.booked!.account, holdId: request.eventId }
+          : request.status === "booked" ? { start: input.start, end: input.end ?? new Date(Date.parse(input.start) + request.durationMin * 60_000).toISOString(), account: request.booked!.account, holdId: request.eventId }
           : request.offered.find(o => Date.parse(o.start) === Date.parse(start!)) ?? { start: input.start, end: input.end!, account: config.defaultAccount };
         if (!slot.end || !(Date.parse(slot.end) > Date.parse(slot.start))) throw new Error("booking needs valid start and end");
         if (input.action === "book" && request.offered.includes(slot) && Date.parse(slot.end) - Date.parse(slot.start) !== request.durationMin * 60_000) {
@@ -192,7 +219,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           if (output === undefined) throw new Error("cannot read existing calendar event");
           const raw = parseCalendarObject(output) as any;
           if ((raw.event ?? raw).status === "cancelled") {
-            if (input.action === "format") throw new Error("booked event was cancelled");
+            if (request.status === "booked") throw new Error("booked event was cancelled");
             verb = "create";
           }
         }
@@ -305,15 +332,19 @@ export async function calendarAction(id: string, action: CalendarAction, options
       let next: Ledger;
       if (completed.input.action === "offer") {
         const offered = completed.steps.filter(s => !s.skipped).map(s => { const e = parseEvent(s.output!); return { start: e.start, end: e.end, holdId: e.id, account: s.account }; });
-        next = saveRequest(l, { ...completed.input.request, offered }, now(), id);
+        next = saveOffer(l, { ...completed.input.request, offered }, now(), id);
       } else {
         if (completed.input.action === "format") l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location ?? "" }, now());
         const step = completed.steps[0]!;
+        const before = l.requests.find(r => r.id === id)!;
         next = recordBooking(l, id, parseEvent(step.output!), step.account, now()).ledger;
+        if (completed.input.action === "book") next = updateRequest(next, id, {
+          reoffer: null, holdCleanup: uniqueCleanup([...(before.holdCleanup ?? []), ...holds(before)]),
+        }, now());
       }
       return { requests: next.requests.map(r => {
         if (r.id !== id) return r;
-        const cleanup = uniqueCleanup([...(r.holdCleanup ?? []), ...(r.status === "booked" ? holds(r) : [])])
+        const cleanup = uniqueCleanup(r.holdCleanup ?? [])
           .filter(h => !(r.status === "booked" && r.eventId === h.holdId && r.booked?.account === h.account));
         return { ...r, calendarRevision: completed.id, holdCleanup: cleanup };
       }) };
@@ -321,7 +352,17 @@ export async function calendarAction(id: string, action: CalendarAction, options
     rmSync(journal);
     await cleanup();
     request = requestById(id);
-    return { request, invitationSent: completed.input.action === "book" && !!completed.input.attendees, meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
+    let invitationUpdated = false;
+    if (completed.input.action === "book") {
+      const step = completed.steps[0]!;
+      const raw = parseCalendarObject(step.output!);
+      const event = (raw.event ?? raw) as { attendees?: { email?: string; organizer?: boolean; self?: boolean }[] };
+      invitationUpdated = step.verb === "update" && Array.isArray(event.attendees)
+        && event.attendees.some(a => typeof a?.email === "string" && !a.organizer && !a.self && !sameHandle(a.email, step.account));
+    }
+    return { request, invitationSent: completed.input.action === "book" && !!completed.input.attendees,
+      invitationUpdated,
+      meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
   }).then(result => ({
     ...result,
     ...(result.request.booked ? { confirmationTime: formatMeetingTime(result.request.booked.start, loadConfig().timezone, result.request.locale) } : {}),
@@ -403,7 +444,7 @@ if (isMain(import.meta.url)) run(async () => {
   if (action === "resume-pending") return resumePending();
   if (action === "pending") return { ids: pendingCalendarWrites() };
   if ("allowOverlap" in args || "allowOverlapTitles" in args) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
-  if (action === "offer") return offerRequest(args);
+  if (action === "offer") return values.id ? calendarAction(values.id, { action: "offer", request: args }) : offerRequest(args);
   if (action === "approve-time" && values.id) return approveTime(values.id, args);
   if (!values.id || !["duration", "book", "format", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | approve-time|duration|book|format|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
   return calendarAction(values.id, { ...args, action } as CalendarAction);

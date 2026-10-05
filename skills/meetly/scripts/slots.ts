@@ -9,7 +9,7 @@ import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MEAL_DEFAULTS, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
 import { allowsOverlap, covers, uniqueEvents, type Coverage, type EventRef, type Busy } from "./busy.ts";
-import { intersectConstraints, meetingDuration, requireDuration, type Ledger, type Meal } from "./ledger.ts";
+import { requestEvents, intersectConstraints, meetingDuration, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { addDays, DAYS, localIso, nextWeek, wallParts, zonedToUtc, type Day } from "./time.ts";
@@ -29,6 +29,7 @@ export type SlotQuery = Constraints & {
   meal?: Meal;
   allowOverlap?: EventRef[];
   exclude?: string[];
+  excludeDates?: string[];
   asap?: boolean;
   count?: number;
   near?: string;
@@ -157,6 +158,7 @@ export function findSlots(q: SlotQuery): SlotResult {
   const perDay: { start: number; end: number; day: Day }[][] = [];
   scan: for (let i = 0; i <= days; i++) {
     const { y, m, d } = addDays(y0!, m0!, d0!, i);
+    if (q.excludeDates?.includes(`${y}-${pad(m)}-${pad(d)}`)) continue;
     const day = wallParts(zonedToUtc(y, m, d, 12, 0, tz), tz).weekday;
     if (!config.days.includes(day)) continue;
     const found: { start: number; end: number; day: Day }[] = [];
@@ -309,8 +311,8 @@ if (isMain(import.meta.url)) {
     const degraded = input.degraded ?? [];
     const request = values.request === undefined ? undefined
       : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
-    if (values.request !== undefined && (!request || !["asked", "offered"].includes(request.status))) throw new Error("--request needs an asked or offered request");
-    if (request) input.busy = input.busy.filter(b => !request.offered.some(o => o.holdId === b.id && o.account === b.account));
+    if (values.request !== undefined && (!request || !["asked", "offered", "booked"].includes(request.status))) throw new Error("--request needs an asked, offered or booked request");
+    if (request) input.busy = input.busy.filter(b => !requestEvents(request).some(o => o.holdId === b.id && o.account === b.account));
     const q: SlotQuery = { now, config, meal, busy: input.busy, allowOverlap: input.allowOverlap };
     q.coverage = input.coverage;
     if (values["start-time"] !== undefined) q.startTime = parseTime(values["start-time"]);
