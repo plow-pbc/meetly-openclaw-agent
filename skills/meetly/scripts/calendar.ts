@@ -11,7 +11,7 @@ import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
-import { checkContact, addRequest, requestEvents, requestHolds, sameHandle, expiredRequests, findOpenByHandle, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, meetingTopic, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
+import { checkContact, addRequest, requestEvents, requestHolds, sameHandle, expiredRequests, findOpenByHandle, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
@@ -226,7 +226,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         input.request.travel = saved.travel;
         input.request.format = saved.format;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
-        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${meetingTopic(input.request)} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, input.request));
+        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, input.request));
       } else if (input.action === "attendee") {
         if (!["add", "remove"].includes(input.operation) || typeof input.email !== "string" || !/^[^\s,;@]+@[^\s,;@]+\.[^\s,;@]+$/.test(input.email.trim())) {
           throw new Error("Supply operation add or remove and one attendee email.");
@@ -288,12 +288,12 @@ export async function calendarAction(id: string, action: CalendarAction, options
           if (!min) continue;
           add("create", { account: slot.account, start: side === "before" ? range.from : slot.end,
             end: side === "before" ? slot.start : range.to },
-          ["--summary", `Travel ${side === "before" ? "→" : "←"} ${effective.location || meetingTopic(request)} (${min} min)`,
+          ["--summary", `Travel ${side === "before" ? "→" : "←"} ${effective.location || request.topic} (${min} min)`,
             "--send-updates", "none", "--visibility", "private", "--transparency", "opaque"], range, true);
         }
         const format = effective.format;
         const location = input.action === "format" ? input.location ?? "" : request.location;
-        if (input.action !== "travel") add(verb, slot, ["--summary", `${meetingTopic(request)} with ${request.name ?? request.handle}`, "--send-updates", "all",
+        if (input.action !== "travel") add(verb, slot, ["--summary", `${request.topic} with ${request.name ?? request.handle}`, "--send-updates", "all",
           ...(format === "meet" ? ["--with-meet"] : []),
           ...(format === "phone" ? ["--location=Phone call"] : location !== undefined ? [`--location=${location}`] : []),
           ...(input.action === "book" && input.attendees ? ["--attendees", input.attendees] : [])], range);
@@ -436,7 +436,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         && event.attendees.some(a => typeof a?.email === "string" && !a.organizer && !a.self && !sameHandle(a.email, step.account));
     }
     return { request, ownerTravelNote: request.status === "booked" ? travelNote(request)
-      ?? (releasedTravel ? `Travel time for ${meetingTopic(request)} was released.` : undefined) : undefined, invitationSent: completed.input.action === "book" && !!completed.input.attendees,
+      ?? (releasedTravel ? `Travel time for ${request.topic} was released.` : undefined) : undefined, invitationSent: completed.input.action === "book" && !!completed.input.attendees,
       invitationUpdated,
       meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
   });

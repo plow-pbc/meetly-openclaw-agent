@@ -4,7 +4,7 @@ import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
-import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findByChat, meetingTopic, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findByChat, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { checkTime, findPreferredSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -116,11 +116,11 @@ async function check(request: Request, config: Config, requested: string | Weekd
 
 async function notifyOwner(request: Request, config: Config, change: "moved" | "cancelled" | "travel", sendOwner?: SendOwner, note = travelNote(request)) {
   const when = localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(request.booked!.start));
-  const subject = `${meetingTopic(request)} with ${request.name ?? request.handle}`;
+  const subject = `${request.topic} with ${request.name ?? request.handle}`;
   if (change === "travel" && !note) return {};
   const text = change === "travel" ? note! : change === "moved" ? `${subject} moved to ${when} (${config.timezone}).${note ? ` ${note}` : ""}`
-    : request.holdCleanup?.length ? `${request.name ?? request.handle} requested cancellation of ${meetingTopic(request)} on ${when} (${config.timezone}); calendar cleanup is pending.`
-    : `${request.name ?? request.handle} cancelled ${meetingTopic(request)} on ${when} (${config.timezone}).`;
+    : request.holdCleanup?.length ? `${request.name ?? request.handle} requested cancellation of ${request.topic} on ${when} (${config.timezone}); calendar cleanup is pending.`
+    : `${request.name ?? request.handle} cancelled ${request.topic} on ${when} (${config.timezone}).`;
   try {
     if (!sendOwner) throw new Error("owner messaging unavailable");
     await sendOwner(text);
@@ -158,31 +158,22 @@ async function pick(request: Request, config: Config, start: string, attendees?:
     ...await notifyOwner(request, config, "travel", sendOwner) };
 }
 
-// Tool arguments may encode a weekday object as JSON inside a string.
-function otherTimesStart(start: GuestArgs["start"]): GuestArgs["start"] {
-  if (typeof start === "string") {
-    const text = start.trim();
-    if (/^(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)$/i.test(text)) {
-      return { weekday: text.slice(0, 3).toLowerCase() as WeekdayTime["weekday"] };
-    }
-    if (text.startsWith("{")) start = JSON.parse(text);
-  }
-  if (start && typeof start === "object" && typeof start.time === "string" && !start.time.trim()) {
-    return { ...start, time: undefined };
-  }
-  return start;
-}
-
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
   const travel = request.travel?.override ? request.travel : args.travel ?? request.travel;
   try {
-    args = { ...args, start: otherTimesStart(args.start) };
+    if (typeof args.start === "string" && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(args.start)) {
+      throw new Error("invalid start");
+    }
+    if (args.start && typeof args.start === "object" && typeof args.start.time === "string" && !args.start.time.trim()) {
+      args = { ...args, start: { ...args.start, time: undefined } };
+    }
     if (args.start !== undefined && typeof args.start !== "string") {
       resolveWeekday(args.start!, request.reoffer?.offered ?? request.offered, config.timezone);
     }
   } catch (error) {
     if (error instanceof WeekdayDateRequired) throw error;
-    return { error: "Provide a valid weekday (mon–sun) and time (HH:MM), or an explicit calendar date and time." };
+    const message = 'Provide a nested weekday object, for example arguments {"start":{"weekday":"thu"}} for Thursday. Allowed weekday values: mon, tue, wed, thu, fri, sat, sun. Optional time must be HH:MM; omit it for a day-only preference. Do not quote the object as a JSON string or pass a bare weekday. Only for an explicitly dated time, start may be an ISO string YYYY-MM-DDTHH:MM[:SS[.sss]][Z|±HH:MM]. Never invent a clock time to repair a weekday-only request.';
+    return { error: message, code: "INVALID_START", recovery: { action: "retry", retry: true, message } };
   }
   const preferred = preferences(args, config.timezone);
   const excludedDays = preferences({ days: args.excludedDays }, config.timezone).days ?? [];
@@ -238,7 +229,6 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
 async function askOwner(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
   args = { ...args,
     start: typeof args.start === "string" ? args.start.trim() || undefined : args.start,
-    question: typeof args.question === "string" ? args.question.trim() || undefined : args.question,
   };
   if (request.pendingOwner) return { error: "A question is already open with the owner. Wait for their answer." };
   if ((args.question === undefined) === (args.start === undefined)) return { error: "Provide either a question or a start time, not both." };
@@ -248,11 +238,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   const askedAt = new Date(Date.now()).toISOString();
   if (args.question !== undefined) {
     if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
-    question = args.question.replace(/\s+/g, " ").trim();
-    const closingQuote: Record<string, string> = { '"': '"', "'": "'", "“": "”", "‘": "’" };
-    while (question.length >= 2 && closingQuote[question[0]!] === question.at(-1)) question = question.slice(1, -1).trim();
-    if (!question) return { error: "Provide a question about this meeting." };
-    question = question.slice(0, OWNER_QUESTION_LIMIT);
+    if (args.question.length > OWNER_QUESTION_LIMIT) return { error: `Provide a question of ${OWNER_QUESTION_LIMIT} characters or fewer; received ${args.question.length}. Nothing was sent.` };
+    question = args.question;
     pendingOwner = { question, askedAt };
   } else {
     const checked = await check(request, config, args.start!);
@@ -274,14 +261,14 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
       at: new Date(Date.now()).toISOString(),
     } } : r) };
   });
-  if (request.channel === "email") return { ownerQuestion: question, guestName: request.name, topic: meetingTopic(request),
+  if (request.channel === "email") return { ownerQuestion: question, guestName: request.name, topic: request.topic,
     replyToOwner: true, message: "Ask the owner in your final text. Do not send an email to the thread or send a separate DM." };
   // Keep the slot on an uncertain send so another turn cannot duplicate it.
   try {
     const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
     await sendOwner!("question" in pendingOwner
-      ? `${label(request.name ?? "Your guest")} asked in your ${label(meetingTopic(request))} thread. Guest question: ${JSON.stringify(question)}. Reply there, or tell me what to say.`
-      : `${label(request.name ?? "Your guest")} in your ${label(meetingTopic(request))} group asks: ${JSON.stringify(question)} — what should I tell them?`);
+      ? `${label(request.name ?? "Your guest")} asked in your ${label(request.topic)} thread. Guest question: ${JSON.stringify(question)}. Reply there, or tell me what to say.`
+      : `${label(request.name ?? "Your guest")} in your ${label(request.topic)} group asks: ${JSON.stringify(question)} — what should I tell them?`);
   } catch {
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
   }
