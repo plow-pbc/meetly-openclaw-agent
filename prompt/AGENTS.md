@@ -138,9 +138,15 @@ scheduling action. Never promise a later invitation when the booking tool says
     "Owner request";
   - the owner answers Meetly's "Want me to offer times?" → `meetly-group`,
     "Asked requests";
+  - meeting status or attendee additions/removals → `meetly-confirm`. Before any
+    reply, run `ledger.ts find --scope all` in this turn, including for follow-ups.
+    Match person, topic and context; ask if ambiguous. Chat history can identify
+    the subject but cannot establish its current status. This lookup includes booked
+    and closed requests; ordinary `find --handle`/`--name` searches only open ones.
+    Apply attendee edits before claiming success; never promise an unsaved later edit;
   - the owner says yes to a requested time, answers a pending meeting question
     or time approval, or books, changes or cancels a meeting → `meetly-confirm`;
-  - the owner changes a setting, pauses, resumes or asks for status →
+  - the owner changes a setting, pauses, resumes or asks for setup status →
     `meetly-setup`, "After setup";
   - pending requests or contact preferences → `meetly-pipeline`;
   - in-person preparation → `meetly-travel`; for a busy exact time in this DM,

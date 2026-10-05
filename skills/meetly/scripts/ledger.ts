@@ -516,6 +516,7 @@ if (isMain(import.meta.url)) {
         hours: { type: "string" },
         "lead-min": { type: "string" },
         status: { type: "string" },
+        scope: { type: "string" },
         kind: { type: "string" },
         action: { type: "string" },
       },
@@ -524,7 +525,22 @@ if (isMain(import.meta.url)) {
     const now = Date.now();
     switch (cmd) {
       case "find": {
+        if (values.scope !== undefined && !["open", "all"].includes(values.scope)) throw new Error("--scope must be open or all");
         const ledger = readJson<Ledger>(path, EMPTY);
+        // Status questions and edits need every matching meeting, including
+        // completed bookings and closed requests. The caller resolves ambiguity.
+        if (values.scope === "all") {
+          if (values.status !== undefined && !STATUSES.includes(values.status as Status)) throw new Error(`--status must be ${STATUSES.join(", ")}`);
+          const handle = values.handle === undefined ? undefined : normalizeHandle(values.handle);
+          const name = values.name?.trim().toLowerCase();
+          const chat = values.chat?.trim().replace(/^plow:/, "");
+          return { requests: ledger.requests.filter(r =>
+            (values.id === undefined || r.id === values.id) &&
+            (handle === undefined || sameHandle(r.handle, handle)) &&
+            (name === undefined || r.name?.trim().toLowerCase() === name) &&
+            (chat === undefined || r.chatUid === chat) &&
+            (values.status === undefined || r.status === values.status)) };
+        }
         if (values.chat !== undefined) {
           const chat = values.chat.trim().replace(/^plow:/, "");
           return { request: findByChat(ledger, chat, values.handle) ?? null };
@@ -539,7 +555,7 @@ if (isMain(import.meta.url)) {
           if (matches.length > 1) throw new Error("Ambiguous guest name; ask the owner which meeting they mean.");
           return { request: matches[0] ?? null };
         }
-        throw new Error("usage: ledger.ts find --handle H [--status asked|offered] | --chat U | --name N");
+        throw new Error("usage: ledger.ts find --scope all [--id X | --handle H | --name N | --chat U] [--status S] | --handle H [--status asked|offered] | --chat U | --name N");
       }
       case "add": {
         const input = jsonArg(values);

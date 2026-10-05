@@ -491,3 +491,42 @@ for (const command of ["add", "save", "update"]) test(`public ledger ${command} 
     }
   }
 });
+
+
+test("all-scope lookup includes booked and closed meetings without replacing open-only lookup", t => {
+  const home = tmpHome(), env = { MEETLY_HOME: home };
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const ledger = addRequest(empty(), input({ name: "Lex Moore", origin: "owner", chatUid: "lex-group" }), T0, "booked");
+  ledger.requests[0] = { ...ledger.requests[0]!, status: "booked", eventId: "event-one",
+    booked: { start: offer.start, end: offer.end, account: offer.account } };
+  for (const status of ["asked", "offered", "dropped", "expired"] as const) {
+    ledger.requests.push({ ...ledger.requests[0]!, id: status, status, chatUid: status === "asked" ? undefined : `lex-${status}` });
+  }
+  writeJson(join(home, "ledger.json"), ledger);
+  const before = readFileSync(join(home, "ledger.json"), "utf8");
+  for (const filter of [[], ["--handle", "+1 (555) 123-4567"], ["--name", " LEX MOORE "]]) {
+    const found = cli("ledger.ts", ["find", "--scope", "all", ...filter], env);
+    assert.equal(found.status, 0, found.stderr);
+    assert.deepEqual(found.json.requests.map((r: { id: string }) => r.id), ["booked", "asked", "offered", "dropped", "expired"]);
+    assert.equal(found.json.requests[0].eventId, "event-one");
+  }
+  const exact = cli("ledger.ts", ["find", "--scope", "all", "--id", "booked"], env);
+  assert.equal(exact.json.requests[0].status, "booked");
+  assert.equal(exact.json.requests.length, 1);
+  const chat = cli("ledger.ts", ["find", "--scope", "all", "--chat", "plow:lex-group"], env);
+  assert.deepEqual(chat.json.requests.map((r: { id: string }) => r.id), ["booked"]);
+  assert.deepEqual(cli("ledger.ts", ["find", "--scope", "all", "--id", "missing"], env).json, { requests: [] });
+  assert.deepEqual(cli("ledger.ts", ["find", "--scope", "all", "--id", "booked", "--handle", "+15557654321"], env).json, { requests: [] });
+  assert.equal(cli("ledger.ts", ["find", "--handle", "+15551234567"], env).json.request.status, "asked");
+  assert.equal(readFileSync(join(home, "ledger.json"), "utf8"), before);
+});
+
+test("meeting lookup rejects an unknown scope or status rather than silently narrowing results", t => {
+  const home = tmpHome(), env = { MEETLY_HOME: home };
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  writeJson(join(home, "ledger.json"), empty());
+  const scope = cli("ledger.ts", ["find", "--scope", "booked", "--handle", "+15551234567"], env);
+  assert.match(scope.stderr, /scope must be open or all/);
+  const status = cli("ledger.ts", ["find", "--scope", "all", "--status", "confirmed"], env);
+  assert.match(status.stderr, /status must be/);
+});

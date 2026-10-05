@@ -35,6 +35,7 @@ export function gateContext(stdout) {
     return [
       "Meetly setup check, already run for this turn (setup-status.ts): READY.",
       "Do not run setup-status.ts again this turn. Handle the owner's message as \"How Meetly works\" says.",
+      "Before answering meeting status or an attendee edit, read ledger.ts find --scope all in this turn and match the meeting by person, topic and context. This includes booked and closed requests; earlier DM offers are not current state. An attendee email is the person to add/remove, not necessarily the meeting's existing guest handle. Use meetly-confirm and apply the requested change before confirming it.",
       `setup-status.ts output: ${JSON.stringify(status)}`,
     ].join("\n");
   }
