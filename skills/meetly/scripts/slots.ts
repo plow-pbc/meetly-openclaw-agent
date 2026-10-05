@@ -293,6 +293,7 @@ if (isMain(import.meta.url)) {
         week: { type: "string" },
         asap: { type: "boolean" },
         "allow-overlap": { type: "string", multiple: true },
+        "no-overlap": { type: "boolean", default: false },
         exclude: { type: "string", multiple: true },
         count: { type: "string" },
         at: { type: "string" },
@@ -354,6 +355,7 @@ if (isMain(import.meta.url)) {
       q.locale ??= request.locale;
       q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);
     }
+    if (values["no-overlap"]) q.allowOverlap = [];
     if (values.at !== undefined) {
       for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "start-time", "week", "asap"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);

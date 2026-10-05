@@ -48,6 +48,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
       throw new Error("request belongs to another conversation");
     }
     const config = loadConfig(), now = Date.now();
+    if (config.paused) throw new Error("Scheduling is paused.");
     const { topic, format } = args;
     const location = args.location ?? existing?.location;
     const meal = args.meal ?? existing?.meal;

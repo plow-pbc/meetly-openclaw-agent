@@ -131,7 +131,7 @@ test("DM recipient selection precedes calendar access while current groups use r
   assert.ok(offer.includes("In the current group, call `meetly_offer_owner_group`"));
   assert.ok(offer.includes("never supply `offered` intervals"));
   assert.doesNotMatch(offer, /`--allow-overlap`/);
-  assert.ok(group.includes("slots.ts --at <pendingOwner.start> --request <id>"));
+  assert.ok(group.includes("calendar.ts approve-time --id <id>"));
   assert.ok(offer.includes("If none is known, ask the owner for a phone; if several match, ask which one. In either case, ask in the owner's main DM and end the turn."));
   const owner = group.slice(group.indexOf("## Owner request"), group.indexOf("## Asked requests"));
   assert.ok(owner.includes("first run `ledger.ts find --name <guest name>`"));
@@ -196,7 +196,8 @@ test("every booking uses the calendar writer instead of recording a separate mut
   const group = groupSkill();
   assert.ok(group.includes("calendar.ts book --id <request id>"));
   assert.ok(group.includes("Never write booking fields with `ledger.ts update` yourself"));
-  assert.ok((group.match(/following "Book the event"/g) ?? []).length >= 3);
+  assert.ok(group.includes("calendar.ts approve-time --id <id>"));
+  assert.ok((group.match(/following "Book the event"/g) ?? []).length >= 2);
   for (const { dir, path } of skillFiles) {
     assert.ok(!readFileSync(path, "utf8").includes('"status":"booked"'), `${dir} books by hand`);
   }
@@ -329,6 +330,12 @@ test("duration changes refresh the topic used for calendar titles and group labe
   assert.ok(group.includes('"30-minute call" becomes "60-minute call"'));
 });
 
+test("owner approval re-check uses the saved meeting duration and meal", () => {
+  const group = groupSkill();
+  const approval = group.slice(group.indexOf("## Owner confirms"), group.indexOf("## Existing meetings"));
+  assert.ok(approval.includes("calendar.ts approve-time --id <id>"));
+});
+
 test("an owner introduction waits without asking the group to plan a meeting", () => {
   const group = groupSkill();
   assert.ok(group.includes("Adding Alder, my scheduling agent, to find us a time"));
@@ -342,10 +349,36 @@ test("guest-proposed terms are never repeated publicly for owner confirmation", 
   assert.ok(p.includes("Never repeat a guest's proposed terms in the group to ask the owner to confirm"));
   assert.ok(p.includes("Use the private scheduling approval tools for an existing request, or ignore the proposal"));
 });
+test("private event titles stay in the owner DM even after overlap approval", () => {
+  const p = flat(prompt), group = groupSkill();
+  assert.ok(p.includes("Private calendar event titles may be discussed only in the owner's DM"));
+  assert.ok(p.includes("Never include them in any group message, even when the owner named the event or approved an overlap"));
+  assert.ok(group.includes("Overlap permission does not authorize sharing the event title in the group"));
+});
+
 test("the agent display name is its conversation identity, never another person", () => {
   const p = flat(prompt);
   assert.ok(p.includes("The owner's name for you and the agent line display name refer to you, never another person"));
   assert.ok(p.includes('Never tell anyone to ask, contact or wait for that name'));
+});
+
+test("owner overlap permission re-offers and never implies a booking choice", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("Overlap permission alone is not a time selection"));
+  assert.ok(group.includes('"Noon is fine, it can overlap my other event" grants permission to offer noon, not to book it'));
+  assert.ok(flat(prompt).includes("Never book on overlap permission"));
+  assert.ok(group.includes("use `meetly_offer_owner_dm` with `allowOverlapTitles` to resolve the named permission, re-offer and hold times, then let the guest choose"));
+  assert.ok(group.includes("On an owner turn, run `calendar.ts book` only when the owner explicitly selects a time"));
+  assert.ok(group.includes("Never write `allowOverlap` with the ledger CLI"));
+  assert.ok(group.includes("For an overlap re-offer, use `slots.ts --near <owner-authorized start> --request <id>`"));
+});
+
+test("time approvals cannot infer overlap permission and busy times get nearest free alternatives", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("this approves the time only if free, never an overlap"));
+  assert.ok(group.includes("Never read conflict titles to invent permission"));
+  assert.ok(group.includes("slots.ts --near <near> --request <id> --no-overlap"));
+  assert.ok(group.includes("tell the owner in their DM that the time is busy"));
 });
 
 test("other-times instructions distinguish rejected slots from named excluded days", () => {
