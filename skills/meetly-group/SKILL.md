@@ -72,8 +72,9 @@ before searching, keeping any hard conditions they did not change.
    locale>`, with the request's `constraints` (the owner's) and, on its
    first offer, its `proposed` times: `--days`, `--after`, `--before`,
    `--from`/`--to`, and `--duration` for an explicit owner-requested length.
-   Otherwise use the saved duration, falling back to the meal default or `config.durationMin`. Slots stay inside the
-   owner's days and window; constraints only narrow them.
+   Otherwise use the saved duration, falling back to the meal default or `config.durationMin`. Slots use the owner's days
+   and lunch/dinner meal windows (otherwise configured hours); an explicit owner start replaces the default window.
+   Constraints only narrow these times.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
      If `constraints` block it, tell the owner which one and suggest
