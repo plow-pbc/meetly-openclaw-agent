@@ -7,7 +7,7 @@ import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { findPreferredSlots, resolveSearchConstraints, preferredSearchCoverage, type SearchTiming } from "./slots.ts";
 import { view } from "./request-view.ts";
-import { checkContact, ContactConfirmationRequired, requireDuration, findOpenByHandle, intersectConstraints, normalizeHandle, sameHandle, type Ledger, type Constraints } from "./ledger.ts";
+import { checkContact, ContactConfirmationRequired, requireDuration, findOpenByHandle, normalizeHandle, sameHandle, type Ledger, type Constraints } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
@@ -82,7 +82,8 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     }
     const config = loadConfig(), now = Date.now();
     if (config.paused) throw new Error("Scheduling is paused.");
-    const { topic, format, location } = args;
+    const { topic, format } = args;
+    const location = args.location ?? existing?.location;
     const meal = args.meal ?? existing?.meal;
     const durationMin = requireDuration(args.durationMin);
     const locale = args.locale ?? existing?.locale;
@@ -90,7 +91,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
       return { error: "week resolves dates itself; omit proposed.from and proposed.to" };
     }
     const hard = conditions(resolveSearchConstraints(conditions(args.constraints) ?? {}, args.week, now, config.timezone));
-    const constraints = hard ? intersectConstraints(existing?.constraints, hard) : existing?.constraints;
+    const constraints = args.constraints === undefined && args.week === undefined ? existing?.constraints : hard;
     const proposed = conditions(args.proposed) ?? (existing?.status === "asked" ? existing.proposed : undefined);
     const travel = existing?.travel?.override ? existing.travel : args.travel ?? existing?.travel;
     const search = { travel, format: format ?? existing?.format, ...constraints, now, config, meal, durationMin, locale, asap: args.asap, busy: [] };
