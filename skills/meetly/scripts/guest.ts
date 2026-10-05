@@ -93,21 +93,6 @@ async function pick(request: Request, config: Config, start: string) {
   return { ...view(request, config), invitationSent: !!email, overlappedWithOwnerApproval: checked.overlap };
 }
 
-// Tool arguments may encode a weekday object as JSON inside a string.
-function otherTimesStart(start: GuestArgs["start"]): GuestArgs["start"] {
-  if (typeof start === "string") {
-    const text = start.trim();
-    if (/^(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)$/i.test(text)) {
-      return { weekday: text.slice(0, 3).toLowerCase() as WeekdayTime["weekday"] };
-    }
-    if (text.startsWith("{")) start = JSON.parse(text);
-  }
-  if (start && typeof start === "object" && typeof start.time === "string" && !start.time.trim()) {
-    return { ...start, time: undefined };
-  }
-  return start;
-}
-
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
   if (typeof args.offer_week !== "boolean") {
     const message = "Set offer_week explicitly: true for that week or the same week; false when the guest asks for a new date range or a broader search. Include every named unavailable weekday in excludedDays. No search or holds were made; retry with this scope.";
@@ -117,19 +102,17 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     const message = "For that week, keep offer_week: true and omit next_week entirely. Retain excludedDays and any preferred weekday. next_week is only for a new week relative to a source timestamp, with offer_week: false. No search or holds were made; retry using only the intended scope.";
     return { error: message, code: "DATE_SCOPE_CONFLICT", recovery: { action: "retry", message } };
   }
-  args = { ...args, start: otherTimesStart(args.start) };
   const preferred = preferences(args, config.timezone);
   const newlyExcluded = preferences({ days: args.excludedDays }, config.timezone).days ?? [];
   const restored = preferences({ days: args.restoredDays }, config.timezone).days ?? [];
   if (newlyExcluded.some(day => restored.includes(day))) throw new Error("a weekday cannot be both excluded and restored");
   const excludedDays = [...new Set([...(request.excludedDays ?? []).filter(day => !restored.includes(day)), ...newlyExcluded])];
   const availableDays = { days: DAYS.filter(day => !excludedDays.includes(day)) };
-  const relative = args.offer_week === true || typeof args.start === "object" || (!args.start && args.days?.length && !args.from && !args.to && !args.next_week);
-  const window = relative ? offerDateWindow(request.offered, config.timezone) : undefined;
+  const window = args.offer_week ? offerDateWindow(request.offered, config.timezone) : undefined;
   const bounds = intersectConstraints(intersectConstraints(request.constraints, window), availableDays);
   if (args.excludedDays !== undefined || args.restoredDays !== undefined) request = patch(request, { excludedDays });
   let start = args.start;
-  if (typeof start === "object" && !start.time?.trim()) {
+  if (typeof start === "object" && start.time === undefined) {
     preferred.from = preferred.to = resolveWeekday({ weekday: start.weekday }, request.offered, config.timezone);
     start = undefined;
   }
@@ -142,7 +125,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     const { days, from, to } = bounds;
     const allowedDay = withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, { days, from, to });
     if (allowedDay && checked.free && checked.outsideHours) return askOwner(request, config, { start: checked.slot.start }, sendOwner);
-    if (checked.free && withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) exact = checked.slot;
+    if (checked.free && withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, bounds)) exact = checked.slot;
     preferred.from = preferred.to = checked.slot.start.slice(0, 10);
     preferred.after = checked.slot.start.slice(11, 16);
     preferred.before = checked.slot.end.slice(11, 16);
@@ -160,7 +143,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   const fallbacks = preferred.from && preferred.to && preferred.from < preferred.to
     ? [{ ...query, from: narrowed.from, to: narrowed.to }, query] : [query];
   const { slots, preferencesUnavailable, incomplete } = exact ? { slots: [exact], preferencesUnavailable: false, incomplete: undefined } : findPreferredSlots(query, preferred, fallbacks);
-  if (incomplete) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current offer is unchanged.", code: "INCOMPLETE_CALENDAR", incomplete };
+  if (incomplete && !slots.length) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current offer is unchanged.", code: "INCOMPLETE_CALENDAR", incomplete };
   if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
   const { origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {

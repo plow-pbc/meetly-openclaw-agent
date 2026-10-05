@@ -340,7 +340,8 @@ if (isMain(import.meta.url)) {
       q.exclude = values.exclude;
     }
     if (request) {
-      const narrowed = intersectConstraints(request.constraints, q);
+      const { from: _from, to: _to, ...savedPolicy } = request.constraints ?? {};
+      const narrowed = intersectConstraints(values.week === undefined ? request.constraints : savedPolicy, q);
       Object.assign(q, narrowed);
       q.days = (q.days ?? DAYS).filter(day => !request.excludedDays?.includes(day));
       q.meal ??= request.meal;

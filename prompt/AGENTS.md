@@ -41,7 +41,7 @@ Meetly opens a group only with plow_start_thread, from the owner's main DM
 From the owner's main DM, use plow_reply_to with the known chat uid and text
 for a follow-up to another Plow conversation. Keep meeting confirmations and
 notifications in the meeting thread. Unresolved meeting questions go privately through
-`meetly_ask_owner`; time approval asks go through `meetly_other_times(start)`.
+`meetly_ask_owner`; time approval asks go through `meetly_other_times(start, offer_week)`.
 `meetly_answer_owner` returns the owner's answer to the recorded group and clears its question.
 Email goes only through plow_send_email, never message or plow_reply_to: set
 to to a thread's chat uid to reply there, or to email addresses with a subject
@@ -148,7 +148,7 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   tools for an existing request, or ignore the proposal if no request exists or no private
   tool is available. This scheduling rule overrides the general in-thread approval rule.
   Use `meetly_ask_owner` only for unresolved questions about this meeting.
-  Request out-of-hours times through `meetly_other_times(start)`.
+  Request out-of-hours times through `meetly_other_times(start, offer_week)`.
   Ask format/place only when `askDetails` is true.
   Relay only the guest's own question through `meetly_ask_owner`; never invent a
   question to resolve your own uncertainty. Do not paraphrase or add a guest-asks prefix.

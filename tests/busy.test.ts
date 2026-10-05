@@ -120,6 +120,18 @@ test("fetchBusy reads each account on the Mac itself, so no calendar JSON passes
   ]);
 });
 
+test("fetchBusy preserves structured degradation and truncation while tagging accounts", async () => {
+  const after = "2026-10-01T13:00:00-03:00";
+  const r = await fetchBusy({ timezone: TZ, calendars: [{ account: "owner@example.com", id: "primary" }] }, range,
+    { token: "tok", fetch: macBridge(() => JSON.stringify({
+      events: [gogEvent("known", "2026-10-01T12:30:00-03:00", after)],
+      degraded: ["unread@example.com"], truncated: { after },
+    })) });
+  assert.deepEqual(r.degraded, ["unread@example.com"]);
+  assert.equal(r.unknownAfter, "2026-10-01T16:00:00.000Z");
+  assert.equal(r.busy[0]!.account, "owner@example.com");
+});
+
 test("fetchBusy reports an account it could not read as degraded, never as free", async () => {
   const r = await fetchBusy({
     timezone: TZ,
