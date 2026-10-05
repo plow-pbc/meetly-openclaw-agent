@@ -12,3 +12,17 @@ Required reads: new owner requests → group; in-person preparation or travel-no
 These branches split the formerly 4,553-word group skill by flow. Reconcile with preview's existing split instead of adding duplicate flows. Keep each skill below 2,000 words and AGENTS near 1,500 words/10k characters. Keep preview's explicit-duration work; do not restore meal-based duration overrides from the older branch.
 
 Validation: six regression cases fail against ef47915 and pass with the changes; full suites pass (travel 532, movable 549). GLM 5.2 fixture replays used 95 calls against a cap of 96, with no live calendar/message execution. Final travel cases ask for the base, resize travel only, and hand exhausted alternatives to the owner. Movable now inspects and asks before offering, but the last replay sent the same permission question via `message` and final text. Routing now agrees with the base contract: send once with `message`, then `NO_REPLY`; that final wording has not been re-replayed. The fixture also accepted a malformed `slots --at` call with search filters and no travel; real code rejects it. The owner flow now spells out the exact check command and excludes search filters. QA must verify valid arguments, validation recovery and single delivery on the merged preview. Failed intermediate runs are retained at `notes/qa-evidence/travel-movable-fixes/` in the kitchen workspace.
+
+## V4 follow-up
+
+In v4, `meetly-group`, "Owner request", routes a named person without a handle to
+`ledger.ts find --name` and then Contacts. That lookup excludes booked meetings.
+The travel correction now stays in a self-contained booked-list → calendar travel
+→ private result flow. Keep the group guard before its recipient lookup; replace
+v4's existing Owner corrections section with this branch's version.
+
+Replay overlays must preserve v4's explicit-duration code, pipeline split and
+`meetly_offer_owner_dm` overlap grant. Apply only these targeted sections rather
+than copying older feature-branch skills wholesale. Evidence and overlay recipe:
+`notes/preview4-flow-fixes/` in the kitchen workspace. These are captured-image
+fixture replays, not a rebuilt or deployed preview.
