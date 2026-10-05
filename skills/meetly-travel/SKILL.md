@@ -54,7 +54,9 @@ Never guess from the topic for other meetings. An external video link stays in
 
 Save their language tag as `locale`. In the owner DM, record format/place answers with
 `meetly_set_owner_format`, the matched `requestId`,
-`format`, `location` when present and explicit `travel`. Its `effectiveTravel` is the
+`format`, `location` when present, explicit `travel` and a guest-facing `confirmation`
+without travel details. It delivers that confirmation after the write for text requests;
+do not send it again when `guestConfirmation.delivered` is true. Its `effectiveTravel` is the
 committed value after applying the saved owner override. Never quote the submitted
 estimate or repeat the already delivered private note. For owner group turns, record answers with `calendar.ts format
 --id <id> --json '{"format":"<format>","location":"<place>","travel":{"beforeMin":25,"afterMin":25}}'`;
