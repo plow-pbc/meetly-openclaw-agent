@@ -63,7 +63,9 @@ export function registerGuestTools(api, execute = run, outbound = loadOutbound) 
     api.registerTool(context => ({
       name, label: name, description, parameters,
       async execute(_id, args) {
-        const result = await execute(context, action, cleanArgs(args, parameters.required), text => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound));
+        let result = await execute(context, action, cleanArgs(args, parameters.required), text => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound));
+        if ("error" in result) result = { ...result, code: result.code ?? "SCHEDULING_REJECTED",
+          recovery: result.recovery ?? { action: result.silent ? "silent" : "reply", retry: false, message: result.error } };
         return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       },
     }));

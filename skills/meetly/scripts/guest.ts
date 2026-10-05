@@ -7,7 +7,7 @@ import { findByChat, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, upd
 import { file } from "./paths.ts";
 import { checkTime, findPreferredSlots, preferredSearchCoverage, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
-import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, type WeekdayTime } from "./time.ts";
+import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
 
 export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
@@ -38,7 +38,9 @@ const holds = (request: Request): HoldRef[] => request.offered.flatMap(o => o.ho
 // Recheck the guest's authorized snapshot inside the writer lock. A concurrent
 // booking or replacement must not turn a guest pick into an owner-style move.
 function unchanged(request: Request, latest: Request): void {
-  if (JSON.stringify(request) !== JSON.stringify(latest)) throw new Error("request changed");
+  // Reserving a format question changes delivery metadata, not scheduling authority.
+  const snapshot = ({ detailsAskedAt: _details, updatedAt: _updated, ...state }: Request) => state;
+  if (!latest || JSON.stringify(snapshot(request)) !== JSON.stringify(snapshot(latest))) throw new Error("request changed");
 }
 
 const write = (request: Request, action: CalendarAction) => calendarAction(request.id, action, {
@@ -109,11 +111,11 @@ function otherTimesStart(start: GuestArgs["start"]): GuestArgs["start"] {
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
   if (typeof args.offer_week !== "boolean") {
     const message = "Set offer_week explicitly: true for that week or the same week; false when the guest asks for a new date range or a broader search. Include every named unavailable weekday in excludedDays. No search or holds were made; retry with this scope.";
-    return { error: message, code: "DATE_SCOPE_REQUIRED" };
+    return { error: message, code: "DATE_SCOPE_REQUIRED", recovery: { action: "retry", retry: true, message } };
   }
   if (args.offer_week && args.next_week !== undefined) {
     const message = "For that week, keep offer_week: true and omit next_week entirely. Retain excludedDays and any preferred weekday. next_week is only for a new week relative to a source timestamp, with offer_week: false. No search or holds were made; retry using only the intended scope.";
-    return { error: message, code: "DATE_SCOPE_CONFLICT" };
+    return { error: message, code: "DATE_SCOPE_CONFLICT", recovery: { action: "retry", retry: true, message } };
   }
   args = { ...args, start: otherTimesStart(args.start) };
   const preferred = preferences(args, config.timezone);
@@ -231,8 +233,20 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
     return await pick(request, config, args.start);
-  } catch {
+  } catch (error) {
+    if (error instanceof WeekdayDateRequired) return { error: error.message, code: "DATE_REQUIRED",
+      recovery: { action: "ask_date", retry: false } };
+    const message = error instanceof Error ? error.message : "";
+    const code = message === "request changed" ? "REQUEST_CHANGED"
+      : message === "calendar unavailable" ? "CALENDAR_UNAVAILABLE"
+      : /calendar (?:operation|write) unresolved/.test(message) ? "CALENDAR_WRITE_PENDING" : "SCHEDULING_FAILED";
+    // Keep the exception in local diagnostics; never relay backend details to guests.
+    console.error(`meetly guest ${action} failed (${code}):`, error);
     // Backend output can contain private event details, contact data, and accounts.
-    return { error: "The scheduling action could not be completed. Check the request before trying again." };
+    return { error: "The scheduling action could not be completed.", code,
+      recovery: code === "REQUEST_CHANGED" ? { action: "view_request", tool: "meetly_view_request", retry: false }
+        : { action: "reply", retry: false, message: code === "CALENDAR_WRITE_PENDING"
+          ? "The calendar update is still pending. Please wait for confirmation."
+          : "I couldn't update the meeting times. Please try again later." } };
   }
 }

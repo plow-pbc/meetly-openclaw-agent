@@ -1298,3 +1298,24 @@ test("oversized guest coverage is rejected before calendar reads or hold changes
   assert.deepEqual(f.request().offered, f.ledger.requests[0]!.offered);
   assert.deepEqual(f.request().excludedDays, ["tue"]);
 });
+
+test("a detail-question reservation during search does not invalidate the scheduling snapshot", async t => {
+  const f = fixture(t);
+  f.hooks.before = async () => {
+    f.hooks.before = undefined;
+    await guestAction(context, "view");
+  };
+  const result = await f.act(context, "other_times", { after: "11:00" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal("askDetails" in result && result.askDetails, false);
+});
+
+test("guest calendar failures return a safe terminal recovery through the plugin", async t => {
+  const f = fixture(t);
+  f.fail.add("events");
+  const result = await f.tools.get("meetly_other_times")!.execute("call", {});
+  const detail = JSON.parse(result.content[0]!.text);
+  assert.equal(detail.code, "CALENDAR_UNAVAILABLE");
+  assert.deepEqual(detail.recovery, { action: "reply", retry: false, message: "I couldn't update the meeting times. Please try again later." });
+  assert.doesNotMatch(JSON.stringify(detail), /PRIVATE|owner@example.com/);
+});
