@@ -6,6 +6,8 @@
 //
 // Plain JavaScript on purpose: the image ships it as is, with no build step,
 // and preboot copies it into the state volume's plugin root on every boot.
+import { registerPipelineHooks } from "./pipeline.js";
+import { ownerTurns } from "./owner-turn.js";
 import { calendarPolicy } from "./calendar-policy.js";
 import { execFile } from "node:child_process";
 import { guestTurns } from "./guest-turn.js";
@@ -94,14 +96,16 @@ export default {
   name: "Meetly",
   description: "Guest scheduling tools and the owner DM setup check.",
   register(api) {
+    registerPipelineHooks(api);
     registerGuestTools(api);
     registerOwnerTools(api);
     registerOwnerGroupTool(api);
     registerOwnerDmTool(api);
-    api.on("before_tool_call", (event, ctx) => { guestTurns.beforeTool(event, ctx); return calendarPolicy(event, ctx); });
-    api.on("agent_end", guestTurns.end);
+    api.on("before_tool_call", (event, ctx) => { ownerTurns.beforeTool(event, ctx); guestTurns.beforeTool(event, ctx); return calendarPolicy(event, ctx); });
+    api.on("agent_end", (event, ctx) => { guestTurns.end(event, ctx); ownerTurns.end(event, ctx); });
     api.on("before_prompt_build", async (_event, ctx) => {
       guestTurns.begin(ctx);
+      ownerTurns.begin(ctx);
       if (!isOwnerDmTurn(ctx)) return undefined;
       let context;
       try {

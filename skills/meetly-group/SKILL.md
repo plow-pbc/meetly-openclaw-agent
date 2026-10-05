@@ -155,6 +155,8 @@ closed requests; for a pending question, time approval or booked meeting use `me
 Otherwise follow "Offer times" with the group tool; it resolves the recipient, so do
 not look up Contacts or ask for a phone.
 
+Before DM offers: `pipeline.ts contact --handle <handle>`. Flagged contacts need private confirmation (`meetly-pipeline`), then `--confirm-contact`. In groups, use `meetly_offer_owner_group` for the check and private handoff; never separately read or discuss contact preferences. `silent` means no reply.
+
 In the owner's DM, choose the request path from the owner's message:
 - A scheduling request with a phone or email handle is a new request. Use that handle
   to resolve the recipient and follow "Offer times". Do not search by name, list existing
