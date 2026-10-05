@@ -323,10 +323,19 @@ test("unanswerable guest questions and owner answers in the thread stay silent",
   assert.match(descriptions.get("meetly_ask_owner")!, /Scheduling questions you can answer stay in the group/);
   assert.match(descriptions.get("meetly_ask_owner")!, /For question handoffs, stay silent in the group/);
   assert.match(descriptions.get("meetly_answer_owner")!, /clears silently without sending or acknowledging/);
-  assert.match(descriptions.get("meetly_ask_owner")!, /When silent is true, end the turn without a group reply/);
+  assert.match(descriptions.get("meetly_ask_owner")!, /When silent is true and there is no separate scheduling result, end the turn without a group reply/);
   assert.ok(confirmSkill().includes("clears silently without sending or acknowledging"));
   assert.ok(flat(prompt).includes('On every silent turn, output nothing: no commentary, status text or "(Silent — …)" explanation'));
   assert.ok(confirmSkill().includes("leave the unrelated pending question open and output nothing"));
+});
+
+test("owner format changes reach the guest and visible answers still clear their question", () => {
+  const confirm = confirmSkill();
+  assert.ok(confirm.includes('outcome: "calendar_change"'));
+  assert.ok(confirm.includes("tell the guest the new format/place once"));
+  assert.ok(confirm.includes("Do not acknowledge completion in the DM before guest delivery"));
+  assert.ok(flat(prompt).includes("A normal reply or silence does not resolve the ledger"));
+  assert.ok(flat(prompt).includes("never another scheduling outcome in the same guest turn"));
 });
 
 test("owner answers apply calendar changes before clearing the question", () => {
@@ -358,7 +367,7 @@ test("owner-started groups introduce Meetly and name the owner in the first repl
 
 test("owner group turns keep the script flow and answers use the recorded thread", () => {
   const group = groupSkill();
-  assert.ok(flat(prompt).includes('**Owner in a group:** use `meetly-group`, "Owner request"'));
+  assert.ok(flat(prompt).includes('**Owner in a group:** first run `ledger.ts find --chat <runtime chat uid>`'));
   assert.ok(group.includes('`ledger.ts find --chat <runtime chat uid>` first, including booked or closed requests'));
   assert.ok(confirmSkill().includes("verify its `chatUid` is this chat before acting"));
   assert.ok(confirmSkill().includes("In the owner's DM, run `ledger.ts pending`"));

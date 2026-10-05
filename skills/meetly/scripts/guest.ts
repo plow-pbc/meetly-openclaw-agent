@@ -114,13 +114,15 @@ async function check(request: Request, config: Config, requested: string | Weekd
   return { ...checked, overlap };
 }
 
-async function notifyOwner(request: Request, config: Config, change: "moved" | "cancelled" | "travel", sendOwner?: SendOwner, note = travelNote(request)) {
-  const when = localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(request.booked!.start));
+async function notifyOwner(request: Request, config: Config, change: "moved" | "cancelled" | "declined" | "travel", sendOwner?: SendOwner, note = travelNote(request)) {
+  const when = request.booked ? localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(request.booked.start)) : undefined;
   const subject = `${request.topic} with ${request.name ?? request.handle}`;
   if (change === "travel" && !note) return {};
-  const text = change === "travel" ? note! : change === "moved" ? `${subject} moved to ${when} (${config.timezone}).${note ? ` ${note}` : ""}`
+  const text = change === "declined" ? `${request.name ?? request.handle} declined ${request.topic}; the scheduling request was dropped.${request.holdCleanup?.length ? " Hold cleanup is pending." : ""}`
+    : change === "travel" ? note! : change === "moved" ? `${subject} moved to ${when} (${config.timezone}).${note ? ` ${note}` : ""}`
     : request.holdCleanup?.length ? `${request.name ?? request.handle} requested cancellation of ${request.topic} on ${when} (${config.timezone}); calendar cleanup is pending.`
     : `${request.name ?? request.handle} cancelled ${request.topic} on ${when} (${config.timezone}).`;
+  if (change === "declined" && request.channel === "email") return { ownerNotice: text };
   try {
     if (!sendOwner) throw new Error("owner messaging unavailable");
     await sendOwner(text);
@@ -305,7 +307,8 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     if (action === "decline") {
       const booked = request.status === "booked";
       request = (await write(request, { action: request.status === "booked" ? "cancel" : "drop" })).request;
-      return { ...view(request, config), ...(booked ? await notifyOwner(request, config, "cancelled", sendOwner) : { message: "I've cancelled this scheduling request." }) };
+      return { ...view(request, config), ...await notifyOwner(request, config, booked ? "cancelled" : "declined", sendOwner),
+        ...(!booked ? { message: "I've cancelled this scheduling request." } : {}) };
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };

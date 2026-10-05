@@ -106,7 +106,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const outbound = async () => ({
     buildOutboundSessionContext: (args: object) => args,
     sendDurableMessageBatch: async (args: Record<string, any>) => {
-      assert.ok(read().requests[0]!.pendingOwner || read().requests[0]!.booked, "save the question or booking change before sending");
+      assert.ok(read().requests[0]!.pendingOwner || read().requests[0]!.booked || read().requests[0]!.status === "dropped", "save the question or scheduling change before sending");
       deliveries.push(args);
       if (delivery.fail) throw new Error("PRIVATE TRANSPORT ERROR");
       ownerLines.push(args.payloads[0].text);
@@ -401,6 +401,22 @@ test("decline drops the open request, clears approval, deletes holds and queues 
   assert.equal(f.request().status, "dropped"); assert.equal(f.request().pendingOwner, undefined);
   assert.deepEqual(f.request().holdCleanup, [{ holdId: "hold-two", account: "owner@example.com" }]);
   assert.equal(f.commands.filter(c => c[2] === "delete").length, 2);
+});
+
+for (const fail of [false, true]) test(`an unbooked decline notifies the owner once: failure=${fail}`, async t => {
+  const f = fixture(t);
+  let sends = 0;
+  const send = async (text: string) => {
+    sends++;
+    assert.equal(f.request().status, "dropped");
+    assert.match(text, /Guest declined.*Lunch/);
+    if (fail) throw new Error("delivery unavailable");
+  };
+  const result = await guestAction(context, "decline", {}, send) as { ownerNotified: boolean };
+  assert.equal(result.ownerNotified, !fail);
+  assert.equal(sends, 1);
+  await guestAction(context, "decline", {}, send);
+  assert.equal(sends, 1);
 });
 
 test("an outside-hours refusal can proceed to owner approval without dropping or booking the request", async t => {
@@ -1200,6 +1216,7 @@ for (const [action, args] of actions.filter(([action]) => action !== "ask_owner"
   assert.equal(f.request().channel, "email");
   assert.equal(f.request().chatUid, context.nativeChannelId);
   assert.equal(f.ownerLines.length, 0);
+  if (action === "decline") assert.ok("ownerNotice" in result && typeof result.ownerNotice === "string" && /declined.*dropped/.test(result.ownerNotice));
   if (action === "pick") {
     assert.equal("invitationSent" in result && result.invitationSent, true);
     const booking = f.commands.find(argv => argv.includes("--attendees"))!;

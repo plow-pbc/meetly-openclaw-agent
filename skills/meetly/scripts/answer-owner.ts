@@ -3,7 +3,7 @@ import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type Args = { requestId?: string; askedAt?: string; text?: string; emailSent?: boolean };
+type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change"; emailSent?: boolean };
 
 export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: string, text: string) => Promise<void>): Promise<object> {
   const chat = resolveOwnerChat(ctx, ["chat", "email"]);
@@ -11,6 +11,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     return { error: "Only the owner's own Plow turn can answer a meeting question." };
   }
   if (typeof args.text !== "string" || !args.text.trim()) return { error: "Provide the owner's answer." };
+  if (!["answer", "calendar_change"].includes(args.outcome ?? "")) return { error: "Choose outcome: answer or calendar_change after a successful calendar write." };
   const path = file("ledger.json");
   const ledger = readJson<Ledger>(path, { requests: [] });
   const request = ledger.requests.find(r => r.id === args.requestId);
@@ -21,7 +22,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (!(ctx.agentAccountId === "chat" && ctx.sessionKey === "agent:main:main") && !inGroup) {
     return { error: "Answer from the owner's main DM or this request's group." };
   }
-  const alreadyVisible = inGroup && "question" in pending;
+  const alreadyVisible = inGroup && "question" in pending && args.outcome === "answer";
   const emailReceipt = request.channel === "email" && args.emailSent === true;
   if (emailReceipt && !pending.answerAttemptedAt) return { error: "No email answer attempt to confirm." };
   if (!alreadyVisible && !emailReceipt) {
@@ -40,7 +41,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
       message: "Send this answer with plow_send_email. Only after sent: true, call meetly_answer_owner again with these same fields and emailSent: true. Unknown delivery stays pending; do not resend." };
   }
   try {
-    // A question answer is already visible in the group; a time decision still needs its booking result.
+    // The owner's words may already be visible, but a calendar change still needs its result delivered.
     if (!alreadyVisible && request.channel !== "email") await send(request.chatUid, args.text.trim());
   } catch {
     return { error: "Answer delivery is unknown. The question remains pending; do not resend automatically." };
