@@ -116,6 +116,10 @@ same `travel` to offers. Never expose the base or travel in a group.
 6. Deliver the times:
    - If this is your first reply in an owner-started group, introduce yourself
      as "<agentName>, <ownerName>'s scheduling assistant" in their language with the offer.
+     If you already introduced yourself, including on an earlier introduction-only
+     turn, give just the offer. A new request or first offer does not restart introductions.
+     Set the group tool's `introduction` to `already_introduced` in that case,
+     or `needed` if this conversation has no introduction yet; follow its reply instruction.
    - A request with `chatUid`: post the new times there.
    - Otherwise, in the owner's DM, run `ledger.ts delivery --id <saved request id>
      --kind start --action begin` exactly once, immediately before sending.

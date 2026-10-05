@@ -10,6 +10,7 @@ import { calendarPolicy } from "./calendar-policy.js";
 import { execFile } from "node:child_process";
 import { registerPipelineHooks } from "./pipeline.js";
 import { guestTurns } from "./guest-turn.js";
+import { ownerTurns } from "./owner-turn.js";
 import { registerGuestTools } from "./guest-tools.js";
 import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool, registerMovableTool } from "./owner-tools.js";
 
@@ -103,6 +104,7 @@ export default {
     registerMovableTool(api);
     api.on("before_prompt_build", async (_event, ctx) => {
       guestTurns.begin(ctx);
+      ownerTurns.begin(ctx);
       if (!isOwnerDmTurn(ctx)) return undefined;
       let context;
       try {
@@ -115,7 +117,13 @@ export default {
       api.logger.info(context ? `meetly setup gate prepended: ${context.split("\n")[0]}` : "meetly setup gate: unreadable status; prompt fallback applies");
       return context ? { prependContext: context } : undefined;
     });
-    api.on("before_tool_call", (event, ctx) => calendarPolicy(event) ?? guestTurns.beforeTool(event, ctx));
-    api.on("agent_end", guestTurns.end);
+    api.on("before_tool_call", (event, ctx) => {
+      ownerTurns.beforeTool(event, ctx);
+      return calendarPolicy(event) ?? guestTurns.beforeTool(event, ctx);
+    });
+    api.on("agent_end", (event, ctx) => {
+      guestTurns.end(event, ctx);
+      ownerTurns.end(event, ctx);
+    });
   },
 };

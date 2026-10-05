@@ -22,14 +22,16 @@ export async function sendOwnerTravel(text: string, options: ApiOptions = {}): P
   }
 }
 
-type Result = { ownerTravelNote?: string; results?: Result[]; [key: string]: unknown };
+type Result = { ownerTravelNote?: string; travelOnly?: boolean; results?: Result[]; [key: string]: unknown };
 export async function calendarOutput(result: Result, sendOwner = sendOwnerTravel): Promise<Record<string, unknown>> {
-  const output = withoutPrivateTravel(result) as Record<string, unknown>;
+  const { travelOnly, ...publicResult } = result;
+  const output = withoutPrivateTravel(publicResult) as Record<string, unknown>;
   if (result.results) output.results = await Promise.all(result.results.map(item => calendarOutput(item, sendOwner)));
   if (result.ownerTravelNote) {
     try {
       await sendOwner(result.ownerTravelNote);
       output.ownerNotified = true;
+      if (travelOnly) output.ownerReply = { action: "silent", message: "Finish with exactly NO_REPLY. The travel update was already delivered privately; do not repeat or summarize it." };
     } catch {
       output.ownerNotified = false;
       output.ownerNotificationWarning = "owner-notification-unconfirmed";

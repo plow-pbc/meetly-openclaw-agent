@@ -21,8 +21,10 @@ flow, read `meetly-group`, look up Contacts or search open requests.
    Use the owner's minutes; one symmetric estimate changes both sides. This preserves
    meeting start/end and duration. The override wins over later estimates for this
    meeting; a virtual format needs explicit zero.
-3. The writer sends the travel note directly to the owner DM. On success, finish;
-   do not repeat that note. On error, report it privately without claiming a change.
+3. The writer sends the travel note directly to the owner DM. When it returns
+   `ownerReply.action: "silent"`, finish with exactly `NO_REPLY`: no second message,
+   summary or acknowledgement. If `ownerNotified: false`, report only that delivery
+   is unconfirmed, without retrying the write or send. On a write error, report it privately without claiming a change.
    Do not notify the guest or create an offer.
 
 When a format/place change cannot fit, keep the booking and ask whether the owner

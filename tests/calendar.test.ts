@@ -998,6 +998,7 @@ test("calendar CLI delivers travel privately and returns no travel data to its c
   })], { ...f.options, sendOwner: async text => { sent.push(text); } });
   assert.doesNotMatch(JSON.stringify(result), /beforeMin|afterMin|ownerTravelNote|travelEvents|Held 10|say if/);
   assert.equal(result.ownerNotified, true);
+  assert.equal(result.ownerReply, undefined, "format changes still need their meeting confirmation");
   assert.equal(sent.length, 1);
   assert.match(sent[0]!, /Held 10 min travel before and 10 min after/);
   assert.deepEqual(f.read().travel, { beforeMin: 10, afterMin: 10 });
@@ -1005,6 +1006,21 @@ test("calendar CLI delivers travel privately and returns no travel data to its c
   const resumed = await calendarCommand(["resume", "--id", "r_one"], { ...f.options, sendOwner: async text => { sent.push(text); } });
   assert.doesNotMatch(JSON.stringify(resumed), /beforeMin|afterMin|ownerTravelNote|travelEvents/);
   assert.equal(sent.length, 1, "resuming a completed write cannot duplicate the DM");
+});
+
+for (const delivered of [true, false]) test(`a travel-only correction suppresses a second owner reply only after delivery: ${delivered}`, async t => {
+  const f = fixture(t, "group-with-guest");
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Library", travel: { beforeMin: 10, afterMin: 10 } }, f.options);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  let sends = 0;
+  const result = await calendarCommand(["travel", "--id", "r_one", "--json", JSON.stringify({
+    travel: { beforeMin: 30, afterMin: 15, override: true },
+  })], { ...f.options, sendOwner: async () => { sends++; if (!delivered) throw new Error("unknown delivery"); } });
+  assert.equal(sends, 1);
+  assert.equal(result.ownerNotified, delivered);
+  assert.equal((result.ownerReply as { action?: string } | undefined)?.action, delivered ? "silent" : undefined);
+  assert.equal(f.read().booked!.start, start);
+  assert.equal(f.read().travel!.beforeMin, 30);
 });
 
 test("ledger CLI never returns private travel in booked or group lookups", async t => {
