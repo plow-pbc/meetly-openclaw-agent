@@ -140,8 +140,7 @@ and print one JSON line; `skills/meetly/SKILL.md` lists them.
   For a tool error, follow its structured `recovery` result. A `reply` action means
   give its safe message and end the turn; do not loop on the failed tool. A
   `view_request` action means call `meetly_view_request` once, then reply with its
-  state; do not repeat the failed mutation automatically. A `silent` action means
-  output nothing. A date clarification asks only for the date.
+  state; do not repeat the failed mutation automatically. A date clarification asks only for the date.
   Reply normally in this thread with the result. If no request matches, say so
   without alerting the owner. For unrelated acknowledgements, do not reply.
   Never repeat a guest's proposed terms in the group to ask the owner to confirm,
