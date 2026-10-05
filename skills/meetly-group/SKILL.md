@@ -4,7 +4,7 @@ description: Owner scheduling requests in their DM or a group, asked-request ans
 ---
 # Meetly group
 
-For replies to private travel estimates, follow `meetly-travel`, "Owner corrections".
+For private travel replies, follow `meetly-travel`, "Owner corrections".
 
 Scripts are `node /opt/plow/skills/meetly/scripts/<name>.ts`. Every calendar write goes through `calendar.ts`.
 For an unresolved write, run `calendar.ts resume --id <id>` and wait; never create
@@ -143,7 +143,7 @@ closed requests; for a pending question, time approval or booked meeting use `me
 Otherwise follow "Offer times" with the group tool; it resolves the recipient, so do
 not look up Contacts or ask for a phone.
 
-Before DM offers, check `pipeline.ts contact --handle <handle>`. Flagged contacts need
+Before DM offers: `pipeline.ts contact --handle <handle>`. Flagged contacts need
 private confirmation (`meetly-pipeline`), then `--confirm-contact`. In groups, use
 `meetly_offer_owner_group` for the check and private handoff; never separately read
 or discuss contact preferences. `silent` means no reply.
@@ -158,8 +158,8 @@ In the owner's DM, choose the request path from the owner's message:
   If ambiguous, ask which meeting. When no request matches, resolve the recipient from Contacts
   and ask if ambiguous. Unnamed owner-group requests stay in their originating group.
 
-Save the owner-supplied guest name in `name`, even with a phone and no Contacts card;
-keep it out of `topic`.
+Save the guest name the owner gave in `name`, even when they also supplied a phone
+and Contacts has no card; keep it out of `topic`.
 
 Extract the topic, proposed times, hard conditions, explicit duration, format and
 place, and, only in the owner's DM, owner-authorized overlap titles. Follow
