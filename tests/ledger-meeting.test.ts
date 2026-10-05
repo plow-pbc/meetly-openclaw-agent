@@ -223,3 +223,25 @@ test("CLI saves format, lists booked fixtures due for reminders and marks them s
   assert.equal(url.status, 1);
   assert.match(url.stderr, /meetUrl/);
 });
+
+test("email channel validates the address and survives reoffers without moving threads", () => {
+  const email = input({ channel: "email", handle: "ANA@example.net", chatUid: "email-thread" });
+  const first = addRequest(empty(), email, T0, "email");
+  assert.equal(first.requests[0]!.channel, "email");
+  assert.equal(first.requests[0]!.handle, "ana@example.net");
+  assert.throws(() => addRequest(empty(), input({ channel: "email" }), T0, "bad"), /email address/);
+  assert.throws(() => addRequest(empty(), input({ channel: "fax" }), T0, "bad"), /channel/);
+  assert.throws(() => saveRequest(first, { ...email, channel: "text" }, T0, "other"), /change channel/);
+  assert.throws(() => saveRequest(first, { ...email, chatUid: "another-thread" }, T0, "other"), /another chat/);
+  assert.throws(() => updateRequest(first, "email", { chatUid: "another-thread" }, T0), /another chat/);
+  const { channel, chatUid, ...again } = email;
+  const next = saveRequest(first, again, T0, "other").requests[0]!;
+  assert.equal(next.channel, "email");
+  assert.equal(next.chatUid, "email-thread");
+});
+
+test("email Meet links do not enter the phone reminder queue", () => {
+  const ledger = bookedMeet();
+  ledger.requests[0]!.channel = "email";
+  assert.deepEqual(dueReminders(ledger, START - 5 * MIN, 10), []);
+});

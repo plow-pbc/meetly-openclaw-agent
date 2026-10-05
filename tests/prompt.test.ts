@@ -43,8 +43,8 @@ test("AGENTS.md renders the conversation identity and keeps the base's tool and 
   assert.ok(prompt.includes("Meetly poll."));
 });
 
-test("the six Meetly skills exist", () => {
-  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-group", "meetly-pipeline", "meetly-poll", "meetly-setup"]);
+test("the seven Meetly skills exist", () => {
+  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-email", "meetly-group", "meetly-pipeline", "meetly-poll", "meetly-setup"]);
 });
 
 test("every skill has frontmatter naming its directory and a description", () => {
