@@ -6,6 +6,10 @@ description: Handle new owner scheduling requests and replacement offers in DMs 
 
 For owner turns and scheduled upkeep. Guest turns use the scheduling tools.
 
+For replies to your private travel estimate, follow `meetly-travel`, "Owner
+corrections": list bookings, resize travel, finish privately. The recipient lookup
+and offer flow below are for scheduling requests.
+
 Scripts are `node /opt/plow/skills/meetly/scripts/<name>.ts`. Mac commands go
 through Latch's `plow_run_command` (the tool name may be server-prefixed),
 following the Mac's `contacts` and `google-workspace` skills for their exact

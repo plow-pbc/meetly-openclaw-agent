@@ -10,3 +10,17 @@ In preview bb147ce, reconcile these conflicts rather than retaining both rules:
 Required reads: new owner requests → group; in-person preparation or travel-note replies → travel; busy preferred owner-DM time → travel/movable before `--near`; booking changes/owner answers → confirm; email delivery → email; pipeline/asked requests → manage. Link each at its decision point, not after delivery. Preserve the inspect-first rule from feat/meetly-movable when merging the split skills. Never relay private bases or blocker titles to guests.
 
 These branches split the formerly 4,553-word group skill by flow. Reconcile with preview's existing split instead of adding duplicate flows. Keep each skill below 2,000 words and AGENTS near 1,500 words/10k characters. Keep preview's explicit-duration work; do not restore meal-based duration overrides from the older branch.
+
+## V4 follow-up
+
+In v4, `meetly-group`, "Owner request", routes a named person without a handle to
+`ledger.ts find --name` and then Contacts. That lookup excludes booked meetings.
+The travel correction now stays in a self-contained booked-list → calendar travel
+→ private result flow. Keep the group guard before its recipient lookup; replace
+v4's existing Owner corrections section with this branch's version.
+
+Replay overlays must preserve v4's explicit-duration code, pipeline split and
+`meetly_offer_owner_dm` overlap grant. Apply only these targeted sections rather
+than copying older feature-branch skills wholesale. Evidence and overlay recipe:
+`notes/preview4-flow-fixes/` in the kitchen workspace. These are captured-image
+fixture replays, not a rebuilt or deployed preview.

@@ -6,6 +6,31 @@ description: Handle replies to private travel estimates, including bare numeric 
 
 Scripts are `node /opt/plow/skills/meetly/scripts/<name>.ts`. Calendar writes use `calendar.ts`.
 
+## Owner corrections
+
+A reply to your private travel estimate stays in this flow. Resolve its subject
+from the conversation: a bare number changes travel unless the owner explicitly
+identifies meeting length. This is an existing booking; do not enter the new-request
+flow, read `meetly-group`, look up Contacts or search open requests.
+
+1. Run `node /opt/plow/skills/meetly/scripts/ledger.ts booked` without flags.
+   Match the returned bookings by person, topic and conversation. If none matches
+   or more than one could match, ask privately which booking and stop.
+2. Copy the matched `id` into
+   `node /opt/plow/skills/meetly/scripts/calendar.ts travel --id <id> --json '{"travel":{"beforeMin":45,"afterMin":45,"override":true}}'`.
+   Use the owner's minutes; one symmetric estimate changes both sides. This preserves
+   meeting start/end and duration. The override wins over later estimates for this
+   meeting; a virtual format needs explicit zero.
+3. On success, relay `ownerTravelNote` in this DM and finish. On error, report it
+   privately without claiming a change. Do not notify the guest or create an offer.
+
+When a format/place change cannot fit, keep the booking and search replacement times
+with the proposed format and explicit travel, preserving owner conditions. Offer returned
+slots; if none fit, ask the owner privately which condition to relax. Do not repeat the
+failed change or claim no alternatives before searching.
+
+## Base
+
 Use `config` from this turn's `setup-status.ts` output. An omitted `travelBase`
 means no base is saved, even if meetings already exist; ask rather than inventing a getter.
 Ask the owner privately for their home/office base and stop before searching or offering
@@ -50,20 +75,3 @@ on moves and deletes them on cancellation.
 After successful booking/resizing, relay `ownerTravelNote` privately using the DM
 from `owner-chat.ts`; never include travel in guest/group replies. Guest tools send
 that note themselves; do not duplicate it.
-
-## Owner corrections
-
-Resolve the subject from the conversation before changing anything. A short numeric
-reply to your private travel note corrects that estimate unless the owner identifies
-meeting duration. Match the booked request through `ledger.ts booked`. If the referent
-is genuinely ambiguous, clarify privately. For a travel correction, use
-`calendar.ts travel --id <id> --json '{"travel":{"beforeMin":45,"afterMin":45,"override":true}}'`
-with the owner's chosen minutes; a single symmetric estimate changes both sides.
-This changes only travel, preserving the meeting's start/end and duration. A saved
-override wins over later estimates for this meeting; a virtual format needs explicit zero.
-Do not notify the guest of a private travel correction.
-
-When a format/place change cannot fit, keep the booking and search replacement times
-with the proposed format and explicit travel, preserving owner conditions. Offer returned
-slots; if none fit, ask the owner privately which condition to relax. Do not repeat the
-failed change or claim no alternatives before searching.
