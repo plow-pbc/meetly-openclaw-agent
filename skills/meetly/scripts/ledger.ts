@@ -123,10 +123,12 @@ function checkFormat(format: unknown): void {
 }
 
 function checkLocale(locale: unknown): void {
-  if (typeof locale !== "string" || !locale.trim() || locale.length > 35) {
+  try {
+    if (typeof locale !== "string" || !locale.trim() || locale.length > 35) throw new Error();
+    new Intl.DateTimeFormat(locale);
+  } catch {
     throw new Error(`locale must be a language tag like pt-BR, got ${JSON.stringify(locale)}`);
   }
-  new Intl.DateTimeFormat(locale);
 }
 
 function checkBooked(b: Booked): void {
