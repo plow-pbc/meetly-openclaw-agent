@@ -9,6 +9,11 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      promote_latest:
+        description: Promote this image to latest
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -41,10 +46,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ env.PACKAGE_NAME }}
+          flavor: latest=false
           tags: |
             type=sha
             type=ref,event=tag
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && inputs.promote_latest }}
 
       # The published base image is linux/amd64 only, and so is Plow.
       - id: build
@@ -59,7 +65,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Check out pinned replay tooling
-        if: github.ref == 'refs/heads/preview/meetly-v4'
+        if: (github.ref == 'refs/heads/preview/meetly-v4' || github.ref == 'refs/heads/preview/meetly-v5')
         uses: actions/checkout@v4
         with:
           ref: 442936c45e1b82dd48215dd35ab00084bcec81ba
@@ -67,7 +73,7 @@ jobs:
           sparse-checkout: evals/replay
 
       - name: Capture the published image on native amd64
-        if: github.ref == 'refs/heads/preview/meetly-v4'
+        if: (github.ref == 'refs/heads/preview/meetly-v4' || github.ref == 'refs/heads/preview/meetly-v5')
         env:
           IMAGE: ghcr.io/${{ github.repository_owner }}/${{ env.PACKAGE_NAME }}@${{ steps.build.outputs.digest }}
         run: |
@@ -85,7 +91,7 @@ jobs:
           node .preview-replay/evals/replay/capture.mjs --image "$IMAGE" --out preview-capture --keep
 
       - name: Save preview capture and runtime logs
-        if: always() && github.ref == 'refs/heads/preview/meetly-v4'
+        if: always() && (github.ref == 'refs/heads/preview/meetly-v4' || github.ref == 'refs/heads/preview/meetly-v5')
         run: |
           mkdir -p preview-capture
           for container in $(docker ps -aq --filter name=meetly-replay-capture); do
@@ -94,7 +100,7 @@ jobs:
           done
 
       - name: Upload preview smoke evidence
-        if: always() && github.ref == 'refs/heads/preview/meetly-v4'
+        if: always() && (github.ref == 'refs/heads/preview/meetly-v4' || github.ref == 'refs/heads/preview/meetly-v5')
         uses: actions/upload-artifact@v4
         with:
           name: preview-capture
