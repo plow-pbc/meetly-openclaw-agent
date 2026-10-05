@@ -9,10 +9,11 @@ import { travelRange, type TravelInput } from "./travel.ts";
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
-import { allowsOverlap, covers, uniqueEvents, type Coverage, type EventRef, type Busy } from "./busy.ts";
+import { allowsOverlap, covers, fetchBusy, uniqueEvents, type BusyResult, type Coverage, type EventRef, type Busy } from "./busy.ts";
 import { requestEvents, intersectConstraints, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
-import { readJson, writeJson } from "./store.ts";
+import { LAST_BUSY, unpinBusyStart, type LastBusy } from "./last-busy.ts";
+import { readJson, updateJson, writeJson } from "./store.ts";
 import { addDays, DAYS, formatMeetingTime, localIso, nextWeek, wallParts, zonedToUtc, type Day } from "./time.ts";
 
 export type Slot = { start: string; end: string; dayOfWeek: Day; label: string; confirmationTime: string };
@@ -142,9 +143,30 @@ export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}
   return { ...result, preferencesUnavailable };
 }
 
-// The last owner exact-time check that found the time busy.
-export const LAST_BUSY = "tmp/last-busy.json";
-export type LastBusy = { slot: { start: string; end: string }; requestId?: string; format?: string; travel?: unknown; checkedAt: string };
+
+// Days either side of a busy exact time that its alternatives may use.
+export const NEARBY_DAYS = 2;
+
+/**
+ * Free times nearest a busy exact time: that day and NEARBY_DAYS either side,
+ * within the owner's hours and the query's day/hour conditions, never pinned to
+ * the asked clock time. Reads the calendar when the caller's busy list does not
+ * cover that range.
+ */
+export async function nearbyAlternatives(q: SlotQuery, start: string, own: EventRef[] = [],
+  read: (range: Coverage) => Promise<BusyResult> = range => fetchBusy(q.config, range)): Promise<Slot[]> {
+  const day = localIso(Date.parse(start), q.config.timezone).slice(0, 10);
+  const query: SlotQuery = { ...q, from: shiftDate(day, -NEARBY_DAYS), to: shiftDate(day, NEARBY_DAYS), near: start,
+    startTime: undefined, ownerStartTime: undefined, week: undefined, asap: undefined };
+  const needed = searchCoverage(query);
+  if (!covers(q.coverage, needed)) {
+    const fetched = await read(needed);
+    if (fetched.degraded.length) return [];
+    const busy = fetched.busy.filter(b => !own.some(o => o.account === b.account && o.id === b.id));
+    Object.assign(query, { busy, coverage: fetched.coverage, unknownAfter: fetched.unknownAfter });
+  }
+  return findSlots(query).slots;
+}
 
 export function findSlots(q: SlotQuery): SlotResult {
   const { config, now } = q;
@@ -293,7 +315,7 @@ function date(raw: string, flag: string): string {
 }
 
 if (isMain(import.meta.url)) {
-  run(() => {
+  run(async () => {
     const { values } = parseArgs({
       options: {
         in: { type: "string" },
@@ -392,7 +414,10 @@ if (isMain(import.meta.url)) {
       // meetly_movable inspects this slot when the model calls it without candidates.
       if (busy) writeJson(file(LAST_BUSY), { slot: { start: result.slot.start, end: result.slot.end }, requestId: request?.id,
         format: q.format, travel: q.travel, checkedAt: new Date(now).toISOString() } satisfies LastBusy);
-      const alternatives = busy ? findSlots({ ...q, near: values.at }).slots : undefined;
+      if (busy && request?.constraints?.startTime) updateJson<Ledger>(file("ledger.json"), { requests: [] }, l => ({ requests: l.requests.map(r =>
+        r.id === request.id ? { ...r, constraints: unpinBusyStart(r.constraints, config.timezone, now) } : r) }));
+      const alternatives = busy ? await nearbyAlternatives(q, result.slot.start,
+        request ? requestEvents(request).map(o => ({ account: o.account, id: o.holdId })) : []) : undefined;
       const next = busy ? {
         ownerMainDM: "Call the meetly_movable tool with action inspect; it inspects this slot. Read meetly-travel. If a blocker looks flexible, ask once privately, finish NO_REPLY and wait for a new owner message. While awaiting that answer, do not search, grant overlap or offer. Otherwise offer the alternatives in this reply. Past permission is not a new answer.",
         otherChats: "Offer the alternatives without inspecting or disclosing private blockers.",
