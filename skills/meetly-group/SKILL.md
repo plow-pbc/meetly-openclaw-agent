@@ -30,6 +30,15 @@ writes and delivery; never invent or retype an id from memory or a session slug.
 
 ## Read the calendar
 
+In the owner’s main DM, read `meetly-travel`, "Flexible blockers", before searching
+alternatives to a busy preferred time. Use `slots.ts --at <time>` with the same
+format/travel to check that exact candidate. Inspect with `meetly_movable` before
+`--near`. If a blocker looks flexible, ask once privately, finish `NO_REPLY` and
+wait for a new owner message; previous decisions never authorize overlap. Only
+if no blocker looks flexible or the owner refuses should you search alternatives.
+Group and guest requests use alternatives without private inspection.
+
+
 Run `busy.ts --fetch`. Only in the owner's DM, for events they explicitly allowed
 overlapping, add `--allow-overlap-title <owner-supplied event name>` for each name.
 It checks every configured calendar on the Mac, writes
@@ -101,8 +110,14 @@ before searching, keeping any hard conditions they did not change.
    exclude this request's own holds. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
    first offer, its `proposed` times: `--days`, `--after`, `--before`,
-   `--from`/`--to`, `--duration`. For a busy requested time, use `--near <requested ISO start>`
-   instead, keeping hard conditions such as "only at 11:30", and offer in the returned order.
+   `--from`/`--to`, `--duration`. Check an exact candidate with
+   `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --at <ISO> --duration <minutes>
+   --format <format> --travel '<estimate>'` (plus `--request <id>` for saved requests).
+   `--at` rejects search filters: no days/after/before/from/to/exclude/count/near.
+   If busy in the owner's main DM, use the inspection flow above before `--near` or offers.
+   A permission question ends this turn. Ask before searching unrequested alternatives;
+   once authorized use `--near <requested ISO start>`, keeping hard conditions such as
+   "only at 11:30", and offer in the returned order.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
      If `constraints` block it, tell the owner which one and suggest
@@ -183,9 +198,10 @@ and Contacts has no card; keep it out of `topic`.
 
 Extract the topic, proposed times, hard conditions, explicit duration, format and
 place, and, only in the owner's DM, owner-authorized overlap titles. Follow
-"Offer times" with `origin: owner`. If a requested time is busy, say there is an
-existing commitment and offer the nearest available times right away; do not ask
-whether to search or schedule over the conflict. Confirm the offer once in its meeting thread.
+"Offer times" with `origin: owner`, including its inspection and wait branch for busy
+preferred times. Inspect also when few free options fit. Ask before searching
+unrequested alternatives; preserve duration, travel and hard conditions. State the
+time zone and confirm the offer once in its meeting thread.
 
 For an owner-requested duration change on an open request, read busy times and run
 `slots.ts --request <saved id> --duration <minutes>` with the busy file and saved
