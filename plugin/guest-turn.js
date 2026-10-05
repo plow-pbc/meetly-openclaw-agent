@@ -10,7 +10,7 @@ export function createGuestTurns() {
       }
     },
     beforeTool(event, ctx) {
-      if (event.toolName !== "meetly_pick_time") return;
+      if (!["meetly_view_request", "meetly_pick_time", "meetly_other_times", "meetly_set_format", "meetly_ask_owner", "meetly_decline"].includes(event.toolName)) return;
       const runId = ctx.runId ?? event.runId;
       const run = runs.get(runId);
       const id = ctx.toolCallId ?? event.toolCallId;
@@ -18,8 +18,21 @@ export function createGuestTurns() {
     },
     take(sessionKey, id) {
       const call = calls.get(id);
-      calls.delete(id);
       return call && call.sessionKey === sessionKey ? call.startedAt : undefined;
+    },
+    reply(sessionKey, id, action, result) {
+      const call = calls.get(id);
+      calls.delete(id);
+      const run = call && call.sessionKey === sessionKey ? runs.get(call.runId) : undefined;
+      if (!run) return result;
+      if (["pick", "other_times", "format", "decline"].includes(action) && !result.error && result.status) {
+        run.schedulingResult = result;
+      }
+      // Silence belongs to the question handoff, not a completed scheduling action.
+      if (action === "ask_owner" && result.silent && run.schedulingResult) {
+        return { ...result, silent: false, schedulingResult: run.schedulingResult };
+      }
+      return result;
     },
     end(_event, ctx) {
       runs.delete(ctx.runId);
