@@ -6,7 +6,7 @@ export function createGuestTurns() {
   return {
     begin(ctx) {
       if (ctx.runId && ctx.sessionKey && !runs.has(ctx.runId)) {
-        runs.set(ctx.runId, { sessionKey: ctx.sessionKey });
+        runs.set(ctx.runId, { sessionKey: ctx.sessionKey, startedAt: Date.now() });
       }
     },
     beforeTool(event, ctx) {
@@ -15,6 +15,10 @@ export function createGuestTurns() {
       const run = runs.get(runId);
       const id = ctx.toolCallId ?? event.toolCallId;
       if (id && run && run.sessionKey === ctx.sessionKey) calls.set(id, { ...run, runId });
+    },
+    take(sessionKey, id) {
+      const call = calls.get(id);
+      return call && call.sessionKey === sessionKey ? call.startedAt : undefined;
     },
     reply(sessionKey, id, action, result) {
       const call = calls.get(id);

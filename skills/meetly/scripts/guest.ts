@@ -3,14 +3,14 @@ import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
-import { findByChat, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { currentOffers, requestEvents, findByChat, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { checkTime, findPreferredSlots, preferredSearchCoverage, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
-import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, type WeekdayTime } from "./time.ts";
+import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, wallParts, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
 
-export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
+export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
 export type GuestArgs = Constraints & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string };
 type SendOwner = (text: string) => Promise<void>;
@@ -34,9 +34,8 @@ function patch(request: Request, change: Patch): Request {
     .requests.find(r => r.id === request.id)!;
 }
 
-const holds = (request: Request): HoldRef[] => request.offered.flatMap(o => o.holdId ? [{ holdId: o.holdId, account: o.account }] : []);
 // Recheck the guest's authorized snapshot inside the writer lock. A concurrent
-// booking or replacement must not turn a guest pick into an owner-style move.
+// booking or replacement must not authorize a pick from a stale offer.
 function unchanged(request: Request, latest: Request): void {
   // Reserving a format question changes delivery metadata, not scheduling authority.
   const snapshot = ({ detailsAskedAt: _details, updatedAt: _updated, ...state }: Request) => state;
@@ -47,11 +46,11 @@ const write = (request: Request, action: CalendarAction) => calendarAction(reque
   validate: latest => unchanged(request, latest),
 });
 
-// Remove only this request's own holds, including their account, from busy time.
+// Remove only this request's holds and booked event, with their accounts.
 async function busyFor(request: Request, config: Config, from: string, to: string): Promise<BusyResult> {
   const result = await fetchBusy(config, { from, to });
   if (result.degraded.length) throw new Error("calendar unavailable");
-  return { ...result, busy: result.busy.filter(b => !holds(request).some(h => h.holdId === b.id && h.account === b.account)) };
+  return { ...result, busy: result.busy.filter(b => !requestEvents(request).some(h => h.holdId === b.id && h.account === b.account)) };
 }
 
 function preferences(args: GuestArgs, timezone: string): Constraints {
@@ -70,7 +69,7 @@ function preferences(args: GuestArgs, timezone: string): Constraints {
 
 async function check(request: Request, config: Config, requested: string | WeekdayTime) {
   if (typeof requested === "object" && requested.time === undefined) throw new Error("An exact time is required");
-  const start = typeof requested === "string" ? requested : resolveWeekday(requested, request.offered, config.timezone);
+  const start = typeof requested === "string" ? requested : resolveWeekday(requested, request.reoffer?.offered ?? request.offered, config.timezone);
   const query = { now: Date.now(), config, meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
   const { slot } = checkTime({ ...query, busy: [] });
   const busy = await busyFor(request, config, slot.start, slot.end);
@@ -80,13 +79,40 @@ async function check(request: Request, config: Config, requested: string | Weekd
   return { ...checked, overlap };
 }
 
-async function pick(request: Request, config: Config, start: string) {
+async function notifyOwner(request: Request, config: Config, change: "moved" | "cancelled" | "declined", sendOwner?: SendOwner) {
+  const when = request.booked ? localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(request.booked.start)) : undefined;
+  const subject = `${request.topic} with ${request.name ?? request.handle}`;
+  const text = change === "declined" ? `${request.name ?? request.handle} declined ${request.topic}; the scheduling request was dropped.${request.holdCleanup?.length ? " Hold cleanup is pending." : ""}`
+    : change === "moved" ? `${subject} moved to ${when} (${config.timezone}).`
+    : request.holdCleanup?.length ? `${request.name ?? request.handle} requested cancellation of ${request.topic} on ${when} (${config.timezone}); calendar cleanup is pending.`
+    : `${request.name ?? request.handle} cancelled ${request.topic} on ${when} (${config.timezone}).`;
+  try {
+    if (!sendOwner) throw new Error("owner messaging unavailable");
+    await sendOwner(text);
+    return { ownerNotified: true };
+  } catch {
+    return { ownerNotified: false, warning: "owner-notification-unconfirmed" };
+  }
+}
+
+async function pick(request: Request, config: Config, start: string, sendOwner?: SendOwner, turnStartedAt?: number) {
   const requested = checkTime({ now: Date.now(), config, busy: [], start,
     meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin }).slot.start;
-  const offer = request.offered.find(o => Date.parse(o.start) === Date.parse(requested));
+  const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(requested));
   if (!offer) return { error: "Choose one of the currently offered start times." };
+  // Only a replacement held before this run can represent the guest's choice.
+  if (request.status === "booked" && !(Number.isFinite(turnStartedAt)
+    && Date.parse(request.reoffer!.offeredAt) < turnStartedAt!)) {
+    return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
+  }
   const checked = await check(request, config, offer.start);
   if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available. Ask for other times." };
+  if (request.status === "booked") {
+    const result = await write(request, { action: "book", start: offer.start, end: offer.end });
+    request = result.request;
+    return { ...view(request, config), invitationUpdated: "invitationUpdated" in result && result.invitationUpdated === true,
+      overlappedWithOwnerApproval: checked.overlap, ...await notifyOwner(request, config, "moved", sendOwner) };
+  }
   const contact = await lookupContact(request.handle);
   const email = request.handle.includes("@") ? request.handle : contact.found && contact.matches === 1 ? contact.emails[0] : undefined;
   request = (await write(request, { action: "book", start: offer.start, attendees: email })).request;
@@ -125,17 +151,22 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   const excludedDays = [...new Set([...(request.excludedDays ?? []).filter(day => !restored.includes(day)), ...newlyExcluded])];
   const availableDays = { days: DAYS.filter(day => !excludedDays.includes(day)) };
   const relative = args.offer_week === true || typeof args.start === "object" || (!args.start && args.days?.length && !args.from && !args.to && !args.next_week);
-  const window = relative ? offerDateWindow(request.offered, config.timezone) : undefined;
+  const window = relative ? offerDateWindow(request.reoffer?.offered ?? request.offered, config.timezone) : undefined;
   const bounds = intersectConstraints(intersectConstraints(request.constraints, window), availableDays);
   if (args.excludedDays !== undefined || args.restoredDays !== undefined) request = patch(request, { excludedDays });
   let start = args.start;
   if (typeof start === "object" && !start.time?.trim()) {
-    preferred.from = preferred.to = resolveWeekday({ weekday: start.weekday }, request.offered, config.timezone);
+    preferred.from = preferred.to = resolveWeekday({ weekday: start.weekday }, request.reoffer?.offered ?? request.offered, config.timezone);
     start = undefined;
   }
+  const bookedDate = request.status === "booked" && request.booked
+    ? localIso(Date.parse(request.booked.start), config.timezone).slice(0, 10) : undefined;
+  let requestedBookedDate = bookedDate !== undefined && (preferred.from === preferred.to && preferred.from === bookedDate
+    || args.days?.length === 1 && args.days[0] === wallParts(Date.parse(request.booked!.start), config.timezone).weekday);
   let exact: Slot | undefined;
   if (start) {
     const checked = await check(request, config, start);
+    requestedBookedDate = checked.slot.start.slice(0, 10) === bookedDate;
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) {
       return { error: "That weekday was ruled out. Choose a different day." };
     }
@@ -149,7 +180,8 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   const now = Date.now();
   const query: SlotQuery = { busy: [], ...bounds, now, config,
-    meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
+    excludeDates: bookedDate && !requestedBookedDate ? [bookedDate] : [],
+    meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
   const range = preferredSearchCoverage(query, preferred);
   Object.assign(query, await busyFor(request, config, range.from, range.to));
   const narrowed = intersectConstraints(bounds, preferred);
@@ -238,14 +270,16 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
       const result = await askOwner(request, config, { question: args.question }, sendOwner, "guest-question");
       return { ...result, silent: true };
     }
-    if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
+    if (request.status !== "offered" && request.status !== "booked") return view(request, config);
     if (action === "decline") {
-      request = (await write(request, { action: "drop" })).request;
-      return { ...view(request, config), message: "I've cancelled this scheduling request." };
+      const booked = request.status === "booked";
+      request = (await write(request, { action: request.status === "booked" ? "cancel" : "drop" })).request;
+      return { ...view(request, config), ...await notifyOwner(request, config, booked ? "cancelled" : "declined", sendOwner),
+        ...(!booked ? { message: "I've cancelled this scheduling request." } : {}) };
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
-    return await pick(request, config, args.start);
+    return await pick(request, config, args.start, sendOwner, ctx.turnStartedAt);
   } catch (error) {
     if (error instanceof WeekdayDateRequired) return { error: error.message, code: "DATE_REQUIRED",
       recovery: { action: "ask_date", retry: false } };

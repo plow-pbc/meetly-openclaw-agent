@@ -6,13 +6,14 @@ const run = async (context, args, send) => {
 };
 
 export function registerOwnerTools(api, execute = run, outbound) {
-  const required = ["requestId", "askedAt", "text"];
+  const required = ["requestId", "askedAt", "text", "outcome"];
   api.registerTool(context => ({
     name: "meetly_answer_owner", label: "Answer a meeting question",
-    description: "Resolve a pending meeting question or time approval from the owner's own answer. First match ledger.ts pending by person and topic. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. For a question in that same group, the owner's answer is already visible: clears silently without sending or acknowledging. When silent is true, output nothing: no group reply, commentary or \"(Silent — …)\" note. Owner only. For time approvals, first run calendar.ts approve-time: a yes never authorizes overlap. If busy, tell the owner privately and offer nearest free alternatives without conflict titles, then call this tool with the result; it sends the result once even in the group and clears the approval.",
+    description: "Resolve a pending meeting question or time approval from the owner's own answer. First match ledger.ts pending by person and topic. In a group, read ledger.ts find --chat for this chat and call this tool when the owner answers its pending question, even when their answer is already visible. Never substitute a normal reply or silence for clearing the pending question. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. Choose outcome=answer for words only, or calendar_change after applying a meeting change through calendar.ts. For a question in that same group, outcome=answer clears silently without sending or acknowledging; calendar_change sends its confirmed result once before clearing. When silent is true, output nothing: no group reply, commentary or \"(Silent — …)\" note. Owner only. For time approvals, first run calendar.ts approve-time: a yes never authorizes overlap. If busy, tell the owner privately and offer nearest free alternatives without conflict titles, then call this tool with the result; it sends the result once even in the group and clears the approval.",
     parameters: {
       type: "object", additionalProperties: false, required,
       properties: {
+        outcome: { type: "string", enum: ["answer", "calendar_change"], description: "answer for words only; calendar_change after successfully applying a meeting change." },
         requestId: { type: "string", description: "The matched request's id." },
         askedAt: { type: "string", description: "The matched pending question or time approval's askedAt." },
         text: { type: "string", description: "The owner's answer, phrased as Meetly for the group." },

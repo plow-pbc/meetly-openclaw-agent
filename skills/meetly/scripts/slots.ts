@@ -9,7 +9,7 @@ import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
 import { allowsOverlap, covers, uniqueEvents, type Coverage, type EventRef, type Busy } from "./busy.ts";
-import { intersectConstraints, requireDuration, type Ledger, type Meal } from "./ledger.ts";
+import { requestEvents, intersectConstraints, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { addDays, DAYS, localIso, nextWeek, wallParts, zonedToUtc, type Day } from "./time.ts";
@@ -318,8 +318,8 @@ if (isMain(import.meta.url)) {
     const degraded = input.degraded ?? [];
     const request = values.request === undefined ? undefined
       : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
-    if (values.request !== undefined && (!request || !["asked", "offered"].includes(request.status))) throw new Error("--request needs an asked or offered request");
-    if (request) input.busy = input.busy.filter(b => !request.offered.some(o => o.holdId === b.id && o.account === b.account));
+    if (values.request !== undefined && (!request || !["asked", "offered", "booked"].includes(request.status))) throw new Error("--request needs an asked, offered or booked request");
+    if (request) input.busy = input.busy.filter(b => !requestEvents(request).some(o => o.holdId === b.id && o.account === b.account));
     const q: SlotQuery = { now, config, meal, busy: input.busy, allowOverlap: input.allowOverlap };
     q.coverage = input.coverage;
     if (values["start-time"] !== undefined) q.startTime = parseTime(values["start-time"]);

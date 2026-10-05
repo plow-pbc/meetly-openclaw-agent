@@ -14,7 +14,7 @@ import { cli, fakeCalendar, tmpHome } from "./helpers.ts";
 
 const ctx = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "plow-owner",
   sessionKey: "agent:main:main", nativeChannelId: "owner-dm", config: {} };
-const args = { requestId: "mia", askedAt: "2026-10-03T16:00:00Z", text: "Patrick says, please bring the Q3 budget numbers." };
+const args = { outcome: "answer" as const, requestId: "mia", askedAt: "2026-10-03T16:00:00Z", text: "Patrick says, please bring the Q3 budget numbers." };
 const timeApproval = { askedAt: args.askedAt, start: "2026-10-05T20:00:00Z", end: "2026-10-05T20:30:00Z" };
 
 function fixture(t: TestContext) {
@@ -175,4 +175,30 @@ test("concurrent sends and stale clears cannot consume another question", async 
   });
   assert.ok("sent" in result);
   assert.deepEqual(f.read().requests[0]!.pendingOwner, newer);
+});
+
+test("an applied calendar change is delivered in the group before its question clears", async t => {
+  const f = fixture(t);
+  let sends = 0;
+  const result = await answerOwner({ ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" },
+    { ...args, outcome: "calendar_change", text: "Updated the meeting to the library." }, async (to, text) => {
+      sends++;
+      assert.equal(to, "group-mia");
+      assert.match(text, /library/);
+      assert.ok(f.read().requests[0]!.pendingOwner);
+    });
+  assert.equal(sends, 1);
+  assert.deepEqual(result, { answered: true, sent: true, requestId: "mia", silent: true });
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+});
+
+test("an answer needs an explicit outcome before clearing or sending", async t => {
+  const f = fixture(t);
+  let sends = 0;
+  for (const outcome of [undefined, "guess"]) {
+    const result = await answerOwner(ctx, { ...args, outcome } as any, async () => { sends++; });
+    assert.equal(sends, 0);
+    assert.ok("error" in result);
+    assert.ok(f.read().requests[0]!.pendingOwner);
+  }
 });
