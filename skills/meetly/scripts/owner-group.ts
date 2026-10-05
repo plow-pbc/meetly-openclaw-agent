@@ -11,7 +11,7 @@ import { checkContact, ContactConfirmationRequired, requireDuration, findOpenByH
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & SearchTiming & { durationMin: number };
+type GroupRequest = Pick<OfferInput, "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & SearchTiming & { durationMin: number; requestId?: string };
 
 // Tool callers may fill unused optional fields with empty values.
 function conditions(value?: Constraints): Constraints | undefined {
@@ -76,7 +76,10 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
       }
       return { code: "OWNER_CONFIRMATION_REQUIRED", silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
     }
-    const existing = findOpenByHandle(ledger, handle);
+    const existing = args.requestId === undefined ? findOpenByHandle(ledger, handle)
+      : ledger.requests.find(r => r.id === args.requestId && ["asked", "offered", "booked"].includes(r.status)
+        && r.chatUid === chat && sameHandle(r.handle, handle));
+    if (args.requestId !== undefined && !existing) return { error: "Select a current request for this guest in this group." };
     if (existing && existing.chatUid !== chat && !(existing.status === "asked" && existing.chatUid === undefined)) {
       throw new Error("request belongs to another conversation");
     }
@@ -94,7 +97,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     const constraints = args.constraints === undefined && args.week === undefined ? existing?.constraints : hard;
     const proposed = conditions(args.proposed) ?? (existing?.status === "asked" ? existing.proposed : undefined);
     const travel = existing?.travel?.override ? existing.travel : args.travel ?? existing?.travel;
-    const search = { travel, format: format ?? existing?.format, ...constraints, now, config, meal, durationMin, locale, asap: args.asap, busy: [] };
+    const search = { travel, format: format ?? existing?.format, ...constraints, excludedDays: existing?.excludedDays, now, config, meal, durationMin, locale, asap: args.asap, busy: [] };
     const range = preferredSearchCoverage(search, proposed);
     const busy = await fetchBusy(config, range);
     if (busy.degraded.length) throw new Error("calendar unavailable");

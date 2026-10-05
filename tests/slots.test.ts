@@ -25,12 +25,33 @@ const q = (over: Partial<SlotQuery> = {}): SlotQuery => ({ travel: { beforeMin: 
 const starts = (over: Partial<SlotQuery> = {}) => findSlots(q(over)).slots.map((s) => s.start);
 const labels = (over: Partial<SlotQuery> = {}) => findSlots(q(over)).slots.map((s) => s.label);
 
+test("owner CLI keeps guest weekday exclusions when the owner widens the date range", () => {
+  const home = tmpHome();
+  writeJson(join(home, "config.json"), CONFIG);
+  writeJson(join(home, "busy.json"), { busy: [] });
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
+    origin: "owner", handle: "+15550107812", topic: "call", durationMin: 30, status: "asked", offered: [],
+    travel: { beforeMin: 0, afterMin: 0 }, excludedDays: ["mon", "tue", "thu"],
+    constraints: { from: "2026-10-12", to: "2026-10-16" },
+  }, NOW, "widened"));
+  const result = cli("slots.ts", ["--in", join(home, "busy.json"), "--request", "widened", "--now", "2026-10-05T04:56:00Z"], { MEETLY_HOME: home });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.json.slots.length);
+  assert.ok(result.json.slots.every((s: { dayOfWeek: string }) => ["wed", "fri"].includes(s.dayOfWeek)), result.stdout);
+  assert.deepEqual(result.json.resolvedConstraints, { from: "2026-10-12", to: "2026-10-16" }, "guest exclusions must not become owner conditions that a guest cannot restore");
+});
+
+test("Sunday ASAP slots carry tomorrow in their owner-local confirmationTime", () => {
+  const result = findSlots(q({ now: Date.parse("2026-10-05T04:52:00Z"), config: { ...CONFIG, timezone: "America/Los_Angeles" }, asap: true }));
+  assert.equal(result.slots[0]!.confirmationTime, "tomorrow, Mon, Oct 5, 9:00 AM PDT");
+});
+
 test("no busy: spread over the first days, after the minimum notice", () => {
   const { slots, unknownAfter } = findSlots(q());
   assert.deepEqual(slots, [
-    { start: "2026-09-28T10:00:00-03:00", end: "2026-09-28T10:30:00-03:00", dayOfWeek: "mon", label: "mon 28/9 10:00 America/Sao_Paulo" },
-    { start: "2026-09-29T09:00:00-03:00", end: "2026-09-29T09:30:00-03:00", dayOfWeek: "tue", label: "tue 29/9 09:00 America/Sao_Paulo" },
-    { start: "2026-09-30T09:00:00-03:00", end: "2026-09-30T09:30:00-03:00", dayOfWeek: "wed", label: "wed 30/9 09:00 America/Sao_Paulo" },
+    { start: "2026-09-28T10:00:00-03:00", end: "2026-09-28T10:30:00-03:00", dayOfWeek: "mon", label: "mon 28/9 10:00 America/Sao_Paulo", confirmationTime: "today, Mon, Sep 28, 10:00 AM GMT-3" },
+    { start: "2026-09-29T09:00:00-03:00", end: "2026-09-29T09:30:00-03:00", dayOfWeek: "tue", label: "tue 29/9 09:00 America/Sao_Paulo", confirmationTime: "tomorrow, Tue, Sep 29, 9:00 AM GMT-3" },
+    { start: "2026-09-30T09:00:00-03:00", end: "2026-09-30T09:30:00-03:00", dayOfWeek: "wed", label: "wed 30/9 09:00 America/Sao_Paulo", confirmationTime: "Wed, Sep 30, 9:00 AM GMT-3" },
   ]);
   assert.equal(unknownAfter, undefined);
 });
@@ -187,7 +208,7 @@ test("the CLI reads busy.ts output and the stored config", () => {
   const at = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--at", "2026-10-03T10:00:00-03:00", "--duration", "60", "--locale", "pt-BR"], env);
   assert.equal(at.status, 0, at.stderr);
   assert.deepEqual(at.json, {
-    slot: { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T11:00:00-03:00", dayOfWeek: "sat", label: "sáb., 03/10, 10:00 BRT" },
+    slot: { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T11:00:00-03:00", dayOfWeek: "sat", label: "sáb., 03/10, 10:00 BRT", confirmationTime: "sáb., 3 de out., 10:00 BRT" },
     free: true,
     outsideHours: true,
     degraded: ["other@example.com"],
@@ -255,7 +276,7 @@ test("checkTime: a time the person insists on", () => {
   const check = (start: string, over: Partial<Parameters<typeof checkTime>[0]> = {}) =>
     checkTime({ travel: { beforeMin: 0, afterMin: 0 }, now: NOW, config: CONFIG, durationMin: 30, busy: [], start, ...over });
   assert.deepEqual(check("2026-09-28T10:00:00-03:00"), {
-    slot: { start: "2026-09-28T10:00:00-03:00", end: "2026-09-28T10:30:00-03:00", dayOfWeek: "mon", label: "mon 28/9 10:00 America/Sao_Paulo" },
+    slot: { start: "2026-09-28T10:00:00-03:00", end: "2026-09-28T10:30:00-03:00", dayOfWeek: "mon", label: "mon 28/9 10:00 America/Sao_Paulo", confirmationTime: "today, Mon, Sep 28, 10:00 AM GMT-3" },
     free: true,
     outsideHours: false,
   });

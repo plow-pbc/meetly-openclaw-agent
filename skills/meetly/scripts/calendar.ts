@@ -1,6 +1,6 @@
 // Owns calendar writes and their ledger commits. A durable intent survives a
 // lost Latch response or a failed ledger write; uncertain creates are never replayed.
-import { withinConstraints } from "./slots.ts";
+import { withinConstraints, withExcludedDays } from "./slots.ts";
 import { calendarOutput } from "./calendar-output.ts";
 import { checkTravel, checkTravelBase, travelFor, travelRange, travelNote, type Travel } from "./travel.ts";
 import { randomUUID } from "node:crypto";
@@ -12,7 +12,7 @@ import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
-import { checkContact, addRequest, requestEvents, requestHolds, sameHandle, expiredRequests, findOpenByHandle, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
+import { checkContact, addRequest, currentOffers, requestEvents, requestHolds, sameHandle, expiredRequests, findOpenByHandle, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
 import { file } from "./paths.ts";
 import { formatMeetingTime } from "./time.ts";
@@ -47,6 +47,11 @@ const holds = requestHolds;
 // Its slots change; the confirmed event and meeting details remain in place.
 function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledger {
   const request = l.requests.find(r => r.id === id);
+  input.excludedDays = request?.excludedDays ?? input.excludedDays;
+  const guestDays = withExcludedDays({}, input.excludedDays);
+  if (input.offered.some(slot => !withinConstraints(Date.parse(slot.start), Date.parse(slot.end), loadConfig().timezone, guestDays))) {
+    throw new Error("Offered time falls on a guest-excluded weekday.");
+  }
   const startTime = request?.constraints?.startTime ?? input.constraints?.startTime;
   if (startTime) {
     if (input.constraints?.startTime && input.constraints.startTime !== startTime) throw new Error("Update the owner’s exact start constraint before replacing the offer.");
@@ -58,6 +63,7 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   if (validated.status !== "offered") throw new Error("replacement needs offered times");
   return updateRequest(l, id, {
+    constraints: validated.constraints ?? request.constraints,
     reoffer: { offered: validated.offered, offeredAt: new Date(now).toISOString() },
     holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
   }, now);
@@ -450,7 +456,10 @@ export async function calendarAction(id: string, action: CalendarAction, options
       meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
   }).then(result => ({
     ...result,
-    ...(result.request.booked ? { confirmationTime: formatMeetingTime(result.request.booked.start, loadConfig().timezone, result.request.locale) } : {}),
+    offered: currentOffers(result.request).map(slot => ({
+      start: slot.start, end: slot.end, confirmationTime: formatMeetingTime(slot.start, loadConfig().timezone, result.request.locale, now()),
+    })),
+    ...(result.request.booked ? { confirmationTime: formatMeetingTime(result.request.booked.start, loadConfig().timezone, result.request.locale, now()) } : {}),
   }));
 }
 

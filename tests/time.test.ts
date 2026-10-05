@@ -3,7 +3,16 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { writeJson } from "../skills/meetly/scripts/store.ts";
 import { tmpHome } from "./helpers.ts";
-import { addDays, DAYS, resolveWeekday, WeekdayDateRequired, localIso, offsetMs, wallParts, zonedToUtc } from "../skills/meetly/scripts/time.ts";
+import { addDays, DAYS, formatMeetingTime, resolveWeekday, WeekdayDateRequired, localIso, offsetMs, wallParts, zonedToUtc } from "../skills/meetly/scripts/time.ts";
+
+for (const [now, start, expected] of [
+  ["2026-10-05T04:52:00Z", "2026-10-05T16:00:00Z", "tomorrow, Mon, Oct 5, 9:00 AM PDT"],
+  ["2026-10-05T16:00:00Z", "2026-10-06T01:00:00Z", "today, Mon, Oct 5, 6:00 PM PDT"],
+  ["2026-11-01T07:30:00Z", "2026-11-02T17:00:00Z", "tomorrow, Mon, Nov 2, 9:00 AM PST"],
+]) test(`relative confirmation date follows the owner's calendar: ${expected}`, t => {
+  t.mock.method(Date, "now", () => Date.parse(now!));
+  assert.equal(formatMeetingTime(start!, "America/Los_Angeles", "en-US"), expected);
+});
 
 test("DAYS is in week order starting Monday", () => {
   assert.deepEqual(DAYS, ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);

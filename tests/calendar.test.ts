@@ -25,6 +25,30 @@ function fixture(t: TestContext, chatUid?: string) {
   return { home, input, offer: { ...input, offered: offered.map(({ holdId, ...slot }) => slot) }, read, calls, events, command, options: { command, now: () => now } satisfies CalendarOptions };
 }
 
+test("calendar writer rejects replacement offers on saved guest-excluded weekdays", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const request = f.read();
+  request.excludedDays = ["mon", "tue", "thu"];
+  request.constraints = { from: "2026-10-12", to: "2026-10-16" };
+  writeJson(join(f.home, "ledger.json"), { requests: [request] });
+  f.calls.length = 0;
+  await assert.rejects(calendarAction("r_one", { action: "offer", request: { ...f.offer, excludedDays: [],
+    offered: [{ start: "2026-10-12T09:00:00Z", end: "2026-10-12T09:30:00Z", account }] } }, f.options), /excluded weekday/i);
+  assert.deepEqual(f.read(), request);
+  assert.deepEqual(f.calls, []);
+});
+
+test("calendar offers include copy-ready relative dates before the guest books", async t => {
+  const f = fixture(t);
+  const config = readJson<Record<string, unknown>>(join(f.home, "config.json"), {});
+  writeJson(join(f.home, "config.json"), { ...config, timezone: "America/Los_Angeles" });
+  const result = await calendarAction("r_one", { action: "offer", request: { ...f.offer,
+    offered: [{ start: "2026-10-05T09:00:00-07:00", end: "2026-10-05T09:30:00-07:00", account }] } },
+    { ...f.options, now: () => Date.parse("2026-10-05T04:52:00Z") });
+  assert.equal(result.offered[0]!.confirmationTime, "tomorrow, Mon, Oct 5, 9:00 AM PDT");
+});
+
 for (const status of ["offered", "booked"] as const) for (const location of [undefined, "Cafe"]) test(`a ${status} format change ${location === undefined ? "clears an omitted" : "keeps an explicit"} location`, async t => {
   const f = fixture(t);
   await calendarAction("r_one", { action: "format", format: "in_person", travel: { beforeMin: 15, afterMin: 15 }, location: "Library" }, f.options);
