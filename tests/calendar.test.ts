@@ -25,6 +25,24 @@ function fixture(t: TestContext) {
   return { home, input, offer: { ...input, offered: offered.map(({ holdId, ...slot }) => slot) }, read, calls, events, command, options: { command, now: () => now } satisfies CalendarOptions };
 }
 
+for (const path of ["new", "existing", "direct", "duration"] as const) test(`four-slot ${path} offer is rejected before calendar or ledger effects`, async t => {
+  const f = fixture(t);
+  if (path === "new") writeJson(join(f.home, "ledger.json"), { requests: [] });
+  const before = fs.readFileSync(join(f.home, "ledger.json"), "utf8");
+  const offered = Array.from({ length: 4 }, (_, i) => ({
+    start: `2026-10-0${5 + i}T10:00:00Z`, end: `2026-10-0${5 + i}T10:30:00Z`, account,
+  }));
+  const action = path === "duration"
+    ? calendarAction("r_one", { action: "duration", durationMin: 30, topic: "Call", offered }, f.options)
+    : path === "direct"
+      ? calendarAction("r_one", { action: "offer", request: { ...f.offer, offered } }, f.options)
+      : offerRequest({ ...f.offer, offered }, f.options);
+  await assert.rejects(action, /at most 3/i);
+  assert.deepEqual(f.calls, []);
+  assert.equal(fs.readFileSync(join(f.home, "ledger.json"), "utf8"), before);
+  assert.deepEqual(pendingCalendarWrites(), []);
+});
+
 for (const status of ["offered", "booked"] as const) for (const location of [undefined, "Cafe"]) test(`a ${status} format change ${location === undefined ? "clears an omitted" : "keeps an explicit"} location`, async t => {
   const f = fixture(t);
   await calendarAction("r_one", { action: "format", format: "in_person", location: "Library" }, f.options);

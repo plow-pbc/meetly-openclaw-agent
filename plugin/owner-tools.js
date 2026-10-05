@@ -72,7 +72,7 @@ export function registerOwnerDmTool(api, execute = runDm) {
       name: string, sourceRowid: { type: "integer" }, chatUid: string,
       constraints, proposed: constraints, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
       location: string, locale: string, allowOverlapTitles: { type: "array", items: string },
-      offered: { type: "array", minItems: 1, items: { type: "object", additionalProperties: false,
+      offered: { type: "array", minItems: 1, maxItems: 3, items: { type: "object", additionalProperties: false,
         required: ["start", "end"], properties: { start: string, end: string } } },
     } },
     async execute(_id, args) {
