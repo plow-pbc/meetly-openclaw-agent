@@ -246,7 +246,7 @@ test("setup asks only what nobody can infer, and the rest starts at defaults", (
 
 test("the owner's conditions hold for every offer of a request; the person's proposed times only for the first", () => {
   const group = groupSkill();
-  assert.ok(group.includes("`constraints` set to any conditions the owner gave with the yes"));
+  assert.ok(group.includes("preserve the saved `constraints` and merge any conditions the owner gave with the yes"));
   assert.ok(group.includes("with the request's `constraints` (the owner's) and, on its first offer, its `proposed` times"));
   assert.ok(group.includes("run again without them, keeping `constraints`, and say those times don't work"));
   assert.ok(group.includes("`constraints` (the owner's conditions)"));

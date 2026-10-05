@@ -1002,3 +1002,119 @@ for (const replacement of [undefined, { days: ["wed"], from: "2026-10-07", to: "
     saved.constraints = f.request().constraints;
   });
 }
+
+test("guests can re-offer and book dinner but cannot widen its meal window", async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.meal = "dinner";
+  request.durationMin = 60;
+  request.constraints = { days: ["mon", "tue"], from: "2026-10-05", to: "2026-10-06" };
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { after: "17:00", before: "23:00" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  const offered = f.request().offered;
+  assert.equal(offered.length, 3);
+  assert.ok(offered.every(o => o.start.slice(11, 16) >= "18:00" && o.end.slice(11, 16) <= "21:00"));
+  const booked = await guestAction(context, "pick", { start: offered[0]!.start });
+  assert.ok(!("error" in booked), JSON.stringify(booked));
+  assert.equal(f.request().status, "booked");
+});
+
+test("an owner duration change keeps an unanswered opener question suppressed on guest re-offers", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.detailsAskedAt = new Date(now).toISOString();
+  f.ledger.requests[0]!.durationMin = 60;
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { days: ["tue"] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal("askDetails" in result && result.askDetails, false);
+  assert.equal(f.request().detailsAskedAt, new Date(now).toISOString());
+  assert.equal(f.request().format, "unknown");
+  assert.equal(f.request().durationMin, 60);
+});
+
+test("owner-group lunch uses the selected duration within the meal window", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  f.events.clear();
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Lunch", meal: "lunch", durationMin: 60 });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().meal, "lunch");
+  assert.ok(f.request().offered.every(o => o.start.slice(11, 16) >= "11:30" && o.end.slice(11, 16) <= "13:30"));
+  assert.equal(f.request().durationMin, 60);
+  assert.equal(f.request().offered[0]!.account, "owner@example.com");
+});
+
+test("guests can book an owner-selected start that crosses midnight", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] }); f.events.clear();
+  const offered = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Late call", durationMin: 60, constraints: { days: ["mon"], startTime: "23:30" } });
+  assert.ok(!("error" in offered), JSON.stringify(offered));
+  const slot = f.request().offered[0]!;
+  assert.equal(slot.start, "2026-10-05T23:30:00+00:00");
+  assert.equal(slot.end, "2026-10-06T00:30:00+00:00");
+  const result = await f.tools.get("meetly_pick_time")!.execute("pick", { start: slot.start });
+  assert.equal(JSON.parse(result.content[0]!.text).status, "booked", result.content[0]!.text);
+  assert.equal(f.request().status, "booked");
+  assert.equal(f.request().booked!.end, slot.end);
+});
+
+test("guest exclusions persist until explicitly restored", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = { from: "2026-10-05", to: "2026-10-09" };
+  f.save(f.ledger);
+  for (const args of [{ excludedDays: ["tue"] }, {}]) {
+    const result = await guestAction(context, "other_times", args);
+    assert.ok(!("error" in result), JSON.stringify(result));
+    assert.deepEqual(f.request().excludedDays, ["tue"]);
+    assert.ok(f.request().offered.every(o => !o.start.startsWith("2026-10-06")));
+  }
+  const restored = await guestAction(context, "other_times", { restoredDays: ["tue"], days: ["tue"] });
+  assert.ok(!("error" in restored), JSON.stringify(restored));
+  assert.deepEqual(f.request().excludedDays, []);
+  assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-06")));
+});
+
+test("excluded weekdays block stale picks when replacement search has no slots", async t => {
+  const f = fixture(t);
+  const result = await f.act(context, "other_times", { excludedDays: ["mon", "tue"] });
+  assert.ok("error" in result);
+  const before = f.commands.length;
+  const picked = await guestAction(context, "pick", { start: offers[0]!.start });
+  assert.ok("error" in picked, JSON.stringify(picked));
+  assert.equal(f.request().status, "offered");
+  assert.ok(f.commands.slice(before).every(c => c[2] === "events"));
+});
+
+test("owner-group re-offers respect saved excluded weekdays", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.excludedDays = ["mon"];
+  f.save(f.ledger);
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Call", durationMin: 30 });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-06")), JSON.stringify(f.request().offered));
+});
+
+test("owner DM meal schema carries a new lunch through the calendar writer", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] }); f.events.clear();
+  let tool: any;
+  registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
+  assert.deepEqual(tool.parameters.properties.meal?.enum, ["lunch", "dinner", "coffee"]);
+  const result = await tool.execute("call", { origin: "owner", handle: context.requesterSenderId, topic: "Lunch", meal: "lunch",
+    offered: [{ start: "2026-10-05T12:00:00Z", end: "2026-10-05T13:00:00Z" }] });
+  assert.equal(result.isError, false, JSON.stringify(result.details));
+  assert.equal(f.request().durationMin, 60);
+  assert.equal(f.request().meal, "lunch");
+});
+
+test("exact clock constraints are owner-only; guests use the dated start argument", () => {
+  const tools = new Map<string, any>();
+  const api = { registerTool(factory: any) { const tool = factory(context); tools.set(tool.name, tool); } };
+  registerGuestTools(api); registerOwnerGroupTool(api);
+  assert.equal(tools.get("meetly_other_times").parameters.properties.startTime, undefined);
+  assert.equal(tools.get("meetly_offer_owner_group").parameters.properties.constraints.properties.startTime.type, "string");
+});

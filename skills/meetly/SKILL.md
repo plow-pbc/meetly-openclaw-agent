@@ -24,7 +24,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `delivery --id X --kind notify\|start\|answer --action begin\|complete\|clear` | `{request, delivery?}`; `begin` records `notifyAttemptedAt`/`startedAt`; a successful start returns `delivery.state: reserved` and `sendNow: true` — send immediately once, without another begin, clear, or earlier-attempt check; `complete` records `notifiedAt`/`startCompletedAt` after success or unknown delivery. Notices retry until completed; starts refuse a second attempt. `answer begin` records `pendingOwner.answerAttemptedAt` before sending and refuses another attempt; successful answer delivery clears the pending question. `clear` is for an unlinked start or an answer attempt, on the owner's explicit instruction (answers use only `begin`/`clear`). Delivery fields cannot be set through `save` or `update`. |
 | | `reminders [--lead-min N]` | `{requests}`: booked Meets whose link is due (default 10 min before, until 5 min after the start) |
 | `event.ts` | `--in F` | `{id, status, start, end, meetUrl}` from a saved calendar event read |
-| `calendar.ts` | `offer --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer; uses explicit, then saved, then configured `durationMin`; requires matching intervals; retains an existing offer on failure; drops a failed new request while retaining cleanup |
+| `calendar.ts` | `offer --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer; uses explicit, then saved, then meal-default or configured `durationMin`; requires matching intervals; retains an existing offer on failure; drops a failed new request while retaining cleanup |
 | | `book --id X --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book and release the other holds |
 | | `format --id X --json '{"format":"meet", "location":"<optional place>"}'` | save format/location on an offered request, or update and record a booked event; both use the calendar lock |
 | | `duration --id X --json '{"durationMin":60,"topic":"…","offered":[{"start":"…","end":"…"}]}'` | `{request}`: atomically replace duration, topic and holds on an open request |
@@ -35,8 +35,8 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `--id X --sent` | `{request}`: the reminder went out; refused if already handled |
 | `busy.ts` | `--fetch [--allow-overlap-title <owner-supplied name>]` (reads the Mac, writes `tmp/busy.json`) | `{file, busy:<count>, degraded, unknownAfter?}` |
 | | `--in F [--in F2…] [--max 100]` | `{busy:[{start,end,id,account}], unknownAfter?, degraded}` |
-| `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], unknownAfter?, degraded}` |
-| | `--in busy.json --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
+| `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--start-time HH:MM] [--meal lunch\|dinner\|coffee] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], unknownAfter?, degraded}` |
+| | `--in busy.json --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
 | `owner-chat.ts` | | `{chatUid}`: the owner's DM |
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
 
@@ -46,14 +46,16 @@ Notes:
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.
   `meetUrl` only ever holds `https://meet.google.com/xxx-xxxx-xxx`, only on
   a `meet`; the ledger refuses anything else.
-- New group offers require `durationMin`. For slot search, pass `--duration` for an explicit owner-requested length; otherwise use the saved duration, falling back to `config.durationMin`. Change duration through `calendar.ts duration` so the new duration and replacement holds commit together.
-- Raw calendar commands reject `allowOverlap` and `allowOverlapTitles`. New overlap authorization uses `meetly_offer_owner_dm`, which verifies the runtime owner and main DM session before calling the internal offer writer. The DM tool has no `durationMin` argument: pre-save only an explicit owner-requested duration; otherwise it uses the saved duration, falling back to `config.durationMin`. Intervals must match.
+- New group offers require `durationMin`. For slot search, pass `--duration` for an explicit owner-requested length; otherwise use the saved duration, falling back to the typed meal default, then `config.durationMin`. Change duration through `calendar.ts duration` so the new duration and replacement holds commit together.
+- Raw calendar commands reject `allowOverlap` and `allowOverlapTitles`. New overlap authorization uses `meetly_offer_owner_dm`, which verifies the runtime owner and main DM session before calling the internal offer writer. The DM tool has no `durationMin` argument: pre-save only an explicit owner-requested duration; otherwise it uses the saved duration, falling back to the typed meal default, then `config.durationMin`. Intervals must match.
 - Every calendar mutation goes through `calendar.ts`. It locks the request,
   persists each write's identity, and commits the ledger from the actual result.
   An unresolved write must be resumed, never replayed or bypassed. Reminders
   read the event from a saved calendar read; never copy an id, time or link by hand.
-- `slots.ts` only offers times inside the owner's days and window. Requests
-  only narrow them.
+- `slots.ts` keeps the owner's days; `--meal` replaces their window with the
+  meal window. Save `meal` with the request for re-offers and guest booking.
+  Explicit or saved duration wins; otherwise code uses 60 minutes for lunch/dinner,
+  30 for coffee, or the configured default for other meetings.
 - Use each slot's `label` and `dayOfWeek` as printed; never work out a
   weekday yourself. Pass `--locale` for whoever reads the message (the other
   person's locale, like `pt-BR` or `en-US`, from their language or their
