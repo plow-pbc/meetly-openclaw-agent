@@ -1,7 +1,7 @@
 import { fetchBusy } from "./busy.ts";
 import { offerRequest, type OfferInput } from "./calendar.ts";
 import { lookupContact } from "./contact.ts";
-import { loadConfig } from "./config.ts";
+import { DAYS, loadConfig } from "./config.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { findPreferredSlots } from "./slots.ts";
@@ -58,7 +58,8 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
     const busy = await fetchBusy(config, { from: new Date(now).toISOString(), to: new Date(now + (config.horizonDays + 1) * 86_400_000).toISOString() });
     if (busy.degraded.length) throw new Error("calendar unavailable");
     busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
-    const query = { ...busy, ...constraints, now, config, meal, ownerStartTime: constraints?.startTime, durationMin, locale, allowOverlap: existing?.allowOverlap };
+    const query = { ...busy, ...constraints, now, config, meal, durationMin, locale, allowOverlap: existing?.allowOverlap };
+    query.days = (constraints?.days ?? DAYS).filter(day => !existing?.excludedDays?.includes(day));
     const near = proposed?.from && proposed.from === proposed.to
       ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
     const { slots, preferencesUnavailable } = findPreferredSlots(query, proposed, [{ ...query, near }]);
