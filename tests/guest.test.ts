@@ -807,6 +807,87 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
   assert.ok(!("error" in await guestAction({ ...context, nativeChannelId: "cht_MiXeD" }, "view")));
 });
 
+test("owner group widens the week without restoring guest-excluded weekdays", async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.excludedDays = ["mon", "tue", "thu"];
+  f.save(f.ledger);
+  // The owner's date change replaces their conditions, not the guest's exclusions.
+  request.constraints = { from: "2026-10-12", to: "2026-10-16" };
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+    topic: "call", durationMin: 30, constraints: request.constraints,
+  });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.ok(f.request().offered.every(o => ["2026-10-14", "2026-10-16"].includes(o.start.slice(0, 10))), JSON.stringify(result));
+  assert.deepEqual(f.request().excludedDays, ["mon", "tue", "thu"]);
+});
+
+test("owner group widens an explicitly selected booked request without creating another request", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  const ledger = f.read();
+  ledger.requests[0]!.excludedDays = ["mon", "tue", "thu"];
+  f.save(ledger);
+  const original = f.request().booked;
+  const constraints = { from: "2026-10-12", to: "2026-10-16" };
+  f.ledger.requests[0]!.constraints = constraints;
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+    requestId: "request-one", topic: "call", durationMin: 30, constraints, travel: { beforeMin: 0, afterMin: 0 },
+  });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.read().requests.length, 1);
+  assert.deepEqual(f.request().booked, original);
+  assert.deepEqual(f.request().constraints, constraints);
+  assert.deepEqual(f.request().excludedDays, ["mon", "tue", "thu"]);
+  assert.ok(f.request().reoffer!.offered.every(o => ["2026-10-14", "2026-10-16"].includes(o.start.slice(0, 10))));
+  const selected = f.request().reoffer!.offered[0]!.start;
+  assert.ok(!("error" in await f.act(context, "pick", { start: selected })));
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse(selected));
+});
+
+for (const scope of ["missing", "other-chat", "other-guest"]) test(`owner group rejects a reschedule ID outside its scope: ${scope}`, async t => {
+  const f = fixture(t);
+  if (scope === "other-chat") f.ledger.requests[0]!.chatUid = "another-chat";
+  if (scope === "other-guest") f.ledger.requests[0]!.handle = "+15559998888";
+  f.save(f.ledger);
+  const before = f.read();
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+    requestId: scope === "missing" ? "missing" : "request-one", topic: "call", durationMin: 30,
+  });
+  assert.ok("error" in result);
+  assert.deepEqual(f.read(), before);
+  assert.deepEqual(f.commands, []);
+});
+
+test("accepting an existing replacement restores only its named weekday and moves without another offer", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  await f.act(context, "other_times", { start: offers[1]!.start });
+  const ledger = f.read();
+  ledger.requests[0]!.excludedDays = ["mon", "tue", "thu"];
+  f.save(ledger);
+  const result = await f.act(context, "pick", { start: offers[1]!.start, restoredDays: ["tue"] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse(offers[1]!.start));
+  assert.deepEqual(f.request().excludedDays, ["mon", "thu"]);
+  assert.equal(f.request().reoffer, undefined);
+  assert.equal(f.ownerLines.length, 1);
+});
+
+for (const restoredDays of [undefined, ["mon"], ["funday"]]) test(`excluded replacement refuses an absent or unrelated restoration: ${restoredDays}`, async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  await f.act(context, "other_times", { start: offers[1]!.start });
+  const ledger = f.read();
+  ledger.requests[0]!.excludedDays = ["mon", "tue", "thu"];
+  f.save(ledger);
+  const before = f.read(), calls = f.commands.length;
+  const result = await f.act(context, "pick", { start: offers[1]!.start, restoredDays });
+  assert.ok("error" in result, JSON.stringify(result));
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.commands.length, calls);
+});
+
 test("guest alternatives search the owner's saved distant date", async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.constraints = { from: "2026-10-29", to: "2026-10-29" };

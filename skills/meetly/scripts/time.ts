@@ -67,11 +67,16 @@ export function localIso(ms: number, tz: string): string {
   return `${p.y}-${pad(p.m)}-${pad(p.d)}T${pad(p.hh)}:${pad(p.mm)}:${pad(p.ss)}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
 }
 
-export function formatMeetingTime(start: string, timezone: string, locale = "en-US"): string {
-  return new Intl.DateTimeFormat(locale, {
+export function formatMeetingTime(start: string, timezone: string, locale = "en-US", now = Date.now()): string {
+  const absolute = new Intl.DateTimeFormat(locale, {
     timeZone: timezone, weekday: "short", month: "short", day: "numeric",
     hour: "numeric", minute: "2-digit", timeZoneName: "short",
   }).format(new Date(start));
+  // Compare calendar dates, not elapsed hours: a local day can have 23 or 25 hours.
+  const dateNumber = (ms: number) => Date.parse(`${localIso(ms, timezone).slice(0, 10)}T00:00:00Z`);
+  const days = (dateNumber(Date.parse(start)) - dateNumber(now)) / 86_400_000;
+  return days === 0 || days === 1
+    ? `${new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(days, "day")}, ${absolute}` : absolute;
 }
 
 export function addDays(y: number, m: number, d: number, n: number): { y: number; m: number; d: number } {

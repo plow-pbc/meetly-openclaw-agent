@@ -49,11 +49,15 @@ bounds only; the search must still receive `--week next`. Save the search's exac
 `resolvedConstraints` on the request before offering. The group tool saves the week itself.
 For explicit calendar dates/ranges, use from/to; the default horizon does not limit them.
 For ASAP or "as soon as possible", use `asap: true` / `--asap`, starting from now,
-including today. It returns the earliest starts in order, subject to the existing minimum
+including today. Copy each returned `confirmationTime` in both owner replies and guest
+openers; use "today" or "tomorrow" only when that code-produced text includes it. Never
+add a relative-date summary from your own date calculation. It returns the earliest starts in order, subject to the existing minimum
 notice, days and hours. Never move the search to tomorrow without checking today.
 For a request started in a group, suggested explicit dates/times are `proposed` and
 non-relaxable conditions are `constraints`. Carry constraints into every re-offer unless
-the owner changes them.
+the owner changes them. Widening the owner's date range never restores weekdays the guest
+excluded; saved `excludedDays` apply to every search and offer. Only the guest
+explicitly restoring a weekday removes that exclusion.
 Save accepted clock times in `constraints.startTime` (HH:MM), not `proposed`, before
 searching with `--start-time`. If meeting plus travel cannot fit, ask before alternatives.
 When the owner replaces saved hard conditions, run
@@ -71,6 +75,9 @@ same `travel` to offers. Never expose the base or travel in a group.
 
 1. In the current group, call `meetly_offer_owner_group` with `topic`, `durationMin`, `travel`, `constraints`,
    `proposed`, `meal`, `name` as given by the owner in this thread, `format`, `location` and `locale` as known.
+   For rescheduling, pass the existing `requestId`, including a booked request;
+   this retains guest exclusions and the old booking until the guest picks. Use the
+   owner group tool for owner turns, never the guest search/pick tools.
    It resolves the guest and chat, searches and holds times itself;
    never supply `offered` intervals. On error, stop. Otherwise continue at step 6
    with the final returned offer; if `preferencesUnavailable` is true, say the preferred
@@ -131,7 +138,7 @@ same `travel` to offers. Never expose the base or travel in a group.
      --kind start --action complete`. If that fails, tell the owner; the
      attempt remains recorded, so never repeat the start automatically.
    - The opener: third person, in their language. Say who Meetly is and whose
-     assistant, the topic, and the slot labels, then ask which works. For
+     assistant, the topic, and each offered `confirmationTime`, then ask which works. For
      inbound requests, never claim the owner asked.
    - If `plow_start_thread` definitely fails, tell the owner what it said and stop.
      Run `calendar.ts drop --id <id>`; it records any failed hold deletes

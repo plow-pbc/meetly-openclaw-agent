@@ -24,13 +24,14 @@ export function view(request: Request, config: Config) {
     return { requests: ledger.requests.map(r => r.id === current.id ? { ...r, detailsAskedAt: at, updatedAt: at } : r) };
   });
   const format = localeFormatter(request.locale ?? "en-US", config.timezone);
-  const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });
+  const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)),
+    confirmationTime: formatMeetingTime(slot.start, config.timezone, request.locale) });
   const offered = currentOffers(request).map(time);
   return {
     askDetails, status: request.status, channel: request.channel, ...(request.channel === "email" ? { chatUid: request.chatUid } : {}), origin: request.origin, ownerName: config.ownerName, timezone: config.timezone,
     topic: request.topic, meal: request.meal, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
     offered,
-    ...(request.status === "booked" && offered.length ? { message: `Replacement times are held: ${offered.map(o => o.label).join("; ")} (${config.timezone}). The current booking remains unchanged until you pick a replacement.` } : {}),
+    ...(request.status === "booked" && offered.length ? { message: `Replacement times are held: ${offered.map(o => o.confirmationTime).join("; ")}. The current booking remains unchanged until you pick a replacement.` } : {}),
     ...(request.booked ? { confirmationTime: formatMeetingTime(request.booked.start, config.timezone, request.locale), booked: time(request.booked), reminderAvailable: request.channel !== "email" && !!request.meetUrl,
       ...(request.channel === "email" && request.meetUrl ? { meetUrl: request.meetUrl } : {}) } : {}),
     ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),

@@ -13,12 +13,16 @@ import { allowsOverlap, covers, uniqueEvents, type Coverage, type EventRef, type
 import { requestEvents, intersectConstraints, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
-import { addDays, DAYS, localIso, nextWeek, wallParts, zonedToUtc, type Day } from "./time.ts";
+import { addDays, DAYS, formatMeetingTime, localIso, nextWeek, wallParts, zonedToUtc, type Day } from "./time.ts";
 
-export type Slot = { start: string; end: string; dayOfWeek: Day; label: string };
+export type Slot = { start: string; end: string; dayOfWeek: Day; label: string; confirmationTime: string };
 
 export type Constraints = { startTime?: string; days?: string[]; after?: string; before?: string; from?: string; to?: string };
 export type SearchTiming = { week?: "this" | "next"; asap?: boolean };
+
+export function withExcludedDays(constraints: Constraints = {}, excludedDays: string[] = []): Constraints {
+  return excludedDays.length ? { ...constraints, days: (constraints.days ?? DAYS).filter(day => !excludedDays.includes(day)) } : constraints;
+}
 
 export type SlotQuery = Constraints & TravelInput & SearchTiming & {
   now: number;
@@ -32,6 +36,7 @@ export type SlotQuery = Constraints & TravelInput & SearchTiming & {
   allowOverlap?: EventRef[];
   exclude?: string[];
   excludeDates?: string[];
+  excludedDays?: string[];
   count?: number;
   near?: string;
   locale?: string;
@@ -168,7 +173,7 @@ export function findSlots(q: SlotQuery): SlotResult {
     const { y, m, d } = addDays(y0!, m0!, d0!, i);
     if (q.excludeDates?.includes(`${y}-${pad(m)}-${pad(d)}`)) continue;
     const day = wallParts(zonedToUtc(y, m, d, 12, 0, tz), tz).weekday;
-    if (!config.days.includes(day)) continue;
+    if (!config.days.includes(day) || q.excludedDays?.includes(day)) continue;
     const found: { start: number; end: number; day: Day }[] = [];
     for (let t = startMin; t + duration <= endMin && (exactStart === undefined || t === exactStart); t += STEP_MIN) {
       const start = zonedToUtc(y, m, d, Math.floor(t / 60), t % 60, tz);
@@ -212,6 +217,7 @@ export function findSlots(q: SlotQuery): SlotResult {
     end: localIso(c.end, tz),
     dayOfWeek: c.day,
     label: label(c.start, tz, format),
+    confirmationTime: formatMeetingTime(localIso(c.start, tz), tz, q.locale, now),
   }));
   return { slots, durationMin: duration, resolvedConstraints, ...(incomplete ? { incomplete } : {}),
     ...(q.unknownAfter !== undefined ? { unknownAfter: q.unknownAfter } : {}) };
@@ -263,7 +269,8 @@ export function checkTime(q: TravelInput & {
     reason = "busy";
   }
   const format = q.locale !== undefined ? localeFormatter(q.locale, tz) : undefined;
-  const slot: Slot = { start: localIso(start, tz), end: localIso(end, tz), dayOfWeek: s.weekday, label: label(start, tz, format) };
+  const slot: Slot = { start: localIso(start, tz), end: localIso(end, tz), dayOfWeek: s.weekday, label: label(start, tz, format),
+    confirmationTime: formatMeetingTime(localIso(start, tz), tz, q.locale, q.now) };
   return reason ? { slot, free: false, reason, outsideHours } : { slot, free: true, outsideHours };
 }
 
@@ -353,6 +360,7 @@ if (isMain(import.meta.url)) {
     if (request) {
       const narrowed = intersectConstraints(request.constraints, q);
       Object.assign(q, narrowed);
+      q.excludedDays = request.excludedDays;
       q.meal ??= request.meal;
       q.format ??= request.format;
       q.travel = request.travel?.override && q.format !== "meet" && q.format !== "phone" ? request.travel : q.travel ?? request.travel;

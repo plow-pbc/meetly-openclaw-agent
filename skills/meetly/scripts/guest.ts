@@ -132,7 +132,7 @@ async function notifyOwner(request: Request, config: Config, change: "moved" | "
   }
 }
 
-async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number) {
+async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number, restoredDays?: string[]) {
   if (attendees !== undefined && (!Array.isArray(attendees) || (attendees.length > 0 && (request.channel !== "email" || request.status === "booked"
     || attendees.some(email => typeof email !== "string" || !/^[^\s@,]+@[^\s@,]+$/.test(email)))))) return { error: "Additional invitees need email addresses on an unbooked email request." };
   const requested = checkTime({ now: Date.now(), config, busy: [], start,
@@ -144,10 +144,16 @@ async function pick(request: Request, config: Config, start: string, attendees?:
     && Date.parse(request.reoffer!.offeredAt) < turnStartedAt!)) {
     return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
   }
+  const restored = preferences({ days: restoredDays }, config.timezone).days ?? [];
+  const selectedDay = wallParts(Date.parse(offer.start), config.timezone).weekday;
+  if (restored.some(day => day !== selectedDay)) return { error: "Only restore the weekday of the offered time the guest explicitly accepted." };
+  const excludedDays = (request.excludedDays ?? []).filter(day => !restored.includes(day));
+  if (excludedDays.includes(selectedDay)) return { error: "That weekday is excluded. Set restoredDays only if the guest explicitly says it now works." };
   const travel = request.travel;
   const checked = await check(request, config, offer.start);
   if (!checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available.", code: "TIME_UNAVAILABLE",
     recovery: { action: "other_times", tool: "meetly_other_times", retry: false } };
+  if (restored.length) request = patch(request, { excludedDays });
   if (request.status === "booked") {
     const result = await write(request, { action: "book", start: offer.start, end: offer.end, travel });
     request = result.request;
@@ -345,7 +351,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
-    if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt);
+    if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt, args.restoredDays);
     return { error: "Unknown scheduling action." };
   } catch (error) {
     if (error instanceof TravelBaseRequired) return { error: "The owner needs to provide travel information privately before scheduling can continue.",
