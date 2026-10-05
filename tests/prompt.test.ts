@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { POLL_MESSAGE } from "../skills/meetly/scripts/register-crons.ts";
 import { registerOwnerTools, registerOwnerGroupTool } from "../plugin/owner-tools.js";
 import { registerGuestTools } from "../plugin/guest-tools.js";
 
@@ -40,7 +39,7 @@ test("AGENTS.md renders the conversation identity and keeps the base's tool and 
   // Every one of them is still in the base it came from, so a base bump that rewords one shows here.
   const base = flat(readFileSync(join(ROOT, "tests", "fixtures", "base-AGENTS.md"), "utf8"));
   for (const rule of BASE_CONTRACT) assert.ok(base.includes(rule), `the base no longer says: ${rule}`);
-  assert.ok(prompt.includes("Meetly poll."));
+  assert.ok(prompt.includes("Meetly poll: batch"));
 });
 
 test("the eight Meetly skills exist", () => {
@@ -69,8 +68,10 @@ test("every script the prompt or a skill names exists", () => {
   }
 });
 
-test("the poll message is what the prompt keys on", () => {
-  assert.ok(POLL_MESSAGE.startsWith("Meetly poll."));
+test("the poll's wake text is what the prompt keys on", () => {
+  const wake = readFileSync(join(SCRIPTS, "poll.ts"), "utf8");
+  assert.ok(wake.includes("`Meetly poll: batch ${batch.id}"));
+  assert.ok(prompt.includes("a `Meetly poll: batch` system event → `meetly-poll`"));
 });
 
 test("the poll never contacts anyone new: it saves the request as asked and asks the owner", () => {
@@ -80,11 +81,11 @@ test("the poll never contacts anyone new: it saves the request as asked and asks
   assert.ok(poll.includes("`ledger.ts save --json` with `status: \"asked\"`"));
   assert.ok(poll.includes("No holds, no group, no message to them."));
   assert.ok(poll.includes("Run `pipeline.ts nudge` once"));
-  assert.ok(poll.includes("give https://plow.co/download/latch. Go to step 6: it needs no message reads."));
+  assert.ok(poll.includes("give https://plow.co/download/latch"));
 });
 
 test("poll maintenance sends only the reserved monitor batch to the owner DM", () => {
-  const maintenance = pollSkill().split("6. Maintenance:")[1]!;
+  const maintenance = pollSkill().split("5. Maintenance:")[1]!;
   assert.ok(maintenance.indexOf("calendar.ts resume-pending") < maintenance.indexOf("pipeline.ts nudge"));
   assert.ok(maintenance.indexOf("owner-chat.ts") < maintenance.indexOf("pipeline.ts nudge"));
   assert.ok(maintenance.includes("send exactly that `text` once"));
@@ -219,13 +220,13 @@ test("every booking uses the calendar writer instead of recording a separate mut
 });
 
 
-test("the poll sends due reminders before reading messages, and marks each once", () => {
+test("the woken poll sends due reminders before handling messages, and marks each once", () => {
   const poll = pollSkill();
-  const ready = poll.indexOf("If it is not `READY`, or `config.paused` is true, end");
+  const batch = poll.indexOf("Run `poll.ts batch`");
   const reminders = poll.indexOf("Run `ledger.ts reminders`");
-  const cursor = poll.indexOf("Run `cursor.ts get`");
-  assert.ok(ready > 0 && reminders > ready && cursor > reminders, "order: ready/paused, reminders, cursor");
-  assert.ok(poll.includes("a paused Meetly sends no reminders either"));
+  const senders = poll.indexOf("Group `rows` by `sender`");
+  assert.ok(batch > 0 && reminders > batch && senders > reminders, "order: batch, reminders, messages");
+  assert.ok(!poll.includes("cursor.ts get"), "the job, not the turn, reads the cursor and messages");
   assert.ok(poll.includes("`plow-gog calendar event primary <eventId> --account <booked.account> --json`"));
   assert.ok(poll.includes("Run `reminder-check.ts --id <id> --event-file <that file>`"));
   assert.ok(poll.includes("Use that URL exactly as printed; never any other link"));
