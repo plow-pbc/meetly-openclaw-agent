@@ -15,16 +15,16 @@ exits non-zero: report that line; never guess a result. State lives in
 | `record-setup.ts` | `--field F --value V` \| `--done` | before setup `{saved, next, question}`; after `{saved, config}`; `--done` → `{done, config, crons}` |
 | `register-crons.ts` | `[--pause \| --resume]` | `{paused, actions}` |
 | `cursor.ts` | `get` \| `set <rowid>` \| `hold <rowid>` \| `release` \| `fail` \| `ok` | the cursor `{rowid, held?, …}`; `set` stops below `held` until the ledger has a request with that `sourceRowid`; `fail` → `{failingSince, warn}` |
-| `request-view.ts` | `--id X` | Group-safe request view with `askDetails`; reserves any permitted format/place question before returning it. Ask format/place only when `askDetails` is true. |
+| `request-view.ts` | `--id X` | Group-safe request view with `askDetails`; reserves any permitted format/place question before returning it |
 | `ledger.ts` | `find --handle H [--status asked\|offered]` \| `find --chat U` \| `find --name N` | `{request}`; chat lookup is exact and a name miss returns `{request:null}` |
 | | `add --json '<obj>'` \| `--json-file F` | `{request}` (refused if the person already has an open request) |
 | | `save --json '<obj>'` \| `--json-file F` | `{request}` (creates, or replaces the current open offer by handle or inbound `sourceRowid`, re-keying it to the supplied handle and preserving its id, chat link and delivery state; `status:"asked"` changes nothing if one is open) |
-| | `update --id X --json '<patch>'` | `{request}`; patch keys: `chatUid, name, constraints, topic, pendingOwner, locale` (`null` clears `pendingOwner`); duration, overlap authorization, format, location, calendar and reminder fields require their owning tools/scripts |
+| | `update --id X --json '<patch>'` | `{request}`; patch keys: `chatUid, name, constraints, topic, pendingOwner, locale` (`null` clears `pendingOwner`); other fields belong to their owning scripts |
 | | `expired [--hours N]` \| `asked [--unnotified]` \| `pending` \| `cleanup` | `{requests}` (`--unnotified` selects asked requests without `notifiedAt`) |
-| | `delivery --id X --kind notify\|start\|answer --action begin\|complete\|clear` | `{request, delivery?}`; `begin` records `notifyAttemptedAt`/`startedAt`; a successful start returns `delivery.state: reserved` and `sendNow: true` — send immediately once, without another begin, clear, or earlier-attempt check; `complete` records `notifiedAt`/`startCompletedAt` after success or unknown delivery. Notices retry until completed; starts refuse a second attempt. `answer begin` records `pendingOwner.answerAttemptedAt` before sending and refuses another attempt; successful answer delivery clears the pending question or time approval. `clear` is for an unlinked start or an answer attempt, on the owner's explicit instruction (answers use only `begin`/`clear`). Delivery fields cannot be set through `save` or `update`. |
+| | `delivery --id X --kind notify\|start\|answer --action begin\|complete\|clear` | `{request, delivery?}`: `begin` records the attempt before sending (a start returns `delivery.state: reserved`, `sendNow: true`; starts and answers refuse a second attempt); `complete` records success or unknown delivery; `clear` resets an unlinked start or an answer attempt, only on the owner's explicit instruction |
 | | `reminders [--lead-min N]` | `{requests}`: booked Meets whose link is due (default 10 min before, until 5 min after the start) |
 | `event.ts` | `--in F` | `{id, status, start, end, meetUrl}` from a saved calendar event read |
-| `calendar.ts` | `offer --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer; uses explicit, then saved, then meal-default or configured `durationMin`; requires matching intervals; retains an existing offer on failure; drops a failed new request while retaining cleanup |
+| `calendar.ts` | `offer --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer; uses explicit, saved, meal-default or configured `durationMin` and requires matching intervals; retains an existing offer on failure; drops a failed new request while retaining cleanup |
 | | `approve-time --id X --json '{"start":"<approved time>"}'` | `{approved,request,...}`; a time approval never grants an overlap. On `TIME_APPROVAL_BUSY`, use `slots.ts --request X --near <near> --no-overlap` |
 | | `book --id X --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, confirmationTime, meetUrl, warning?:"no-meet-link"}`: book and release the other holds |
 | | `format --id X --json '{"format":"meet", "location":"<optional place>"}'` | save format/location on an offered request, or update and record a booked event; both use the calendar lock |
@@ -44,21 +44,51 @@ exits non-zero: report that line; never guess a result. State lives in
 
 Notes:
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
-  `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-group`.
+  `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-confirm`.
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.
   `meetUrl` only ever holds `https://meet.google.com/xxx-xxxx-xxx`, only on
   a `meet`; the ledger refuses anything else.
-- New group offers require `durationMin`. For slot search, pass `--duration` for an explicit owner-requested length; otherwise use the saved duration, falling back to the typed meal default, then `config.durationMin`. Change duration through `calendar.ts duration` so the new duration and replacement holds commit together.
-- Raw calendar commands reject `allowOverlap` and `allowOverlapTitles`. New overlap authorization uses `meetly_offer_owner_dm`, which verifies the runtime owner and main DM session before calling the internal offer writer. The DM tool has no `durationMin` argument: pre-save only an explicit owner-requested duration; otherwise it uses the saved duration, falling back to the typed meal default, then `config.durationMin`. Intervals must match.
+- Choose duration from the meeting context and record it on each saved request; new group offers require `durationMin`. Slot search uses explicit duration, then saved request duration, then the meal default, then config.durationMin. Change duration through `calendar.ts duration` so the new duration and replacement holds commit together.
+- Raw calendar commands reject `allowOverlap` and `allowOverlapTitles`. New overlap authorization uses `meetly_offer_owner_dm`, which verifies the runtime owner and main DM session before calling the internal offer writer. The DM tool has no `durationMin` argument: it uses the saved duration, then meal default or configured fallback; mismatched intervals are errors.
 - Every calendar mutation goes through `calendar.ts`. It locks the request,
   persists each write's identity, and commits the ledger from the actual result.
   An unresolved write must be resumed, never replayed or bypassed. Reminders
   read the event from a saved calendar read; never copy an id, time or link by hand.
 - `slots.ts` keeps the owner's days; `--meal` replaces their window with the
   meal window. Save `meal` with the request for re-offers and guest booking.
-  Explicit or saved duration wins; otherwise code uses 60 minutes for lunch/dinner,
-  30 for coffee, or the configured default for other meetings.
+- Explicit dates/ranges extend slot search beyond the default horizon. `--week this|next`
+  resolves the owner's relative week and rejects manual from/to dates. Save its
+  `resolvedConstraints`; never recompute the week. `--asap` ranks earliest starts
+  from now while preserving minimum notice. If `incomplete` is present, fetch its
+  `requiredCoverage`; missing calendar data is not "no free time".
 - Use each slot's `label` and `dayOfWeek` as printed; never work out a
   weekday yourself. Pass `--locale` for whoever reads the message (the other
   person's locale, like `pt-BR` or `en-US`, from their language or their
   phone's country code).
+
+## Meeting format
+
+`format` is how the meeting happens: `meet` (Meetly creates a Google Meet),
+`in_person` (a place), `phone`, or `unknown`. It counts only when the words
+say it, from the owner's request or from the other person:
+
+- `meet`: "Google Meet", "Meet", "video call", "videochamada", "online",
+  "por vídeo".
+- `in_person`: "in person", "presencial", "pessoalmente", or a named place
+  ("at Starbucks Paulista", "no escritório"). Put the place in `location`.
+- `phone`: "by phone", "por telefone", "call me at <number>".
+- Anything else is `unknown`, including "call", "ligação", "a quick chat",
+  and "coffee" or "lunch" with no place. Never guess from the topic. A Zoom
+  or other link someone sends is not `meet`: leave the format `unknown` and
+  put what they said in `location`.
+
+Pass `locale` with every save: the other person's language tag, the same one
+used for `slots.ts --locale`.
+
+An answer that arrives before booking is recorded with
+`calendar.ts format --id <id> --json '{"format":"<format>","location":"<place>"}'`
+(drop `location` when there is none). Before composing a reply, use the scheduling
+tool's request view or run `request-view.ts --id <id>` after the calendar work.
+Ask format/place only when `askDetails` is true. The view reserves that one question;
+ask it in the current reply and never repeat it. Missing details never block scheduling.
+

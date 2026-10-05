@@ -231,8 +231,10 @@ Existing model settings in the state volume are left unchanged.
 
 - `prompt/AGENTS.md` — Meetly's own prompt: who it is first, then the base's
   tool and authority rules word for word, then how Meetly works.
-- `skills/meetly-setup`, `skills/meetly-poll`, `skills/meetly-group` — what
-  the agent does in setup, in the scheduled check and in a meeting group.
+- `skills/meetly-setup`, `skills/meetly-poll`, `skills/meetly-group`,
+  `skills/meetly-confirm` — what the agent does in setup, in the scheduled
+  check, when the owner asks for a meeting, and when the owner answers,
+  books or changes one.
 - `skills/meetly/scripts/` — the TypeScript CLIs behind them.
 - `boot/` — the entrypoint (`preboot.ts`, the base's boot plus Meetly's
   additions), the setup gate install (`gate.ts`) and the Mac relay timeout
