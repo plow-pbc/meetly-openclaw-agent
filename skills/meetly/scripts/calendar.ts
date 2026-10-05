@@ -1,5 +1,6 @@
 // Owns calendar writes and their ledger commits. A durable intent survives a
 // lost Latch response or a failed ledger write; uncertain creates are never replayed.
+import { calendarOutput } from "./calendar-output.ts";
 import { checkTravel, checkTravelBase, travelFor, travelRange, travelNote, type Travel } from "./travel.ts";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -478,17 +479,23 @@ export async function resumePending(options: CalendarOptions = {}) {
   return { results };
 }
 
-if (isMain(import.meta.url)) run(async () => {
-  const { values, positionals } = parseArgs({ allowPositionals: true, options: { id: { type: "string" }, json: { type: "string" }, "json-file": { type: "string" }, "confirm-contact": { type: "boolean" } } });
+export async function calendarCommand(argv: string[], options: CalendarOptions & { sendOwner?: (text: string) => Promise<void> } = {}) {
+  return calendarOutput(await executeCalendarCommand(argv, options), options.sendOwner);
+}
+
+async function executeCalendarCommand(argv: string[], options: CalendarOptions) {
+  const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: { id: { type: "string" }, json: { type: "string" }, "json-file": { type: "string" }, "confirm-contact": { type: "boolean" } } });
   const action = positionals[0];
   const args = values["json-file"] ? JSON.parse(readFileSync(values["json-file"], "utf8")) : JSON.parse(values.json ?? "{}");
-  if (action === "resume-pending") return resumePending();
+  if (action === "resume-pending") return resumePending(options);
   if (action === "pending") return { ids: pendingCalendarWrites() };
   if ("allowOverlap" in args || "allowOverlapTitles" in args) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
   if (action === "offer") checkContact(ledger(), args.handle, values["confirm-contact"]);
   if ((action === "book" || action === "approve-time") && values.id) checkContact(ledger(), requestById(values.id).handle, values["confirm-contact"]);
-  if (action === "approve-time" && values.id) return approveTime(values.id, args);
-  if (action === "offer") return values.id ? calendarAction(values.id, { action: "offer", request: args }) : offerRequest(args, { confirmContact: values["confirm-contact"] });
+  if (action === "approve-time" && values.id) return approveTime(values.id, args, options);
+  if (action === "offer") return values.id ? calendarAction(values.id, { action: "offer", request: args }, options) : offerRequest(args, { ...options, confirmContact: values["confirm-contact"] });
   if (!values.id || !["duration", "book", "format", "travel", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | duration|approve-time|book|format|travel|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
-  return calendarAction(values.id, { ...args, action } as CalendarAction);
-});
+  return calendarAction(values.id, { ...args, action } as CalendarAction, options);
+}
+
+if (isMain(import.meta.url)) run(() => calendarCommand(process.argv.slice(2)));

@@ -285,7 +285,12 @@ if (isMain(import.meta.url)) {
       for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
-      return { ...checkTime({ ...q, start: values.at }), degraded };
+      const result = checkTime({ ...q, start: values.at });
+      const next = result.reason === "busy" && !degraded.length ? {
+        ownerMainDM: "Before searching alternatives, call the meetly_movable tool (not a script) with action inspect, this slot as candidates, and the same format/travel or requestId. Read meetly-travel. If a blocker looks flexible, ask once privately, finish NO_REPLY and wait for a new owner message. Do not run --near, grant overlap or offer in this turn. Past permission is not a new answer.",
+        otherChats: "Search alternatives without inspecting or disclosing private blockers.",
+      } : undefined;
+      return { ...result, degraded, ...(next ? { next } : {}) };
     }
     return { ...findSlots(q), degraded };
   });

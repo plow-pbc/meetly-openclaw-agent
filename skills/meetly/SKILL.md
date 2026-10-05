@@ -30,9 +30,9 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `contact --handle H [--blocked true\|false] [--name NAME]` | `{doNotContact}`: read the flag, or set/clear it only on the owner's DM instruction |
 | `calendar.ts` | `approve-time --id ID [--json '{"start":"ISO","attendees":"email"}']` | Books only if free; `TIME_APPROVAL_BUSY` returns `near` for `slots.ts --near ... --no-overlap`. Never grants overlap permission. |
 | `calendar.ts` | `offer [--id X] [--confirm-contact] --json '<request with slots, no hold ids>'` | `{request}`: hold offers atomically; `--id` selects a booked reoffer. Failure retains prior offers or drops a new request with cleanup |
-| | `book --id X [--confirm-contact] --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book/move with optional `travel`; returns `ownerTravelNote` for the DM |
-| | `travel --id X --json '{"travel":{"beforeMin":45,"afterMin":45,"override":true}}'` | Save override; resize booked travel. |
-| | `format --id X --json '{"format":"meet", "location":"<optional place>"}'` | save format/location and optional `travel`; resize booked children under the lock |
+| | `book --id X [--confirm-contact] --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book/move with optional `travel`; DMs travel privately; returns only `ownerNotified` status |
+| | `travel --id X --json '{"travel":{"beforeMin":45,"afterMin":45,"override":true}}'` | Save override; resize booked travel and DM the owner. |
+| | `format --id X --json '{"format":"meet", "travel":{"beforeMin":0,"afterMin":0}, "location":"<optional place>"}'` | save format/location and required explicit `travel`; resize booked children under the lock |
 | | `duration --id X --json '{"durationMin":60,"topic":"…","offered":[{"start":"…","end":"…"}]}'` | `{request}`: atomically replace duration, topic and holds on an open request |
 | | `resume-pending` | `{results:[{id, request?, error?}]}`: resume all pending writes, continuing past individual failures |
 | | `pending` | `{ids}`: pending durable calendar writes |

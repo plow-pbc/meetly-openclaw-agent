@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
-import { approveTime, calendarAction, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
+import { approveTime, calendarAction, calendarCommand, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
 import { setDoNotContact, addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { macOutcome, type MacCommand, type MacOutcome } from "../skills/meetly/scripts/mac.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
@@ -987,4 +987,35 @@ test("an offer waiting for the lock cannot overwrite a newer saved duration", as
   assert.equal(f.read().durationMin, 60);
   assert.equal(f.read().offered[0]!.end, "2026-10-05T11:00:00Z");
   assert.equal(f.calls.filter(cmd => cmd[2] === "create").length, 1);
+});
+
+test("calendar CLI delivers travel privately and returns no travel data to its caller", async t => {
+  const f = fixture(t, "group-with-guest");
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const sent: string[] = [];
+  const result = await calendarCommand(["format", "--id", "r_one", "--json", JSON.stringify({
+    format: "in_person", location: "Library", travel: { beforeMin: 10, afterMin: 10 },
+  })], { ...f.options, sendOwner: async text => { sent.push(text); } });
+  assert.doesNotMatch(JSON.stringify(result), /beforeMin|afterMin|ownerTravelNote|travelEvents|Held 10|say if/);
+  assert.equal(result.ownerNotified, true);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0]!, /Held 10 min travel before and 10 min after/);
+  assert.deepEqual(f.read().travel, { beforeMin: 10, afterMin: 10 });
+  assert.equal(f.read().travelEvents!.length, 2);
+  const resumed = await calendarCommand(["resume", "--id", "r_one"], { ...f.options, sendOwner: async text => { sent.push(text); } });
+  assert.doesNotMatch(JSON.stringify(resumed), /beforeMin|afterMin|ownerTravelNote|travelEvents/);
+  assert.equal(sent.length, 1, "resuming a completed write cannot duplicate the DM");
+});
+
+test("ledger CLI never returns private travel in booked or group lookups", async t => {
+  const f = fixture(t, "group-with-guest");
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Library", travel: { beforeMin: 10, afterMin: 10 } }, f.options);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  for (const args of [["booked"], ["find", "--chat", "group-with-guest"]]) {
+    const result = cli("ledger.ts", args, { MEETLY_HOME: f.home });
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /beforeMin|afterMin|travelEvents/);
+    assert.match(result.stdout, /Library/);
+  }
+  assert.equal(f.read().travel!.beforeMin, 10);
 });

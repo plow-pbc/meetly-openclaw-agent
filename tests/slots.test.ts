@@ -416,3 +416,31 @@ test("replacement search honors an explicit format change with its travel estima
   assert.equal(result.json.free, false);
   assert.equal(result.json.reason, "busy");
 });
+
+test("only a known busy exact-time check routes the model to private inspection", () => {
+  const home = tmpHome(), busyFile = join(home, "busy.json");
+  writeJson(join(home, "config.json"), CONFIG);
+  const start = "2026-09-28T10:00:00-03:00";
+  const busy = [{ start, end: "2026-09-28T11:00:00-03:00", id: "private-id", account: "private-account" }];
+  const args = ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--at", start, "--format", "phone", "--travel", '{"beforeMin":0,"afterMin":0}'];
+  for (const [input, guided] of [
+    [{ busy, degraded: [] }, true],
+    [{ busy: [], degraded: [] }, false],
+    [{ busy, degraded: ["unread"] }, false],
+    [{ busy, degraded: [], unknownAfter: start }, false],
+  ] as const) {
+    writeJson(busyFile, input);
+    const result = cli("slots.ts", args, { MEETLY_HOME: home });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(!!result.json.next, guided);
+    if (guided) {
+      assert.match(result.json.next.ownerMainDM, /meetly_movable/);
+      assert.match(result.json.next.otherChats, /alternatives/);
+      assert.doesNotMatch(JSON.stringify(result.json.next), /private-id|private-account/);
+    }
+  }
+  writeJson(busyFile, { busy, degraded: [] });
+  const soon = cli("slots.ts", [...args, "--now", start], { MEETLY_HOME: home });
+  assert.equal(soon.json.reason, "too-soon");
+  assert.equal(soon.json.next, undefined);
+});

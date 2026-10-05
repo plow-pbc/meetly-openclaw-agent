@@ -4,9 +4,8 @@ description: Owner scheduling requests in their DM or a group, asked-request ans
 ---
 # Meetly group
 
-A reply to your last private travel estimate corrects travel, not meeting length.
-Read `meetly-travel` and use `calendar.ts travel`; preserve the meeting start/end
-and duration unless the owner explicitly changes the meeting length.
+A reply to your private travel estimate stays in `meetly-travel`, "Owner corrections":
+list bookings, resize travel, finish privately. Do not enter the recipient lookup below.
 
 Scripts are `node /opt/plow/skills/meetly/scripts/<name>.ts`. Every calendar write goes through `calendar.ts`.
 For an unresolved write, run `calendar.ts resume --id <id>` and wait; never create
@@ -137,9 +136,7 @@ is not a scheduling request. Reply only with a short introduction, such as
 "Hi, I'm <agentName>, <ownerName>'s scheduling assistant", then wait for the owner's
 actual request. Do not ask the guest or group what, when, format or place;
 do not search the calendar or create a request from this introduction.
-End the reply after the guest-facing introduction.
-Do not append an owner-addressed line such as "Patrick, just let me know"
-or invite the owner to supply scheduling instructions in the group.
+End after the guest-facing introduction; do not append owner instructions.
 
 In a group, read `ledger.ts find --chat <runtime chat uid>` first, including booked or
 closed requests; for a pending question, time approval or booked meeting use `meetly-confirm`.
@@ -165,8 +162,11 @@ and Contacts has no card; keep it out of `topic`.
 Extract the topic, proposed times, hard conditions, explicit duration, format and
 place, and, only in the owner's DM, owner-authorized overlap titles. Follow
 "Offer times" with `origin: owner`. If a requested time is busy, say there is an
-existing commitment; in the main DM, inspect with `meetly-travel` before offering
-alternatives. In groups, offer nearest alternatives. Confirm the offer once in its meeting thread.
+existing commitment; in the main DM, inspect with `meetly-travel` first. If a blocker
+looks flexible, ask once and end the turn; wait for the owner before searching
+alternatives or offering. Inspect also when few free options fit. In groups, or after
+no flexible candidate/refusal, offer nearest free times preserving duration, travel
+and hard conditions. Confirm the offer once in its meeting thread.
 
 For an explicit owner-stated length, read busy times and run
 `slots.ts --request <saved id> --duration <minutes>` with the saved conditions.
