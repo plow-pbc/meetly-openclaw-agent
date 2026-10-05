@@ -44,7 +44,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | `busy.ts` | `--fetch [--allow-overlap-title <owner-supplied name>]` (reads the Mac, writes `tmp/busy.json`) | `{file, busy:<count>, degraded, unknownAfter?}` |
 | | `--in F [--in F2…] [--max 100]` | `{busy:[{start,end,id,account}], unknownAfter?, degraded}` |
 | `time.ts` | `next_week --anchor ISO` | `{from,to}` in the owner's timezone, anchored to the source message timestamp; pass weekdays separately |
-| `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], durationMin, unknownAfter?, degraded}` |
+| `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--week this\|next] [--asap] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], durationMin, resolvedConstraints, incomplete?, unknownAfter?, degraded}` |
 | | `--in busy.json [--request ID] --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
 | `travel-context.ts` | `--from ISO --to ISO --start ISO --end ISO [--request ID]` | Private untrusted `{before,after}` locations. |
 | `owner-chat.ts` | | `{chatUid}`: the owner's DM |
@@ -89,6 +89,11 @@ Notes:
 - `slots.ts` keeps the owner's days; `--meal` replaces their window with the
   meal window. The model must choose and save durationMin; pass `--duration` or a saved
   `--request`. Every travel-sensitive operation requires explicit `travel` (zero for virtual). Save `meal` with the request for re-offers and guest booking.
+- Explicit dates/ranges extend slot search beyond the default horizon. `--week this|next`
+  resolves the owner's relative week in their timezone and rejects manual from/to dates.
+  Save its `resolvedConstraints`; never recompute the week. `--asap` ranks the earliest
+  starts from now, including today, while preserving minimum notice. If `incomplete` is
+  present, fetch its `requiredCoverage`; missing calendar data is not "no free time".
 - Use each slot's `label` and `dayOfWeek` as printed; never work out a
   weekday yourself. Pass `--locale` for whoever reads the message (the other
   person's locale, like `pt-BR` or `en-US`, from their language or their
