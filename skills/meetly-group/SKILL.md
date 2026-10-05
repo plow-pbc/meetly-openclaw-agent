@@ -144,8 +144,11 @@ closed requests; for a pending question, time approval or booked meeting use `me
 Otherwise follow "Offer times" with the group tool; it resolves the recipient, so do
 not look up Contacts or ask for a phone.
 
-Before offers, check `pipeline.ts contact --handle <handle>`. A flagged contact needs
-private owner confirmation (`meetly-pipeline`); then use `--confirm-contact`.
+In the owner's DM, before offers check `pipeline.ts contact --handle <handle>`.
+A flagged contact needs private owner confirmation (`meetly-pipeline`); then use
+`--confirm-contact`. In a group, use `meetly_offer_owner_group` for this check and
+private handoff; do not read or discuss contact preferences separately. A `silent`
+result ends the turn without any group reply or separate message.
 For email outreach use `meetly-email`; never substitute a phone number.
 
 In the owner's DM, choose the request path from the owner's message:
