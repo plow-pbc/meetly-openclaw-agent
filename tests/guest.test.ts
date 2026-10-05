@@ -294,8 +294,16 @@ for (const args of [
   const result = await f.tools.get("meetly_other_times")!.execute("call", args);
   assert.ok(JSON.parse(result.content[0]!.text).error);
   if (!args.excludedDays.includes("funday")) before.requests[0]!.excludedDays = args.excludedDays;
-  assert.deepEqual(f.read(), before);
-  assert.equal(f.ownerLines.length, 0);
+  if (JSON.parse(result.content[0]!.text).code === "NO_ALTERNATIVES") {
+    assert.deepEqual(f.request().offered, before.requests[0]!.offered);
+    assert.deepEqual(f.request().constraints, before.requests[0]!.constraints);
+    assert.deepEqual(f.request().excludedDays, args.excludedDays);
+    assert.ok(f.request().pendingOwner && "question" in f.request().pendingOwner!);
+    assert.equal(f.ownerLines.length, 1);
+  } else {
+    assert.deepEqual(f.read(), before);
+    assert.equal(f.ownerLines.length, 0);
+  }
   assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
@@ -1670,7 +1678,9 @@ for (const constraints of [
     assert.deepEqual(f.read(), before);
   } else if (constraints.days?.length === 0) {
     assert.match(JSON.stringify(result), /No other times are available/);
-    assert.deepEqual(f.read(), before);
+    assert.deepEqual(f.request().offered, before.requests[0]!.offered);
+    assert.deepEqual(f.request().constraints, before.requests[0]!.constraints);
+    assert.ok(f.request().pendingOwner && "question" in f.request().pendingOwner!);
     assert.ok(f.commands.every(c => c[2] === "events"));
   } else {
     assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true, JSON.stringify(result));
@@ -1678,8 +1688,11 @@ for (const constraints of [
     assert.ok(f.request().offered.every(o => withinConstraints(Date.parse(o.start), Date.parse(o.end), "UTC", constraints)));
     assert.ok(f.request().offered.every(o => o.start.slice(0, 10) !== "2026-10-08"));
   }
-  assert.equal(f.request().pendingOwner, undefined);
-  assert.equal(f.ownerLines.length, 0);
+  if (constraints.days?.length === 0) assert.equal(f.ownerLines.length, 1);
+  else {
+    assert.equal(f.request().pendingOwner, undefined);
+    assert.equal(f.ownerLines.length, 0);
+  }
   assert.equal(f.deliveries.length, 0);
 });
 
@@ -1915,7 +1928,10 @@ test("no other booked dates leaves the existing event and replacement holds inta
   const commands = f.commands.length;
   const result = await f.act(context, "other_times");
   assert.ok("error" in result, JSON.stringify(result));
-  assert.deepEqual(f.read(), before);
+  assert.deepEqual(f.request().booked, before.requests[0]!.booked);
+  assert.deepEqual(f.request().reoffer, before.requests[0]!.reoffer);
+  assert.deepEqual(f.request().constraints, before.requests[0]!.constraints);
+  assert.ok(f.request().pendingOwner && "question" in f.request().pendingOwner!);
   assert.ok(f.commands.slice(commands).every(c => c[2] === "events"));
 });
 
@@ -2069,7 +2085,7 @@ test("an invalidated travel pick searches alternatives then exposes bounded exha
   const result = await guestAction(context, "other_times", { offer_week: false }) as any;
   assert.equal(result.code, "NO_ALTERNATIVES");
   assert.deepEqual(result.conditions, ledger.requests[0]!.constraints);
-  assert.equal(result.recovery.action, "ask_owner");
+  assert.equal(result.recovery.action, "wait");
   assert.doesNotMatch(JSON.stringify(result), /blocker|owner@example/);
   assert.equal(f.read().requests[0]!.status, "offered");
 });
@@ -2113,7 +2129,7 @@ test("owner-group requires the model to choose a duration before creating a requ
   assert.deepEqual(f.commands, []);
 });
 
-for (const start of ["thu", "Thursday", '{"weekday":"thu"}', { weekday: "Thursday" }])
+for (const start of ["thu", "Thursday", '{"weekday":"funday"}', { weekday: "Thursday" }])
 test(`weekday text is rejected before effects and an enum retry succeeds: ${JSON.stringify(start)}`, async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.constraints = {};
@@ -2342,4 +2358,64 @@ test("guest exact-start preferences are validated and applied to replacement sea
   assert.ok(!result.error, JSON.stringify(result));
   assert.ok(result.offered.length);
   assert.ok(result.offered.every((slot: { start: string }) => slot.start.slice(11, 16) === "11:45"));
+});
+
+for (const approved of [true, false]) test(`an early held lunch is pickable only with saved owner approval: ${approved}`, async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.meal = "lunch";
+  request.durationMin = 60;
+  request.travel = { beforeMin: 15, afterMin: 15 };
+  if (approved) request.constraints!.startTime = "11:00";
+  for (const slot of request.offered) {
+    slot.start = slot.start.replace("10:00", "11:00");
+    slot.end = slot.end.replace("10:30", "12:00");
+    f.events.set(slot.holdId!, event(slot.holdId!, slot.start, slot.end));
+  }
+  f.save(f.ledger);
+  const result = await f.act(context, "pick", { start: request.offered[0]!.start }) as any;
+  if (approved) {
+    assert.equal(result.error, undefined, JSON.stringify(result));
+    assert.equal(f.request().status, "booked");
+    assert.deepEqual(f.request().travel, { beforeMin: 15, afterMin: 15 });
+    assert.doesNotMatch(JSON.stringify(result), /beforeMin|15 min|Held/);
+  } else assert.equal(result.code, "TIME_UNAVAILABLE");
+});
+
+test("exhausted scheduling asks the owner once and returns a visible holding reply", async t => {
+  const f = fixture(t);
+  f.events.set("busy", event("busy", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z"));
+  const result = await f.act(context, "other_times", { offer_week: false }) as any;
+  assert.equal(result.code, "NO_ALTERNATIVES");
+  assert.equal(result.ownerAskSent, true);
+  assert.notEqual(result.silent, true);
+  assert.match(result.message, /asked Alex/);
+  assert.equal(result.recovery.action, "wait");
+  assert.equal(f.ownerLines.length, 1);
+  await f.act(context, "other_times", { offer_week: false });
+  assert.equal(f.ownerLines.length, 1);
+});
+
+test("a JSON-encoded weekday object is decoded and validated without retrying or inventing a clock", async t => {
+  const f = fixture(t);
+  const result = await f.act(context, "other_times", { offer_week: true, start: '{"weekday":"tue"}' }) as any;
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.ok(result.offered.length);
+  assert.ok(result.offered.every((slot: { start: string }) => slot.start.startsWith("2026-10-06")));
+});
+
+test("an uncertain scheduling handoff stays visible without claiming delivery or sending twice", async t => {
+  const f = fixture(t);
+  f.events.set("busy", event("busy", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z"));
+  f.delivery.fail = true;
+  const tool = f.tools.get("meetly_other_times")!;
+  const result = JSON.parse((await tool.execute("failed", { offer_week: false })).content[0]!.text);
+  assert.equal(result.code, "NO_ALTERNATIVES");
+  assert.notEqual(result.silent, true);
+  assert.notEqual(result.ownerAskSent, true);
+  assert.doesNotMatch(result.message, /asked Alex|Alex.*repl/i);
+  assert.equal(result.recovery.action, "wait");
+  assert.equal(f.deliveries.length, 1);
+  await tool.execute("again", { offer_week: false });
+  assert.equal(f.deliveries.length, 1);
 });

@@ -98,7 +98,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     const busy = await fetchBusy(config, range);
     if (busy.degraded.length) throw new Error("calendar unavailable");
     busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
-    const query = { ...search, ...busy, allowOverlap: existing?.allowOverlap };
+    const query = { ...search, ...busy, ownerStartTime: constraints?.startTime, allowOverlap: existing?.allowOverlap };
     const near = !args.asap && proposed?.from && proposed.from === proposed.to
       ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
     const { slots, preferencesUnavailable, incomplete } = findPreferredSlots(query, proposed, [{ ...query, near }]);

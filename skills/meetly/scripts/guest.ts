@@ -104,7 +104,7 @@ function preferences(args: GuestArgs, timezone: string): Constraints {
 async function check(request: Request, config: Config, requested: string | WeekdayTime) {
   if (typeof requested === "object" && requested.time === undefined) throw new Error("An exact time is required");
   const start = typeof requested === "string" ? requested : resolveWeekday(requested, request.reoffer?.offered ?? request.offered, config.timezone);
-  const query = { now: Date.now(), config, travel: request.travel, format: request.format, meal: request.meal, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
+  const query = { now: Date.now(), config, travel: request.travel, format: request.format, meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
   const { slot } = checkTime({ ...query, busy: [] });
   const range = travelRange(slot.start, slot.end, request);
   const busy = await busyFor(request, config, range.from, range.to);
@@ -136,7 +136,7 @@ async function pick(request: Request, config: Config, start: string, attendees?:
   if (attendees !== undefined && (!Array.isArray(attendees) || (attendees.length > 0 && (request.channel !== "email" || request.status === "booked"
     || attendees.some(email => typeof email !== "string" || !/^[^\s@,]+@[^\s@,]+$/.test(email)))))) return { error: "Additional invitees need email addresses on an unbooked email request." };
   const requested = checkTime({ now: Date.now(), config, busy: [], start,
-    travel: { beforeMin: 0, afterMin: 0 }, meal: request.meal, durationMin: request.durationMin }).slot.start;
+    travel: { beforeMin: 0, afterMin: 0 }, meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin }).slot.start;
   const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(requested));
   if (!offer) return { error: "Choose one of the currently offered start times." };
   // Only a replacement held before this run can represent the guest's choice.
@@ -172,6 +172,14 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   const travel = request.travel?.override ? request.travel : args.travel ?? request.travel;
   try {
+    if (typeof args.start === "string") {
+      let decoded: unknown;
+      try { decoded = JSON.parse(args.start); } catch { /* ISO times are not JSON. */ }
+      if (decoded && typeof decoded === "object" && !Array.isArray(decoded)
+        && Object.keys(decoded).every(key => key === "weekday" || key === "time")) {
+        args = { ...args, start: decoded as WeekdayTime };
+      }
+    }
     if (typeof args.start === "string" && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(args.start)) {
       throw new Error("invalid start");
     }
@@ -214,7 +222,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     }
     const { days, from, to } = bounds;
     const allowedDay = withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, { days, from, to });
-    if (allowedDay && checked.free && checked.outsideHours) return askOwner(request, config, { start: checked.slot.start }, sendOwner);
+    if (allowedDay && checked.free && checked.outsideHours) return askOwner(request, config, { start: checked.slot.start }, sendOwner, "scheduling");
     if (checked.free && withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, bounds)) exact = checked.slot;
     preferred.from = preferred.to = checked.slot.start.slice(0, 10);
     preferred.after = checked.slot.start.slice(11, 16);
@@ -223,7 +231,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   const now = Date.now();
   const query: SlotQuery = { busy: [], ...bounds, now, config, travel, format: request.format,
     excludeDates: bookedDate && !requestedBookedDate ? [bookedDate] : [],
-    meal: request.meal, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
+    meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
   const range = preferredSearchCoverage(query, preferred);
   Object.assign(query, await busyFor(request, config, range.from, range.to));
   const narrowed = intersectConstraints(bounds, preferred);
@@ -231,10 +239,17 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     ? [{ ...query, from: narrowed.from, to: narrowed.to }, query] : [query];
   const { slots, preferencesUnavailable, incomplete } = exact ? { slots: [exact], preferencesUnavailable: false, incomplete: undefined } : findPreferredSlots(query, preferred, fallbacks);
   if (incomplete) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current offer is unchanged.", code: "INCOMPLETE_CALENDAR", incomplete };
-  if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged.",
-    code: "NO_ALTERNATIVES", conditions: request.constraints ?? {},
-    recovery: { action: "ask_owner", tool: "meetly_ask_owner", retry: false,
-      question: "No alternative times fit the meeting conditions. May we look on another day or widen the time window?" } };
+  if (!slots.length) {
+    const handoff = await askOwner(request, config, {
+      question: "No alternative times fit the meeting conditions. May we look on another day or widen the time window?",
+    }, sendOwner, "scheduling");
+    return { error: "No other times are available within the owner’s conditions. The current offer is unchanged.",
+      ...handoff, code: "NO_ALTERNATIVES", conditions: request.constraints ?? {},
+      message: "ownerAskSent" in handoff && handoff.ownerAskSent
+        ? `Those times don't work. I've asked ${config.ownerName} about another day or time and will get back to you here.`
+        : "Those times don't work. I can't confirm another time yet.",
+      recovery: { action: "wait", retry: false } };
+  }
   const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {
     channel, travel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
@@ -243,7 +258,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   return { ...view(request, config), preferencesUnavailable };
 }
 
-async function askOwner(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
+async function askOwner(request: Request, config: Config, args: GuestArgs, sendOwner: SendOwner | undefined, purpose: "guest-question" | "scheduling") {
   args = { ...args,
     start: typeof args.start === "string" ? args.start.trim() || undefined : args.start,
   };
@@ -283,14 +298,16 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   // Keep the slot on an uncertain send so another turn cannot duplicate it.
   try {
     const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
-    await sendOwner!("question" in pendingOwner
+    await sendOwner!(purpose === "scheduling" && "question" in pendingOwner
+      ? `Scheduling ${label(request.topic)} with ${label(request.name ?? request.handle)} needs your decision. ${question}`
+      : "question" in pendingOwner
       ? `${label(request.name ?? "Your guest")} asked in your ${label(request.topic)} thread. Guest question: ${JSON.stringify(question)}. Reply there, or tell me what to say.`
       : `${label(request.name ?? "Your guest")} in your ${label(request.topic)} group asks: ${JSON.stringify(question)} — what should I tell them?`);
   } catch {
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
   }
   return { ownerName: config.ownerName, ownerAskSent: true, askDetails: false,
-    ...("question" in pendingOwner ? { silent: true } : { message: `I've asked ${config.ownerName} and will get back to you here when ${config.ownerName} replies.` }) };
+    ...(purpose === "guest-question" ? { silent: true } : { message: `I've asked ${config.ownerName} and will get back to you here when ${config.ownerName} replies.` }) };
 }
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
@@ -316,7 +333,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (action === "ask_owner" && ["offered", "booked"].includes(request.status)) {
       if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
-      const result = await askOwner(request, config, { question: args.question }, sendOwner);
+      const result = await askOwner(request, config, { question: args.question }, sendOwner, "guest-question");
       return request.channel !== "email" ? { ...result, silent: true } : result;
     }
     if (request.status !== "offered" && request.status !== "booked") return view(request, config);

@@ -1,8 +1,8 @@
 // Free times to offer: the owner's days and the meeting's window, in the owner's zone,
 // clear of busy time, at least MIN_NOTICE_MIN ahead, spread across days.
 // The label and weekday come from here so the agent never computes a weekday.
-// Lunch and dinner use their own windows; request preferences only narrow them. Outside
-// that window or the owner's days, --at requires owner confirmation.
+// Lunch and dinner use their own windows unless the owner selected an exact start.
+// Guest preferences only narrow them; other times require owner confirmation.
 // With a locale (the other person's, e.g. pt-BR or en-US) the label follows
 // that locale's date and time conventions; without one it is "tue 29/9 12:00".
 import { travelRange, type TravelInput } from "./travel.ts";
@@ -28,6 +28,7 @@ export type SlotQuery = Constraints & TravelInput & SearchTiming & {
   coverage?: Coverage;
   durationMin?: number;
   meal?: Meal;
+  ownerStartTime?: string;
   allowOverlap?: EventRef[];
   exclude?: string[];
   excludeDates?: string[];
@@ -40,7 +41,13 @@ const MEAL_WINDOWS: Partial<Record<Meal, [string, string]>> = {
   lunch: ["11:30", "13:30"], dinner: ["18:00", "21:00"],
 };
 
-function windowFor(config: Config, meal?: Meal): [number, number] {
+function windowFor(config: Config, meal?: Meal, ownerStartTime?: string, durationMin?: number): [number, number] {
+  // An explicit owner-selected clock time replaces the default meeting window.
+  // Travel is checked against busy coverage separately, never against this window.
+  if (ownerStartTime !== undefined) {
+    const start = minutes(parseTime(ownerStartTime));
+    return [start, start + requireDuration(durationMin)];
+  }
   const window = meal ? MEAL_WINDOWS[meal] : undefined;
   const [start, end] = window ?? [config.windowStart, config.windowEnd];
   return [minutes(start!), minutes(end!)];
@@ -140,7 +147,7 @@ export function findSlots(q: SlotQuery): SlotResult {
   const count = Math.min(q.count ?? SLOT_COUNT, SLOT_COUNT);
   const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, durationMin: duration, busy: [], travel: { beforeMin: 0, afterMin: 0 }, start: q.near }).slot.start);
 
-  let [startMin, endMin] = windowFor(config, q.meal);
+  let [startMin, endMin] = windowFor(config, q.meal, q.ownerStartTime, duration);
   const exactStart = q.startTime === undefined ? undefined : minutes(parseTime(q.startTime));
   if (exactStart !== undefined && exactStart < startMin) return { slots: [], durationMin: duration, resolvedConstraints };
   startMin = exactStart ?? Math.ceil(startMin / STEP_MIN) * STEP_MIN;
@@ -230,6 +237,7 @@ export function checkTime(q: TravelInput & {
   coverage?: Coverage;
   durationMin?: number;
   meal?: Meal;
+  ownerStartTime?: string;
   allowOverlap?: EventRef[];
   locale?: string;
 }): TimeCheck {
@@ -244,7 +252,7 @@ export function checkTime(q: TravelInput & {
   const s = wallParts(start, tz);
   const e = wallParts(end, tz);
   const sameDay = s.y === e.y && s.m === e.m && s.d === e.d;
-  const [windowStart, windowEnd] = windowFor(q.config, q.meal);
+  const [windowStart, windowEnd] = windowFor(q.config, q.meal, q.ownerStartTime, q.durationMin);
   const outsideHours = !q.config.days.includes(s.weekday) || !sameDay ||
     s.hh * 60 + s.mm < windowStart || e.hh * 60 + e.mm > windowEnd;
   const range = travelRange(start, end, q);
@@ -341,6 +349,7 @@ if (isMain(import.meta.url)) {
       for (const e of values.exclude) if (Number.isNaN(Date.parse(e))) throw new Error(`--exclude is not a time: ${e}`);
       q.exclude = values.exclude;
     }
+    q.ownerStartTime = request?.constraints?.startTime ?? q.startTime;
     if (request) {
       const narrowed = intersectConstraints(request.constraints, q);
       Object.assign(q, narrowed);
