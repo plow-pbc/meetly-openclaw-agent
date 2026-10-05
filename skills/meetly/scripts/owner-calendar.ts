@@ -29,6 +29,9 @@ export async function changeOwnerMeeting(ctx: OwnerContext, args: Args,
     // Text delivery is part of the tool: only confirmed sends may silence the owner turn.
     if (args.action === "format" && request.channel !== "email") {
       delete output.ownerReply;
+      if ("unchanged" in result && result.unchanged && !request.pendingOwner) {
+        return { ...output, effectiveTravel: request.travel, silent: true };
+      }
       try {
         if (!sendGuest || !request.chatUid) throw new Error("Guest messaging is unavailable.");
         if (request.pendingOwner) {
@@ -40,10 +43,10 @@ export async function changeOwnerMeeting(ctx: OwnerContext, args: Args,
           delete (output.request as Request).pendingOwner;
         } else await sendGuest(request.chatUid, args.confirmation!.trim());
         return { ...output, effectiveTravel: request.travel, guestConfirmation: { delivered: true },
-          ...(output.ownerNotified === true ? { silent: true } : {}) };
+          ...((output.ownerNotified === true || output.unchanged === true) ? { silent: true } : {}) };
       } catch {
         return { ...output, effectiveTravel: request.travel, guestConfirmation: { delivered: false },
-          error: "The calendar changed, but guest delivery could not be confirmed. Report this privately; do not retry the change or resend automatically." };
+          error: "The calendar is up to date, but guest delivery could not be confirmed. Report this privately; do not retry the change or resend automatically." };
       }
     }
     const guestConfirmation = args.action !== "format" ? undefined : request.pendingOwner

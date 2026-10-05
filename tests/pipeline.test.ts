@@ -252,3 +252,13 @@ test("owner-facing pipeline times use localeFormatter in the configured owner zo
   assert.ok(localized.json.text.includes(localeFormatter("pt-BR", "America/Los_Angeles").format(new Date(T0))));
   t.diagnostic(view.json.text);
 });
+
+test("owner-initiated asked requests do not trigger a second generic decision nudge", () => {
+  for (const origin of ["owner", "owner-group"] as const) {
+    const ledger = addRequest(empty(), { ...input, origin, status: "asked", offered: [], chatUid: undefined }, T0, "owner-started");
+    assert.equal(pipeline(ledger, T0 + 17_000).length, 1, "keep the pending work visible");
+    assert.equal(reserveNudges(ledger, T0 + 17_000).text, null);
+  }
+  const inbound = addRequest(empty(), { ...input, origin: "inbound", status: "asked", offered: [], chatUid: undefined }, T0, "inbound");
+  assert.equal(reserveNudges(inbound, T0 + 17_000).items.length, 1);
+});

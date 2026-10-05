@@ -208,6 +208,10 @@ export async function calendarAction(id: string, action: CalendarAction, options
         const format = input.action === "format" ? input.format : request.format;
         input.travel = request.travel?.override && !input.travel.override && format !== "meet" && format !== "phone" ? request.travel : input.travel;
         checkTravelBase({ format, travel: input.travel }, loadConfig().travelBase);
+        if (input.action === "format" && ["offered", "booked"].includes(request.status)
+          && request.format === input.format && (request.location ?? "") === (input.location ?? "")
+          && request.travel?.beforeMin === input.travel.beforeMin && request.travel?.afterMin === input.travel.afterMin
+          && !!request.travel?.override === !!input.travel.override) return { request, unchanged: true };
       }
       if ((input.action === "format" || input.action === "travel") && request.status === "offered") {
         patch({ ...(input.action === "format" ? { format: input.format, location: input.location ?? "" } : {}),
@@ -240,7 +244,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         input.request.travel = saved.travel;
         input.request.format = saved.format;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
-        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, input.request));
+        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.meal ?? input.request.topic} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, input.request));
       } else if (input.action === "attendee") {
         if (!["add", "remove"].includes(input.operation) || typeof input.email !== "string" || !/^[^\s,;@]+@[^\s,;@]+\.[^\s,;@]+$/.test(input.email.trim())) {
           throw new Error("Supply operation add or remove and one attendee email.");
@@ -308,7 +312,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         }
         const format = effective.format;
         const location = input.action === "format" ? input.location ?? "" : request.location;
-        if (input.action !== "travel") add(verb, slot, ["--summary", `${request.topic} with ${request.name ?? request.handle}`, "--send-updates", "all",
+        if (input.action !== "travel") add(verb, slot, ["--summary", `${request.meal ?? request.topic} with ${request.name ?? request.handle}`, "--send-updates", "all",
           ...(format === "meet" ? ["--with-meet"] : []),
           ...(format === "phone" ? ["--location=Phone call"] : location !== undefined ? [`--location=${location}`] : []),
           ...(input.action === "book" && input.attendees ? ["--attendees", input.attendees] : [])], range);
@@ -451,7 +455,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         && event.attendees.some(a => typeof a?.email === "string" && !a.organizer && !a.self && !sameHandle(a.email, step.account));
     }
     return { request, travelOnly: completed.input.action === "travel", ownerTravelNote: request.status === "booked" ? travelNote(request)
-      ?? (releasedTravel ? `Travel time for ${request.topic} was released.` : undefined) : undefined, invitationSent: completed.input.action === "book" && !!completed.input.attendees,
+      ?? (releasedTravel ? `Travel time for ${request.meal ?? request.topic} was released.` : undefined) : undefined, invitationSent: completed.input.action === "book" && !!completed.input.attendees,
       invitationUpdated,
       meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
   }).then(result => ({
