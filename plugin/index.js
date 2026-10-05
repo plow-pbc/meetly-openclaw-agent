@@ -6,6 +6,7 @@
 //
 // Plain JavaScript on purpose: the image ships it as is, with no build step,
 // and preboot copies it into the state volume's plugin root on every boot.
+import { registerOwnerCalendarTool } from "./owner-calendar.js";
 import { calendarPolicy } from "./calendar-policy.js";
 import { execFile } from "node:child_process";
 import { registerPipelineHooks } from "./pipeline.js";
@@ -100,6 +101,7 @@ export default {
     registerPipelineHooks(api);
     registerGuestTools(api);
     registerOwnerTools(api);
+    registerOwnerCalendarTool(api);
     registerOwnerGroupTool(api);
     registerOwnerDmTool(api);
     registerMovableTool(api);

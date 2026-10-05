@@ -14,12 +14,15 @@ other event") is not a time approval or a booking: follow `meetly-group`, "Read 
 
 Before interpreting a change, resolve its subject from the preceding conversation.
 If the last private message was a travel estimate, read `meetly-travel` first:
-a bare number corrects travel via `calendar.ts travel`, preserving meeting duration.
+a bare number corrects travel via `meetly_set_owner_travel`, preserving meeting duration.
 Only an explicit meeting-length change belongs here. Read `meetly-travel` before
 format/place changes and pass explicit estimates to availability checks.
 
 For email requests, deliver through `meetly-email`. Booking an unchanged offer keeps its saved
-travel estimate. For place changes, re-estimate with `meetly-travel`. Never repeat the owner note.
+travel estimate. For place changes, re-estimate with `meetly-travel`; the saved owner
+override still wins. In the owner DM use `meetly_set_owner_format` for
+format/place changes, taking private travel facts only from its `effectiveTravel`.
+Never repeat the owner note.
 
 ## Meeting status and attendee edits
 
@@ -66,7 +69,8 @@ tell the owner; do not resend. Only if the owner explicitly authorizes a retry, 
 `ledger.ts delivery --id <id> --kind answer --action clear` first.
 
 - **Question (`pendingOwner.question`):** if the owner's answer changes location, format or time,
-  apply it first: use `calendar.ts format` with `meetly-travel` for place/format, or
+  apply it first: use `meetly_set_owner_format` in the DM or `calendar.ts format`
+  in the group, with `meetly-travel` for place/format, or
   "Book the event" / "Changes after booking" for time changes. Wait until the
   calendar writer succeeds before calling `meetly_answer_owner` or acknowledging.
   On a failed or unresolved write, leave the question pending; resume unresolved
@@ -121,7 +125,7 @@ guest to identify a request. Larger groups are out of scope.
 
 The owner can authorize a time outside the meeting window; conflict overrides require their DM.
 For other times, follow "Offer times" with the saved conditions and the owner's changes.
-For a format/place change, run `calendar.ts format --id <id> --json '<format/location>'`.
+For a format/place change in the owner DM, use `meetly_set_owner_format`. In the group, run `calendar.ts format --id <id> --json '<format/location>'`.
 After a successful format/place change, tell the guest the new format/place once,
 not just the owner. With a pending question use `meetly_answer_owner` with
 `outcome: "calendar_change"`; otherwise send to the saved thread with `plow_reply_to`
