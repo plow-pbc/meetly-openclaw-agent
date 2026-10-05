@@ -2436,3 +2436,27 @@ test("an uncertain scheduling handoff stays visible without claiming delivery or
   await tool.execute("again", { offer_week: false });
   assert.equal(f.deliveries.length, 1);
 });
+
+for (const replacement of [undefined, { days: ["wed"], from: "2026-10-07", to: "2026-10-07", after: "12:00", before: "16:00" }, {}]) {
+  test(`owner-group re-offer replaces supplied policy and inherits omitted location: ${JSON.stringify(replacement)}`, async t => {
+    const f = fixture(t);
+    const saved = f.ledger.requests[0]!;
+    saved.format = "in_person";
+    saved.location = "Library";
+    f.save(f.ledger);
+    const oldHolds = saved.offered.map(o => o.holdId!);
+    const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+      topic: "Planning", durationMin: saved.durationMin, ...(replacement === undefined ? {} : { constraints: replacement }),
+    });
+    assert.ok(!("error" in result), JSON.stringify(result));
+    assert.equal(f.request().id, saved.id);
+    assert.equal(f.request().chatUid, saved.chatUid);
+    assert.equal(f.request().location, "Library");
+    assert.equal(f.request().format, "in_person");
+    assert.deepEqual(f.request().constraints ?? {}, replacement ?? saved.constraints);
+    assert.ok(f.request().offered.length > 0);
+    if (replacement?.days) assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-07T") && o.start.slice(11, 16) >= "12:00" && o.end.slice(11, 16) <= "16:00"));
+    assert.ok(oldHolds.every(id => f.events.get(id)?.status === "cancelled"));
+    saved.constraints = f.request().constraints;
+  });
+}
