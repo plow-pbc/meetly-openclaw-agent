@@ -160,21 +160,6 @@ async function pick(request: Request, config: Config, start: string, attendees?:
     ...await notifyOwner(request, config, "travel", sendOwner) };
 }
 
-// Tool arguments may encode a weekday object as JSON inside a string.
-function otherTimesStart(start: GuestArgs["start"]): GuestArgs["start"] {
-  if (typeof start === "string") {
-    const text = start.trim();
-    if (/^(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)$/i.test(text)) {
-      return { weekday: text.slice(0, 3).toLowerCase() as WeekdayTime["weekday"] };
-    }
-    if (text.startsWith("{")) start = JSON.parse(text);
-  }
-  if (start && typeof start === "object" && typeof start.time === "string" && !start.time.trim()) {
-    return { ...start, time: undefined };
-  }
-  return start;
-}
-
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
   if (typeof args.offer_week !== "boolean") {
     const message = "Set offer_week explicitly: true for that week or the same week; false when the guest asks for a new date range or a broader search. Include every named unavailable weekday in excludedDays. No search or holds were made; retry with this scope.";
@@ -184,8 +169,30 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     const message = "For that week, keep offer_week: true and omit next_week entirely. Retain excludedDays and any preferred weekday. next_week is only for a new week relative to a source timestamp, with offer_week: false. No search or holds were made; retry using only the intended scope.";
     return { error: message, code: "DATE_SCOPE_CONFLICT", recovery: { action: "retry", retry: true, message } };
   }
-  args = { ...args, start: otherTimesStart(args.start) };
   const travel = request.travel?.override ? request.travel : args.travel ?? request.travel;
+  try {
+    if (typeof args.start === "string") {
+      let decoded: unknown;
+      try { decoded = JSON.parse(args.start); } catch { /* ISO times are not JSON. */ }
+      if (decoded && typeof decoded === "object" && !Array.isArray(decoded)
+        && Object.keys(decoded).every(key => key === "weekday" || key === "time")) {
+        args = { ...args, start: decoded as WeekdayTime };
+      }
+    }
+    if (typeof args.start === "string" && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(args.start)) {
+      throw new Error("invalid start");
+    }
+    if (args.start && typeof args.start === "object" && typeof args.start.time === "string" && !args.start.time.trim()) {
+      args = { ...args, start: { ...args.start, time: undefined } };
+    }
+    if (args.start !== undefined && typeof args.start !== "string") {
+      resolveWeekday(args.start!, request.reoffer?.offered ?? request.offered, config.timezone);
+    }
+  } catch (error) {
+    if (error instanceof WeekdayDateRequired) throw error;
+    const message = 'Provide a nested weekday object, for example arguments {"start":{"weekday":"thu"}} for Thursday. Allowed weekday values: mon, tue, wed, thu, fri, sat, sun. Optional time must be HH:MM; omit it for a day-only preference. Do not quote the object as a JSON string or pass a bare weekday. Only for an explicitly dated time, start may be an ISO string YYYY-MM-DDTHH:MM[:SS[.sss]][Z|±HH:MM]. Never invent a clock time to repair a weekday-only request.';
+    return { error: message, code: "INVALID_START", recovery: { action: "retry", retry: true, message } };
+  }
   const preferred = preferences(args, config.timezone);
   const newlyExcluded = preferences({ days: args.excludedDays }, config.timezone).days ?? [];
   const restored = preferences({ days: args.restoredDays }, config.timezone).days ?? [];
@@ -253,7 +260,6 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
 async function askOwner(request: Request, config: Config, args: GuestArgs, sendOwner: SendOwner | undefined, purpose: "guest-question" | "scheduling") {
   args = { ...args,
     start: typeof args.start === "string" ? args.start.trim() || undefined : args.start,
-    question: typeof args.question === "string" ? args.question.trim() || undefined : args.question,
   };
   if (request.pendingOwner) return { error: "A question is already open with the owner. Wait for their answer." };
   if ((args.question === undefined) === (args.start === undefined)) return { error: "Provide either a question or a start time, not both." };
@@ -263,8 +269,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   const askedAt = new Date(Date.now()).toISOString();
   if (args.question !== undefined) {
     if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
-    question = args.question.replace(/\s+/g, " ").trim();
-    question = question.slice(0, OWNER_QUESTION_LIMIT);
+    if (args.question.length > OWNER_QUESTION_LIMIT) return { error: `Provide a question of ${OWNER_QUESTION_LIMIT} characters or fewer; received ${args.question.length}. Nothing was sent.` };
+    question = args.question;
     pendingOwner = { question, askedAt };
   } else {
     const checked = await check(request, config, args.start!);
@@ -338,7 +344,8 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
-    return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt);
+    if (action === "pick") return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt);
+    return { error: "Unknown scheduling action." };
   } catch (error) {
     if (error instanceof TravelBaseRequired) return { error: "The owner needs to provide travel information privately before scheduling can continue.",
       code: "TRAVEL_BASE_REQUIRED", recovery: { action: "ask_owner", tool: "meetly_ask_owner", retry: false,
