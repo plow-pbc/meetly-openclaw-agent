@@ -46,3 +46,27 @@ Strict replay remains red because of an unhandled `sessions_yield` call after th
 question; it also claims Ned is free without evidence. These are concerns, not a
 fully green preview. Model budget exhausted at 64/64 calls, including failed
 candidates and one invalid overlay run. No push or live execution.
+
+## Travel result privacy
+
+`calendar.ts` CLI previously exposed the raw request's travel and `ownerTravelNote`
+in owner group turns. Its output boundary now sends the note to the verified owner
+DM itself, strips private travel fields recursively, and returns `ownerNotified`.
+Failed/unknown notification returns false without the note, retry or rollback of
+the calendar change. Completed-write resume does not resend. Ledger CLI responses
+also omit travel data. This applies to all CLI callers because the subprocess has
+no trusted chat context; internal calendar functions retain travel for scheduling
+and the existing guest adapters, which already send privately and return a view.
+
+The CLI uses Plow's authenticated message endpoint after `ownerChat` resolves the
+unique active owner DM; it does not route through the current conversation. Adapt
+replay CLI handlers to call `calendarCommand`, not expose raw `calendarAction`
+results. Remove old skill instructions to relay `ownerTravelNote` manually.
+
+Validation: two regressions failed before the fix; 559 tests and typecheck pass.
+The eng35 group-location reproducer passes privacy checks twice with 6/16 GLM calls:
+private owner note only, no travel data in results or group messages/finals. Calendar
+and message backends were fake. One run still cleared the owner question before the
+calendar mutation; that separate answer-ordering issue is outside this privacy fix.
+Evidence: `notes/qa-evidence/travel-privacy/` in the kitchen workspace. No live run
+or push; no claim of a rebuilt-image test.

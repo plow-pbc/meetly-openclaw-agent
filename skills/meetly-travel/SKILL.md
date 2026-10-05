@@ -21,8 +21,9 @@ flow, read `meetly-group`, look up Contacts or search open requests.
    Use the owner's minutes; one symmetric estimate changes both sides. This preserves
    meeting start/end and duration. The override wins over later estimates for this
    meeting; a virtual format needs explicit zero.
-3. On success, relay `ownerTravelNote` in this DM and finish. On error, report it
-   privately without claiming a change. Do not notify the guest or create an offer.
+3. The writer sends the travel note directly to the owner DM. On success, finish;
+   do not repeat that note. On error, report it privately without claiming a change.
+   Do not notify the guest or create an offer.
 
 When a format/place change cannot fit, keep the booking and search replacement times
 with the proposed format and explicit travel, preserving owner conditions. Offer returned
@@ -72,9 +73,11 @@ the meeting window. Offers require room but create no travel events until booked
 The writer rechecks, creates private busy children without attendees, carries them
 on moves and deletes them on cancellation.
 
-After successful booking/resizing, relay `ownerTravelNote` privately using the DM
-from `owner-chat.ts`; never include travel in guest/group replies. Guest tools send
-that note themselves; do not duplicate it.
+After successful booking/resizing, code sends the travel note directly to the owner DM.
+`ownerNotified` confirms delivery; a false value means notification is unconfirmed,
+not that the calendar change failed. Never repeat the note or retry the mutation
+to resend it. Calendar and ledger CLI results omit private travel data in every chat.
+Never include travel minutes in guest/group replies.
 
 ## Flexible blockers
 

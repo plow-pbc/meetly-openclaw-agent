@@ -1,6 +1,7 @@
 // Meetly's record of every scheduling request: who, which group, which times
 // were offered and held, and how it ended. Cleanup records event ids or exact
 // operation markers for creates whose event ids were never received.
+import { withoutPrivateTravel } from "./calendar-output.ts";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
@@ -585,5 +586,5 @@ if (isMain(import.meta.url)) {
       default:
         throw new Error("usage: ledger.ts find | add | save | update | delivery | expired | asked | booked | pending | cleanup | reminders");
     }
-  });
+  }, withoutPrivateTravel);
 }
