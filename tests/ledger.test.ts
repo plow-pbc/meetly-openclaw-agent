@@ -412,6 +412,16 @@ test("CLI lists and clears a general owner question using the existing pending c
 });
 
 
+for (const origin of ["owner", "owner-group", "inbound"] as const) test(`requests preserve their chat and prompt policy across re-offers (${origin})`, () => {
+  const ledger = addRequest(empty(), input({ origin, chatUid: "cht_MiXeD", askDetails: false }), T0, "r_1");
+  assert.throws(() => saveRequest(ledger, input({ chatUid: "cht_mixed" }), T0 + HOUR, "r_2"), /cannot move/);
+  assert.throws(() => updateRequest(ledger, "r_1", { chatUid: "elsewhere" }, T0 + HOUR), /cannot move/);
+  const saved = saveRequest(ledger, input(), T0 + HOUR, "r_2").requests[0]!;
+  assert.equal(saved.origin, origin);
+  assert.equal(saved.askDetails, false);
+  assert.equal(saved.chatUid, "cht_MiXeD");
+});
+
 test("a fresh start reservation tells the caller to send, and a duplicate explicitly forbids sending", () => {
   const env = { MEETLY_HOME: tmpHome() };
   const { id } = cli("ledger.ts", ["save", "--json", JSON.stringify(input())], env).json.request;
@@ -438,4 +448,19 @@ test("a fresh start reservation tells the caller to send, and a duplicate explic
   const next = cli("ledger.ts", ["delivery", "--id", fresh.id, "--kind", "start", "--action", "begin"], env);
   assert.equal(next.status, 0, next.stderr);
   assert.equal(next.json.delivery.sendNow, true);
+});
+
+test("DM name lookup finds only an unambiguous open request", () => {
+  const home = tmpHome();
+  const ledger = addRequest(empty(), input({ name: "Bo", origin: "owner-group", chatUid: "bo-chat" }), T0, "bo");
+  ledger.requests.push({ ...ledger.requests[0]!, id: "closed", status: "booked" });
+  writeJson(join(home, "ledger.json"), ledger);
+  const find = (name: string) => cli("ledger.ts", ["find", "--name", name], { MEETLY_HOME: home });
+  assert.equal(find(" BO ").json?.request?.id, "bo");
+  assert.deepEqual(find("Boris").json, { request: null });
+  ledger.requests.push({ ...ledger.requests[0]!, id: "other", handle: "+15557654321" });
+  writeJson(join(home, "ledger.json"), ledger);
+  const ambiguous = find("Bo");
+  assert.equal(ambiguous.status, 1);
+  assert.match(ambiguous.stderr, /ambiguous/i);
 });

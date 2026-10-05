@@ -9,7 +9,10 @@
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
-import type { Busy } from "./busy.ts";
+import { allowsOverlap, uniqueEvents, type EventRef, type Busy } from "./busy.ts";
+import { intersectConstraints, requireDuration, type Ledger } from "./ledger.ts";
+import { file } from "./paths.ts";
+import { readJson } from "./store.ts";
 import { addDays, DAYS, localIso, wallParts, zonedToUtc, type Day } from "./time.ts";
 
 export type Slot = { start: string; end: string; dayOfWeek: Day; label: string };
@@ -22,7 +25,7 @@ export type SlotQuery = Constraints & {
   busy: Busy[];
   unknownAfter?: string;
   durationMin?: number;
-  allowOverlap?: string[];
+  allowOverlap?: EventRef[];
   exclude?: string[];
   count?: number;
   near?: string;
@@ -57,21 +60,30 @@ export function withinConstraints(start: number, end: number, timezone: string, 
     && !(constraints.before && (e.slice(0, 10) !== date || e.slice(11, 16) > constraints.before));
 }
 
+export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}, fallbacks: SlotQuery[] = [query]) {
+  let { slots } = findSlots({ ...query, ...intersectConstraints(query, preferred) });
+  const preferencesUnavailable = slots.length === 0;
+  for (const fallback of fallbacks) {
+    if (slots.length) break;
+    slots = findSlots(fallback).slots;
+  }
+  return { slots, preferencesUnavailable };
+}
+
 export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string } {
   const { config, now } = q;
   const tz = config.timezone;
-  const duration = q.durationMin ?? config.durationMin;
+  const duration = requireDuration(q.durationMin ?? q.config.durationMin);
   const count = q.count ?? SLOT_COUNT;
-  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], start: q.near }).slot.start);
+  const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], durationMin: duration, start: q.near }).slot.start);
 
   const startMin = Math.ceil(minutes(config.windowStart) / STEP_MIN) * STEP_MIN;
   const endMin = minutes(config.windowEnd);
 
   const earliest = now + MIN_NOTICE_MIN * 60_000;
   const excluded = new Set((q.exclude ?? []).map((e) => Date.parse(e)));
-  const allowed = new Set(q.allowOverlap ?? []);
   const busy = q.busy
-    .filter((b) => b.id === undefined || !allowed.has(b.id))
+    .filter((b) => !allowsOverlap(b, q.allowOverlap))
     .map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }));
   const unknownAfter = q.unknownAfter !== undefined ? Date.parse(q.unknownAfter) : undefined;
 
@@ -138,7 +150,7 @@ export function checkTime(q: {
   start: string;
   unknownAfter?: string;
   durationMin?: number;
-  allowOverlap?: string[];
+  allowOverlap?: EventRef[];
   locale?: string;
 }): TimeCheck {
   const tz = q.config.timezone;
@@ -148,17 +160,16 @@ export function checkTime(q: {
     ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz)
     : Date.parse(q.start);
   if (Number.isNaN(start)) throw new Error(`not a time: ${q.start}`);
-  const end = start + (q.durationMin ?? q.config.durationMin) * 60_000;
+  const end = start + requireDuration(q.durationMin ?? q.config.durationMin) * 60_000;
   const s = wallParts(start, tz);
   const e = wallParts(end, tz);
   const sameDay = s.y === e.y && s.m === e.m && s.d === e.d;
   const outsideHours = !q.config.days.includes(s.weekday) || !sameDay ||
     s.hh * 60 + s.mm < minutes(q.config.windowStart) || e.hh * 60 + e.mm > minutes(q.config.windowEnd);
-  const allowed = new Set(q.allowOverlap ?? []);
   let reason: TimeCheck["reason"];
   if (q.unknownAfter !== undefined && end > Date.parse(q.unknownAfter)) reason = "unknown";
   else if (start < q.now + MIN_NOTICE_MIN * 60_000) reason = "too-soon";
-  else if (q.busy.some((b) => (b.id === undefined || !allowed.has(b.id)) && Date.parse(b.start) < end && Date.parse(b.end) > start)) {
+  else if (q.busy.some((b) => (!allowsOverlap(b, q.allowOverlap)) && Date.parse(b.start) < end && Date.parse(b.end) > start)) {
     reason = "busy";
   }
   const format = q.locale !== undefined ? localeFormatter(q.locale, tz) : undefined;
@@ -181,6 +192,7 @@ if (isMain(import.meta.url)) {
     const { values } = parseArgs({
       options: {
         in: { type: "string" },
+        request: { type: "string" },
         duration: { type: "string" },
         days: { type: "string" },
         after: { type: "string" },
@@ -199,6 +211,7 @@ if (isMain(import.meta.url)) {
     const config = loadConfig();
     const input = JSON.parse(readInput(values.in !== undefined ? [values.in] : [])[0]!) as {
       busy?: Busy[];
+      allowOverlap?: EventRef[];
       unknownAfter?: string;
       degraded?: string[];
     };
@@ -206,18 +219,7 @@ if (isMain(import.meta.url)) {
     const now = values.now !== undefined ? Date.parse(values.now) : Date.now();
     if (Number.isNaN(now)) throw new Error(`--now is not a time: ${values.now}`);
     const degraded = input.degraded ?? [];
-    if (values.at !== undefined) {
-      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near"] as const) {
-        if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
-      }
-      const check: Parameters<typeof checkTime>[0] = { now, config, busy: input.busy, start: values.at };
-      if (input.unknownAfter !== undefined) check.unknownAfter = input.unknownAfter;
-      if (values.duration !== undefined) check.durationMin = positiveInt(values.duration, "--duration");
-      if (values["allow-overlap"]) check.allowOverlap = values["allow-overlap"];
-      if (values.locale !== undefined) check.locale = values.locale;
-      return { ...checkTime(check), degraded };
-    }
-    const q: SlotQuery = { now, config, busy: input.busy };
+    const q: SlotQuery = { now, config, busy: input.busy, allowOverlap: input.allowOverlap };
     if (input.unknownAfter !== undefined) q.unknownAfter = input.unknownAfter;
     if (values.duration !== undefined) q.durationMin = positiveInt(values.duration, "--duration");
     if (values.count !== undefined) q.count = positiveInt(values.count, "--count");
@@ -233,11 +235,27 @@ if (isMain(import.meta.url)) {
     if (values.before !== undefined) q.before = parseTime(values.before);
     if (values.from !== undefined) q.from = date(values.from, "--from");
     if (values.to !== undefined) q.to = date(values.to, "--to");
-    if (values["allow-overlap"]) q.allowOverlap = values["allow-overlap"];
+    if (values["allow-overlap"]) q.allowOverlap = values["allow-overlap"].map(value => JSON.parse(value));
     if (values.locale !== undefined) q.locale = values.locale;
     if (values.exclude) {
       for (const e of values.exclude) if (Number.isNaN(Date.parse(e))) throw new Error(`--exclude is not a time: ${e}`);
       q.exclude = values.exclude;
+    }
+    if (values.request !== undefined) {
+      const request = readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
+      if (!request || request.status !== "offered") throw new Error("--request needs an offered request");
+      const narrowed = intersectConstraints(request.constraints, q);
+      Object.assign(q, narrowed);
+      q.durationMin ??= request.durationMin;
+      q.locale ??= request.locale;
+      q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);
+      q.busy = q.busy.filter(b => !request.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
+    }
+    if (values.at !== undefined) {
+      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near"] as const) {
+        if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
+      }
+      return { ...checkTime({ ...q, start: values.at }), degraded };
     }
     return { ...findSlots(q), degraded };
   });
