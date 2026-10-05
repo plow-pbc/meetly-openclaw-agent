@@ -93,7 +93,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     if (busy.degraded.length) throw new Error("calendar unavailable");
     busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
     const travel = existing?.travel?.override ? existing.travel : args.travel ?? existing?.travel;
-    const query = { travel, format: format ?? existing?.format, ...busy, ...constraints, now, config, meal, durationMin, locale, allowOverlap: existing?.allowOverlap };
+    const query = { travel, format: format ?? existing?.format, ...busy, ...constraints, ownerStartTime: constraints?.startTime, now, config, meal, durationMin, locale, allowOverlap: existing?.allowOverlap };
     const near = proposed?.from && proposed.from === proposed.to
       ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
     const { slots, preferencesUnavailable } = findPreferredSlots(query, proposed, [{ ...query, near }]);

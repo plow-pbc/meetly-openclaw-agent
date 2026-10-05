@@ -480,3 +480,17 @@ test("exact starts retain minute precision and survive preferred-time fallbacks"
   assert.equal(constraints.startTime, "11:30");
   assert.deepEqual(starts(intersectConstraints(constraints, { startTime: "11:00" })), []);
 });
+
+test("an owner-approved clock time replaces the meal window without constraining travel", () => {
+  const query = q({ meal: "lunch", durationMin: 60, startTime: "11:00", ownerStartTime: "11:00",
+    travel: { beforeMin: 15, afterMin: 15 } });
+  const checked = checkTime({ ...query, start: "2026-09-28T11:00:00-03:00" });
+  assert.equal(checked.outsideHours, false);
+  assert.equal(checked.free, true);
+  const found = findSlots(query).slots;
+  assert.ok(found.length);
+  assert.ok(found.every(slot => slot.start.slice(11, 16) === "11:00"));
+  assert.equal(checkTime({ ...query, ownerStartTime: undefined, start: checked.slot.start }).outsideHours, true);
+  assert.equal(checkTime({ ...query, start: checked.slot.start,
+    busy: [{ start: "2026-09-28T10:50:00-03:00", end: "2026-09-28T10:55:00-03:00" }] }).free, false);
+});
