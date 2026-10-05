@@ -72,8 +72,10 @@ thread. For a message to the owner with no meeting thread, use
       release`.
    6. Run `contact.ts --handle <sender>` for their name, then `ledger.ts save
       --json` with `status: "asked"`, `origin: "inbound"`, `handle`, `name`,
-      `sourceRowid` = the request's rowid, `topic`, `durationMin` from an explicit requested length or `config.durationMin`, `proposed` for any times they proposed, their `locale`, and
-      `format`: the format if their words say it (`meetly-group` "Meeting
+      `sourceRowid` = the request's rowid, `topic`, `meal` if applicable, and
+      `durationMin` only when explicitly stated; otherwise omit it and let the
+      ledger resolve the meal/config default. Include `proposed` for any times they proposed, their `locale`, and
+      `format`: the format if their words say it (`meetly` "Meeting
       format"; otherwise `unknown`). No holds, no group, no message to them.
       For "next week", run `time.ts next_week --anchor <source message timestamp>` and save its returned `from`/`to` in
       `constraints`, with named weekdays as `days`. Preserve these constraints
