@@ -3,6 +3,7 @@ import { isMain, run } from "./cli.ts";
 import { loadConfig, type Config } from "./config.ts";
 import { currentOffers, type Ledger, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
+import { formatMeetingTime } from "./time.ts";
 import { localeFormatter } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
 
@@ -30,7 +31,7 @@ export function view(request: Request, config: Config) {
     topic: request.topic, meal: request.meal, durationMin: request.durationMin, format: request.format ?? "unknown", location: request.location,
     offered,
     ...(request.status === "booked" && offered.length ? { message: `Replacement times are held: ${offered.map(o => o.label).join("; ")} (${config.timezone}). The current booking remains unchanged until you pick a replacement.` } : {}),
-    ...(request.booked ? { booked: time(request.booked), reminderAvailable: request.channel !== "email" && !!request.meetUrl,
+    ...(request.booked ? { confirmationTime: formatMeetingTime(request.booked.start, config.timezone, request.locale), booked: time(request.booked), reminderAvailable: request.channel !== "email" && !!request.meetUrl,
       ...(request.channel === "email" && request.meetUrl ? { meetUrl: request.meetUrl } : {}) } : {}),
     ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
     ...(request.holdCleanup?.length ? { cleanupPending: true } : {}),

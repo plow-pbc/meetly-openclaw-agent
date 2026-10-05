@@ -2196,3 +2196,17 @@ test("conflicting current-week and next-week scopes return an actionable error w
     assert.equal(f.commands.length, 0);
   }
 });
+
+test("guest booking returns the exact weekday and owner-zone time to copy in the confirmation", async t => {
+  const f = fixture(t, "", "America/Los_Angeles");
+  const slot = { ...offers[0]!, start: "2026-10-14T17:30:00Z", end: "2026-10-14T18:00:00Z" };
+  f.ledger.requests[0]!.constraints = {};
+  f.ledger.requests[0]!.offered = [slot];
+  f.save(f.ledger); f.events.clear();
+  f.events.set(slot.holdId, event(slot.holdId, slot.start, slot.end));
+  const result = JSON.parse((await f.tools.get("meetly_pick_time")!.execute("book", { start: slot.start, travel: { beforeMin: 0, afterMin: 0 } })).content[0]!.text);
+  assert.equal(result.confirmationTime, "Wed, Oct 14, 10:30 AM PDT");
+  const current = await f.act(context, "view") as any;
+  assert.equal(current.confirmationTime, result.confirmationTime);
+  assert.equal(Date.parse(f.request().booked!.start), Date.parse(slot.start));
+});
