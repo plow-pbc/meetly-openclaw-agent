@@ -2542,17 +2542,17 @@ for (const replacement of [undefined, { days: ["wed"], from: "2026-10-07", to: "
   });
 }
 
-test("a previously excluded preferred day requests explicit restoration before searching or waiting on the owner", async t => {
+for (const preference of [{ days: ["tue"] }, { start: { weekday: "tue" as const } }]) test(`a previously excluded preferred day requests explicit restoration before searching or waiting on the owner: ${JSON.stringify(preference)}`, async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.excludedDays = ["mon", "tue"];
   f.ledger.requests[0]!.pendingOwner = { question: "Can we widen the dates?", askedAt: new Date(now).toISOString() };
   f.save(f.ledger);
-  const result = await f.act(context, "other_times", { days: ["tue"] }) as any;
+  const result = await f.act(context, "other_times", preference) as any;
   assert.equal(result.code, "DAY_RESTORATION_REQUIRED");
   assert.deepEqual(result.days, ["tue"]);
   assert.deepEqual(f.commands, []);
   assert.deepEqual(f.request().excludedDays, ["mon", "tue"]);
-  const restored = await f.act(context, "other_times", { days: ["tue"], restoredDays: ["tue"] }) as any;
+  const restored = await f.act(context, "other_times", result.recovery.arguments) as any;
   assert.equal(restored.error, undefined, JSON.stringify(restored));
   assert.deepEqual(f.request().excludedDays, ["mon"]);
   assert.ok(restored.offered.every((o: any) => o.start.startsWith("2026-10-06")));

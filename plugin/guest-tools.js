@@ -26,7 +26,7 @@ const definitions = [
     travel, start: requestedStart,
     ...constraints.properties,
     excludedDays: { ...constraints.properties.days, description: "Only days the guest explicitly names as unavailable. Never infer weekdays from rejected offered slots or from a preferred day. Saved for later rounds and never relaxed during fallback. Omission or an empty array keeps saved exclusions; include named exclusions from earlier turns if not yet recorded." },
-    restoredDays: { ...constraints.properties.days, description: "Previously excluded weekdays the guest explicitly says now work. Only these days are removed from saved exclusions; a preferred day alone does not clear any other exclusions." },
+    restoredDays: { ...constraints.properties.days, description: "When the guest explicitly restores a day (Thursday works after all), pass ['thu'], including alongside start. On DAY_RESTORATION_REQUIRED, retry once with recovery.arguments only if the guest restored those days. Other exclusions remain." },
     offer_week: { type: "boolean", description: "True when the guest says that week or the same week. Keeps all returned times within the current offer week, including fallback and exclusions-only requests." },
     next_week: text("For next week, the source message timestamp in ISO format with timezone offset; the tool resolves the date range in the owner’s timezone. Use only when the guest says next week; that week uses offer_week instead."),
   }, ["offer_week"])],
