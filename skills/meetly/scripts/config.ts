@@ -39,6 +39,13 @@ export const DEFAULTS = {
   horizonDays: 14,
 };
 
+export type Meal = "coffee" | "lunch" | "dinner";
+export const MEAL_DEFAULTS: Record<Meal, { durationMin: number; window?: readonly [string, string] }> = {
+  coffee: { durationMin: 30 },
+  lunch: { durationMin: 60, window: ["11:30", "13:30"] },
+  dinner: { durationMin: 60, window: ["18:00", "21:00"] },
+};
+
 export const QUESTIONS: Record<RequiredField, string> = {
   ownerName: "When I talk to other people for you, I write about you by name, like \"Ana is free at 3pm\". What name should I use?",
   timezone: "What time zone are you in?",

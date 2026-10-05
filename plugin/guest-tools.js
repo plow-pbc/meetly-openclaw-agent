@@ -5,7 +5,6 @@ const object = (properties = {}, required = []) => ({ type: "object", properties
 const text = description => ({ type: "string", description });
 const start = text("An offered ISO start time; for an owner approval request, ISO with offset or YYYY-MM-DDTHH:MM in the owner's timezone.");
 export const constraints = object({
-  startTime: text("Owner-selected exact clock time, HH:MM."),
   days: { type: "array", items: { type: "string", enum: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] } },
   after: text("Earliest time, HH:MM."), before: text("Latest end time, HH:MM."),
   from: text("First date, YYYY-MM-DD."), to: text("Last date, YYYY-MM-DD."),

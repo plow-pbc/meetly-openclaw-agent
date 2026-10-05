@@ -7,7 +7,7 @@
 // that locale's date and time conventions; without one it is "tue 29/9 12:00".
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
-import { loadConfig, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
+import { loadConfig, MEAL_DEFAULTS, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
 import { allowsOverlap, covers, uniqueEvents, type Coverage, type EventRef, type Busy } from "./busy.ts";
 import { intersectConstraints, meetingDuration, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
@@ -27,7 +27,6 @@ export type SlotQuery = Constraints & SearchTiming & {
   coverage?: Coverage;
   durationMin?: number;
   meal?: Meal;
-  ownerStartTime?: string;
   allowOverlap?: EventRef[];
   exclude?: string[];
   excludeDates?: string[];
@@ -36,17 +35,13 @@ export type SlotQuery = Constraints & SearchTiming & {
   locale?: string;
 };
 
-const MEAL_WINDOWS: Partial<Record<Meal, [string, string]>> = {
-  lunch: ["11:30", "13:30"], dinner: ["18:00", "21:00"],
-};
-
-function windowFor(config: Config, meal?: Meal, ownerStartTime?: string, durationMin?: number): [number, number] {
+function windowFor(config: Config, meal?: Meal, startTime?: string, durationMin?: number): [number, number] {
   // An explicit owner-selected clock time replaces the default meeting window.
-  if (ownerStartTime !== undefined) {
-    const start = minutes(parseTime(ownerStartTime));
+  if (startTime !== undefined) {
+    const start = minutes(parseTime(startTime));
     return [start, start + requireDuration(durationMin)];
   }
-  const window = meal ? MEAL_WINDOWS[meal] : undefined;
+  const window = meal ? MEAL_DEFAULTS[meal]?.window : undefined;
   const [start, end] = window ?? [config.windowStart, config.windowEnd];
   return [minutes(start!), minutes(end!)];
 }
@@ -145,7 +140,7 @@ export function findSlots(q: SlotQuery): SlotResult {
   const count = q.count ?? SLOT_COUNT;
   const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, durationMin: duration, busy: [], start: q.near }).slot.start);
 
-  let [startMin, endMin] = windowFor(config, q.meal, q.ownerStartTime, duration);
+  let [startMin, endMin] = windowFor(config, q.meal, q.startTime, duration);
   const exactStart = q.startTime === undefined ? undefined : minutes(parseTime(q.startTime));
   if (exactStart !== undefined && exactStart < startMin) return { slots: [], durationMin: duration, resolvedConstraints };
   startMin = exactStart ?? Math.ceil(startMin / STEP_MIN) * STEP_MIN;
@@ -235,7 +230,7 @@ export function checkTime(q: {
   coverage?: Coverage;
   durationMin?: number;
   meal?: Meal;
-  ownerStartTime?: string;
+  startTime?: string;
   allowOverlap?: EventRef[];
   locale?: string;
 }): TimeCheck {
@@ -250,7 +245,7 @@ export function checkTime(q: {
   const s = wallParts(start, tz);
   const e = wallParts(end, tz);
   const sameDay = s.y === e.y && s.m === e.m && s.d === e.d;
-  const [windowStart, windowEnd] = windowFor(q.config, q.meal, q.ownerStartTime, meetingDuration(q.durationMin, q.meal, q.config.durationMin));
+  const [windowStart, windowEnd] = windowFor(q.config, q.meal, q.startTime, meetingDuration(q.durationMin, q.meal, q.config.durationMin));
   const outsideHours = !q.config.days.includes(s.weekday) || !sameDay ||
     s.hh * 60 + s.mm < windowStart || e.hh * 60 + e.mm > windowEnd;
   const range = { from: new Date(start).toISOString(), to: new Date(end).toISOString() };
@@ -344,10 +339,10 @@ if (isMain(import.meta.url)) {
       for (const e of values.exclude) if (Number.isNaN(Date.parse(e))) throw new Error(`--exclude is not a time: ${e}`);
       q.exclude = values.exclude;
     }
-    q.ownerStartTime = request?.constraints?.startTime ?? q.startTime;
     if (request) {
       const narrowed = intersectConstraints(request.constraints, q);
       Object.assign(q, narrowed);
+      q.days = (q.days ?? DAYS).filter(day => !request.excludedDays?.includes(day));
       q.meal ??= request.meal;
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
