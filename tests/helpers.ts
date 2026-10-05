@@ -64,6 +64,7 @@ export function fakeCalendar(initial: CalendarEvent[]) {
         if (flag("--to") !== undefined) event.end.dateTime = flag("--to")!;
         if (argv.includes("--with-meet")) event.hangoutLink = "https://meet.google.com/abc-defg-hij";
         if (flag("--location") !== undefined) event.location = flag("--location");
+        if (flag("--add-attendee") !== undefined) event.attendees = [...(event.attendees ?? []), ...flag("--add-attendee")!.split(",").map(email => ({ email }))];
         if (flag("--attendees") !== undefined) event.attendees = flag("--attendees")!.split(",").map(email => ({ email }));
         if (flag("--private-prop")) event.extendedProperties = { private: { meetlyOperation: flag("--private-prop")!.split("=")[1]! } };
         event.status = "confirmed"; events.set(id, event);
