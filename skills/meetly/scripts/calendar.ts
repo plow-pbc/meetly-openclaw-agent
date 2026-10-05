@@ -444,7 +444,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       invitationUpdated = step.verb === "update" && Array.isArray(event.attendees)
         && event.attendees.some(a => typeof a?.email === "string" && !a.organizer && !a.self && !sameHandle(a.email, step.account));
     }
-    return { request, ownerTravelNote: request.status === "booked" ? travelNote(request)
+    return { request, travelOnly: completed.input.action === "travel", ownerTravelNote: request.status === "booked" ? travelNote(request)
       ?? (releasedTravel ? `Travel time for ${request.topic} was released.` : undefined) : undefined, invitationSent: completed.input.action === "book" && !!completed.input.attendees,
       invitationUpdated,
       meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };

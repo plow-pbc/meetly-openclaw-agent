@@ -1,4 +1,5 @@
 import { cleanArgs, constraints, travel, sendPlowMessage } from "./guest-tools.js";
+import { ownerTurns } from "./owner-turn.js";
 
 const run = async (context, args, send) => {
   const { answerOwner } = await import("/opt/plow/skills/meetly/scripts/answer-owner.ts");
@@ -36,20 +37,34 @@ const runGroup = async (context, args, sendOwner) => {
 };
 
 export function registerOwnerGroupTool(api, execute = runGroup, outbound) {
-  const required = ["topic", "durationMin"];
+  const required = ["topic", "durationMin", "introduction"];
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
-    description: "Group-only: never use in the owner's DM. In the owner's DM, follow meetly-group, Owner request: find times, save with calendar.ts offer, then plow_start_thread through the delivery steps. Use this tool only for the owner's scheduling ask in an existing group with exactly one guest and Meetly. Read meetly-group. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Records the request with this turn's exact chat uid and creates holds through the calendar writer. Resolves the sole guest and chat from Plow participants; never supply guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless you decide to change it. Supply explicit travel estimates; read meetly-travel before in-person preparation. Suggested dates belong in proposed; constraints contain only explicit must/only conditions. Reply with the returned offer here; never open another thread. Greet the guest, never the owner; use a neutral greeting when the guest name is unavailable. Keep owner-only coordination in the DM. If silent is true, output nothing in the group and do not send a separate message or retry: the tool handles private coordination. If this is your first reply in this group, introduce yourself as \"<agentName>, <ownerName>'s scheduling assistant\" in their language with the offer. Ask format/place only when askDetails is true. Owner only.",
+    description: "Group-only: never use in the owner's DM. In the owner's DM, follow meetly-group, Owner request: find times, save with calendar.ts offer, then plow_start_thread through the delivery steps. Use this tool only for the owner's scheduling ask in an existing group with exactly one guest and Meetly. Read meetly-group. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Records the request with this turn's exact chat uid and creates holds through the calendar writer. Resolves the sole guest and chat from Plow participants; never supply guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless you decide to change it. Supply explicit travel estimates; read meetly-travel before in-person preparation. Suggested dates belong in proposed; constraints contain only explicit must/only conditions. Reply with the returned offer here; never open another thread. Greet the guest, never the owner; use a neutral greeting when the guest name is unavailable. Keep owner-only coordination in the DM. If silent is true, output nothing in the group and do not send a separate message or retry: the tool handles private coordination. If this is your first reply in this group, introduce yourself as \"<agentName>, <ownerName>'s scheduling assistant\" in their language with the offer. An earlier introduction-only reply already counts; after that, give just the offer without introducing yourself again. Ask format/place only when askDetails is true. Owner only.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
+      introduction: { type: "string", enum: ["needed", "already_introduced"], description: "Read the prior assistant messages in this conversation. Choose already_introduced if Meetly has already introduced itself here, including an earlier introduction-only reply; a first offer is not a new introduction. Choose needed only when no introduction has been given here yet." },
       durationMin: { type: "integer", minimum: 1 }, topic: string, meal: { type: "string", enum: ["lunch", "dinner", "coffee"] }, name: { type: "string", description: "Guest name explicitly given by the owner in this thread, if known." },
       constraints: { ...constraints, description: "Explicit non-relaxable owner conditions, including an accepted exact clock time in startTime even without must/only. Omit for a suggested date." },
       proposed: { ...constraints, description: "Preferred dates/times from the owner; these may be relaxed when busy." }, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
       travel, location: string, locale: string,
     } },
     async execute(_id, args) {
-      const result = await execute(context, cleanArgs(args, required), text => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound));
-      return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      try {
+        const { introduction, ...request } = cleanArgs(args, required);
+        if (!["needed", "already_introduced"].includes(introduction)) {
+          return { isError: true, content: [{ type: "text", text: "Choose introduction: needed or already_introduced from this conversation's prior replies before offering times." }] };
+        }
+        const result = await execute(context, request, text => ownerTurns.sendOnce(context.sessionKey, _id,
+          () => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound)));
+        return { isError: "error" in result, content: [
+          { type: "text", text: JSON.stringify(result) },
+          ...(result.silent ? [{ type: "text", text: "Finish with exactly NO_REPLY. The tool has finished; do not call this tool again to correct names or resend, and do not send another message." }] : []),
+          ...(!result.silent && !result.error && result.offered?.length ? [{ type: "text", text: introduction === "already_introduced"
+            ? "Do not introduce yourself or repeat your role. You already introduced yourself in this conversation. Reply only with the scheduling offer and selection question."
+            : "Introduce yourself once as the owner's scheduling assistant, then present the offer and selection question." }] : []),
+        ], details: result };
+      } finally { ownerTurns.finish(_id); }
     },
   }));
 }
