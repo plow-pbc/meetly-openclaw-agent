@@ -1036,3 +1036,39 @@ test("saved exact starts cannot be omitted on reoffer or bypassed at booking", a
   await calendarAction("r_one", { action: "offer", request: { ...f.offer, offered } }, f.options);
   assert.equal(f.read().constraints?.startTime, "11:30");
 });
+
+for (const [from, to] of [["09:30", "09:50"], ["09:30", "11:00"]]) test(`title-based overlap authorization includes travel (${from}–${to}) and never changes the blocker`, async t => {
+  const f = fixture(t);
+  const focus = { ...calendarEvent("focus", `2026-10-05T${from}:00Z`, `2026-10-05T${to}:00Z`), summary: "Focus block" };
+  const original = structuredClone(focus);
+  f.events.set(focus.id, focus);
+  const oldToken = process.env.PLOW_MCP_BRIDGE_TOKEN;
+  process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture";
+  t.after(() => { if (oldToken === undefined) delete process.env.PLOW_MCP_BRIDGE_TOKEN; else process.env.PLOW_MCP_BRIDGE_TOKEN = oldToken; });
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    const command = JSON.parse(String(init.body)).params.arguments;
+    const result = await f.command({ argv: command.argv });
+    return Response.json({ result: { content: [{ type: "text", text: JSON.stringify({ exit_code: 0, output: result.output }) }] } });
+  });
+  await offerRequest({ ...f.offer, format: "in_person", travel, offered: [{ start, end }], allowOverlapTitles: ["  FOCUS BLOCK  "] }, f.options);
+  assert.deepEqual(f.read().allowOverlap, [{ account, id: "focus" }]);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  assert.equal(f.read().travelEvents!.length, 2);
+  assert.ok(f.calls.filter(c => c[2] === "create").every(c => c.includes("--confirm-conflict")));
+  await calendarAction("r_one", { action: "cancel" }, f.options);
+  assert.deepEqual(f.events.get("focus"), original);
+  assert.ok(f.calls.filter(c => ["update", "delete"].includes(c[2]!)).every(c => c[4] !== "focus"));
+});
+
+test("remembered permission alone never allows an offer over the owner's event", async t => {
+  const f = fixture(t);
+  const configPath = join(f.home, "config.json");
+  const config = readJson<Record<string, unknown>>(configPath, {});
+  writeJson(configPath, { ...config, overlapDecisions: { "focus block": { allowed: true, at: new Date(now).toISOString() } } });
+  const focus = { ...calendarEvent("focus", start, end), summary: "Focus block" };
+  f.events.set(focus.id, focus);
+  await assert.rejects(offerRequest({ ...f.offer, offered: [{ start, end }], format: "in_person", travel }, f.options), /previous offer retained/);
+  assert.equal(f.calls.filter(c => ["create", "update"].includes(c[2]!)).length, 0);
+  assert.equal(f.read().allowOverlap, undefined);
+  assert.equal(f.events.get("focus")!.status, "confirmed");
+});

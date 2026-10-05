@@ -12,7 +12,7 @@ import { calendarPolicy } from "./calendar-policy.js";
 import { execFile } from "node:child_process";
 import { guestTurns } from "./guest-turn.js";
 import { registerGuestTools } from "./guest-tools.js";
-import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool } from "./owner-tools.js";
+import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool, registerMovableTool } from "./owner-tools.js";
 
 export const OWNER_DM_SESSION = "agent:main:main";
 export const SETUP_STATUS = "/opt/plow/skills/meetly/scripts/setup-status.ts";
@@ -101,6 +101,7 @@ export default {
     registerOwnerTools(api);
     registerOwnerGroupTool(api);
     registerOwnerDmTool(api);
+    registerMovableTool(api);
     api.on("before_tool_call", (event, ctx) => { ownerTurns.beforeTool(event, ctx); guestTurns.beforeTool(event, ctx); return calendarPolicy(event, ctx); });
     api.on("agent_end", (event, ctx) => { guestTurns.end(event, ctx); ownerTurns.end(event, ctx); });
     api.on("before_prompt_build", async (_event, ctx) => {
