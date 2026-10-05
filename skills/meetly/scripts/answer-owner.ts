@@ -1,4 +1,4 @@
-import { recordDelivery, updateRequest, type Ledger } from "./ledger.ts";
+import { sameRequest, recordDelivery, updateRequest, type Ledger } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
@@ -26,7 +26,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (!alreadyVisible) {
     try {
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {
-        if (JSON.stringify(latest.requests.find(r => r.id === request.id)) !== JSON.stringify(request)) throw new Error("request changed");
+        if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed");
         return recordDelivery(latest, request.id, "answer", "begin", Date.now());
       });
       pending = begun.requests.find(r => r.id === request.id)!.pendingOwner!;

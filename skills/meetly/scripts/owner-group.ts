@@ -6,13 +6,13 @@ import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { findPreferredSlots, resolveSearchConstraints, preferredSearchCoverage, type SearchTiming } from "./slots.ts";
 import { view } from "./request-view.ts";
-import { findOpenByHandle, normalizeHandle, sameHandle, type Ledger } from "./ledger.ts";
+import { checkContact, ContactConfirmationRequired, findOpenByHandle, normalizeHandle, sameHandle, type Constraints, type Ledger } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
 type GroupRequest = Pick<OfferInput, "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & SearchTiming & { durationMin: number };
 
-export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Promise<object> {
+export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sendOwner?: (text: string) => Promise<void>): Promise<object> {
   const chat = resolveOwnerChat(ctx);
   if (!chat || !ctx.sessionKey?.includes(":plow:group:")) {
     return { error: "Only the owner's own Plow group turn can start this request." };
@@ -43,7 +43,33 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
       if (contact.found) name = contact.name?.trim() || undefined;
     }
     name = args.name?.trim() || name;
-    const existing = findOpenByHandle(readJson<Ledger>(file("ledger.json"), { requests: [] }), handle);
+    const ledger = readJson<Ledger>(file("ledger.json"), { requests: [] });
+    try {
+      checkContact(ledger, handle);
+    } catch (error) {
+      if (!(error instanceof ContactConfirmationRequired)) throw error;
+      // The group receives only the coordination outcome, never the private reason.
+      const dates = (label: string, value?: Constraints) => {
+        const parts = [value?.from && `from ${value.from}`, value?.to && `through ${value.to}`,
+          value?.days?.length && `on ${value.days.join(", ")}`, value?.after && `after ${value.after}`, value?.before && `before ${value.before}`].filter(Boolean);
+        return parts.length ? ` ${label}: ${parts.join("; ")} (${loadConfig().timezone}).` : "";
+      };
+      let ownerAskSent = false;
+      try {
+        if (sendOwner) {
+          await sendOwner(`You asked in your group for ${args.durationMin}-minute ${JSON.stringify(args.topic)} with ${name ?? handle} (${handle}).`
+            + dates("Required dates/times", args.constraints) + dates("Preferred dates/times", args.proposed)
+            + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")
+            + (args.format ? ` Format: ${args.format}.` : "")
+            + " You previously marked this person do not contact. Please confirm here in our private DM if you want to schedule this meeting. Your preference stays in place unless you ask to clear it.");
+          ownerAskSent = true;
+        }
+      } catch {
+        // An uncertain delivery is never retried or explained in the group.
+      }
+      return { code: "OWNER_CONFIRMATION_REQUIRED", silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
+    }
+    const existing = findOpenByHandle(ledger, handle);
     if (existing && existing.chatUid !== chat && !(existing.status === "asked" && existing.chatUid === undefined)) {
       throw new Error("request belongs to another conversation");
     }
