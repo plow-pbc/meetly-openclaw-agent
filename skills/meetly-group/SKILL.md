@@ -41,8 +41,7 @@ selects it (`meetly-confirm`, "Book the event"). Overlap permission does not aut
 
 ## Offer times
 
-For "next week", run `time.ts next_week --anchor <owner message timestamp>
---timezone <config.timezone>` and use its returned `from`/`to`; pass named
+For "next week", run `time.ts next_week --anchor <owner message timestamp>` (it reads the owner’s timezone from config) and use its returned `from`/`to`; pass named
 weekdays separately as `days`. For owner DM requests, save those bounds in
 `constraints` and pass them as `--from`/`--to`. For a request started in a group,
 suggested dates/times are `proposed` and only explicit non-relaxable conditions

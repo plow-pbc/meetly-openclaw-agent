@@ -15,7 +15,7 @@ import { plowApi } from "./owner-chat.ts";
 export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string; senderIsOwner?: boolean;
   config?: { channels?: { plow?: { apiBase?: string; emailLineUid?: string } } } };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
-export type GuestArgs = Constraints & { excludedDays?: string[]; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string; attendees?: string[]; travel?: Travel };
+export type GuestArgs = Constraints & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string; attendees?: string[]; travel?: Travel };
 type SendOwner = (text: string) => Promise<void>;
 const EMPTY: Ledger = { requests: [] };
 
@@ -159,6 +159,14 @@ async function pick(request: Request, config: Config, start: string, attendees?:
 }
 
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
+  if (typeof args.offer_week !== "boolean") {
+    const message = "Set offer_week explicitly: true for that week or the same week; false when the guest asks for a new date range or a broader search. Include every named unavailable weekday in excludedDays. No search or holds were made; retry with this scope.";
+    return { error: message, code: "DATE_SCOPE_REQUIRED", recovery: { action: "retry", retry: true, message } };
+  }
+  if (args.offer_week && args.next_week !== undefined) {
+    const message = "For that week, keep offer_week: true and omit next_week entirely. Retain excludedDays and any preferred weekday. next_week is only for a new week relative to a source timestamp, with offer_week: false. No search or holds were made; retry using only the intended scope.";
+    return { error: message, code: "DATE_SCOPE_CONFLICT", recovery: { action: "retry", retry: true, message } };
+  }
   const travel = request.travel?.override ? request.travel : args.travel ?? request.travel;
   try {
     if (typeof args.start === "string" && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(args.start)) {
@@ -176,11 +184,15 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     return { error: message, code: "INVALID_START", recovery: { action: "retry", retry: true, message } };
   }
   const preferred = preferences(args, config.timezone);
-  const excludedDays = preferences({ days: args.excludedDays }, config.timezone).days ?? [];
+  const newlyExcluded = preferences({ days: args.excludedDays }, config.timezone).days ?? [];
+  const restored = preferences({ days: args.restoredDays }, config.timezone).days ?? [];
+  if (newlyExcluded.some(day => restored.includes(day))) throw new Error("a weekday cannot be both excluded and restored");
+  const excludedDays = [...new Set([...(request.excludedDays ?? []).filter(day => !restored.includes(day)), ...newlyExcluded])];
   const availableDays = { days: DAYS.filter(day => !excludedDays.includes(day)) };
-  const relative = typeof args.start === "object" || (!args.start && args.days?.length && !args.from && !args.to && !args.next_week);
+  const relative = args.offer_week === true || typeof args.start === "object" || (!args.start && args.days?.length && !args.from && !args.to && !args.next_week);
   const window = relative ? offerDateWindow(request.reoffer?.offered ?? request.offered, config.timezone) : undefined;
   const bounds = intersectConstraints(intersectConstraints(request.constraints, window), availableDays);
+  if (args.excludedDays !== undefined || args.restoredDays !== undefined) request = patch(request, { excludedDays });
   let start = args.start;
   if (typeof start === "object" && !start.time?.trim()) {
     preferred.from = preferred.to = resolveWeekday({ weekday: start.weekday }, request.reoffer?.offered ?? request.offered, config.timezone);
@@ -197,10 +209,10 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) {
       return { error: "That weekday was ruled out. Choose a different day." };
     }
-    const { days, from, to } = request.constraints ?? {};
+    const { days, from, to } = bounds;
     const allowedDay = withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, { days, from, to });
     if (allowedDay && checked.free && checked.outsideHours) return askOwner(request, config, { start: checked.slot.start }, sendOwner);
-    if (checked.free && withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) exact = checked.slot;
+    if (checked.free && withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, bounds)) exact = checked.slot;
     preferred.from = preferred.to = checked.slot.start.slice(0, 10);
     preferred.after = checked.slot.start.slice(11, 16);
     preferred.before = checked.slot.end.slice(11, 16);

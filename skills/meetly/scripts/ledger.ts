@@ -11,6 +11,7 @@ import { isMeetUrl } from "./event.ts";
 import { file } from "./paths.ts";
 import { uniqueEvents, type EventRef } from "./busy.ts";
 import { checkTravel, type Travel } from "./travel.ts";
+import { DAYS } from "./time.ts";
 import type { Constraints } from "./slots.ts";
 export type { Constraints } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -69,6 +70,8 @@ export type Request = {
   meal?: Meal;
   // The owner's conditions, kept for every offer of this request.
   constraints?: Constraints;
+  // Weekdays the guest has ruled out, retained across searches and booking.
+  excludedDays?: string[];
   // Times the person proposed; only the first offer uses them.
   proposed?: Constraints;
   allowOverlap?: EventRef[];
@@ -111,7 +114,7 @@ export type NewRequest = Omit<Request,
   | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { channel?: Request["channel"]; status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
-  "travel" | "travelEvents" | "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale">> & {
+  "travel" | "travelEvents" | "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "excludedDays" | "topic" | "format" | "locale">> & {
   reoffer?: Request["reoffer"] | null;
   pendingOwner?: PendingOwner | null;
   booked?: Booked | null;
@@ -124,7 +127,7 @@ const OPEN: readonly Status[] = ["asked", "offered"];
 const FORMATS: readonly Format[] = ["meet", "in_person", "phone", "unknown"];
 const OUTCOMES: readonly Reminder["outcome"][] = ["sent", "cancelled", "no-link"];
 const PATCH_KEYS = [
-  "travel", "travelEvents", "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "topic", "pendingOwner",
+  "travel", "travelEvents", "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "excludedDays", "topic", "pendingOwner",
   "format", "locale", "booked", "meetUrl", "reminder", "reoffer",
 ];
 // Keys a patch can clear with null.
@@ -258,6 +261,10 @@ export function findByChat(ledger: Ledger, chatUid: string, handle?: string): Re
     ?? ledger.requests.findLast((r) => r.chatUid === chatUid && r.status !== "asked");
 }
 
+function checkExcludedDays(days: unknown): void {
+  if (!Array.isArray(days) || days.some(day => !DAYS.includes(day))) throw new Error("excludedDays must contain weekdays mon–sun");
+}
+
 function checkOffers(offered: unknown): Offer[] {
   if (!Array.isArray(offered) || offered.length === 0) throw new Error("offered must be a non-empty list");
   for (const o of offered as Offer[]) {
@@ -294,6 +301,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
   requireDuration(input.durationMin);
   if (input.meal !== undefined && !["lunch", "dinner", "coffee"].includes(input.meal)) throw new Error("meal must be lunch, dinner or coffee");
+  if (input.excludedDays !== undefined) checkExcludedDays(input.excludedDays);
   const status = input.status ?? "offered";
   if (status === "offered") checkOffers(input.offered);
   else if (status !== "asked") throw new Error(`a new request is asked or offered, got ${status}`);
@@ -366,6 +374,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
     if (!PATCH_KEYS.includes(key)) throw new Error(`unknown key: ${key} (allowed: ${PATCH_KEYS.join(", ")})`);
   }
   if (patch.status !== undefined && !STATUSES.includes(patch.status)) throw new Error(`bad status: ${patch.status}`);
+  if (patch.excludedDays !== undefined) checkExcludedDays(patch.excludedDays);
   if (patch.offered !== undefined) checkOffers(patch.offered);
   if (patch.reoffer) {
     checkOffers(patch.reoffer.offered);

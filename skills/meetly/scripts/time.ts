@@ -119,8 +119,11 @@ export function resolveWeekday(value: WeekdayTime, offered: readonly { start: st
   return resolved;
 }
 
-if (isMain(import.meta.url)) run(() => {
-  const { values, positionals } = parseArgs({ allowPositionals: true, options: { anchor: { type: "string" }, timezone: { type: "string" } } });
-  if (positionals.length !== 1 || positionals[0] !== "next_week" || !values.anchor || !values.timezone) throw new Error("usage: time.ts next_week --anchor ISO --timezone IANA");
-  return nextWeek(values.anchor, values.timezone);
+if (isMain(import.meta.url)) run(async () => {
+  const { values, positionals } = parseArgs({ allowPositionals: true, options: { anchor: { type: "string" } } });
+  if (positionals.length !== 1 || positionals[0] !== "next_week" || !values.anchor) throw new Error("usage: time.ts next_week --anchor ISO");
+  const { loadConfig } = await import("./config.ts");
+  const { timezone } = loadConfig();
+  if (typeof timezone !== "string" || !timezone.trim()) throw new Error("owner timezone is missing from config");
+  return nextWeek(values.anchor, timezone);
 });

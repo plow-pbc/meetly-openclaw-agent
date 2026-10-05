@@ -84,8 +84,7 @@ they do not appear in the scheduled reminder list.
       deliberately changing it. Include `proposed` for any times they proposed, their `locale`, and
       `format`: the format if their words say it (`meetly` "Meeting
       format"; otherwise `unknown`). No holds, no group, no message to them.
-      For "next week", run `time.ts next_week --anchor <source message timestamp>
-      --timezone <config.timezone>` and save its returned `from`/`to` in
+      For "next week", run `time.ts next_week --anchor <source message timestamp>` and save its returned `from`/`to` in
       `constraints`, with named weekdays as `days`. Preserve these constraints
       when the owner approves and on later offers.
    7. If the save prints `skipped: "do-not-contact"`, run `cursor.ts release`
