@@ -164,9 +164,10 @@ place, and, only in the owner's DM, owner-authorized overlap titles. Follow
 "Offer times" with `origin: owner`. If a requested time is busy, say there is an
 existing commitment; in the main DM, inspect with `meetly-travel` first. If a blocker
 looks flexible, ask once and end the turn; wait for the owner before searching
-alternatives or offering. Inspect also when few free options fit. In groups, or after
-no flexible candidate/refusal, offer nearest free times preserving duration, travel
-and hard conditions. Confirm the offer once in its meeting thread.
+alternatives or offering. Inspect also when few free options fit. Otherwise, including
+in groups, ask whether to search alternatives before suggesting or holding unrequested
+times. Once authorized, preserve duration, travel and hard conditions. State the time
+zone and confirm the offer once in its meeting thread.
 
 For an explicit owner-stated length, read busy times and run
 `slots.ts --request <saved id> --duration <minutes>` with the saved conditions.

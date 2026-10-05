@@ -51,7 +51,7 @@ const pad = (n: number) => String(n).padStart(2, "0");
 export function localeFormatter(locale: string, tz: string): Intl.DateTimeFormat {
   try {
     return new Intl.DateTimeFormat(locale, {
-      timeZone: tz, weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit",
+      timeZone: tz, timeZoneName: "short", weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit",
     });
   } catch {
     throw new Error(`unknown locale: ${locale} (use a tag like pt-BR or en-US)`);
@@ -61,7 +61,7 @@ export function localeFormatter(locale: string, tz: string): Intl.DateTimeFormat
 function label(ms: number, tz: string, format?: Intl.DateTimeFormat): string {
   if (format) return format.format(new Date(ms));
   const p = wallParts(ms, tz);
-  return `${p.weekday} ${p.d}/${p.m} ${pad(p.hh)}:${pad(p.mm)}`;
+  return `${p.weekday} ${p.d}/${p.m} ${pad(p.hh)}:${pad(p.mm)} ${tz}`;
 }
 
 export function withinConstraints(start: number, end: number, timezone: string, constraints: Constraints = {}): boolean {
