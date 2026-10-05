@@ -283,7 +283,7 @@ test("owner and poll next-week requests use the time CLI; guests follow their to
     assert.doesNotMatch(skill, /following Monday through Sunday/);
   }
   const ask = toolDescriptions().get("meetly_ask_owner")!;
-  assert.ok(ask.includes("Only say you asked or checked with the owner when ownerAskSent is true"));
+  assert.ok(ask.includes("Even when ownerAskSent is true, never announce the question handoff or promise an owner follow-up in the group"));
   assert.ok(ask.includes("never invent a question or turn your own uncertainty into a guest question"));
 });
 

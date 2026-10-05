@@ -10,7 +10,9 @@ test("batch and failure results retain only delivery status, never private trave
   const sent: string[] = [];
   const output = await calendarOutput({ results: [result, { request: result.request }] }, async text => { sent.push(text); });
   assert.deepEqual(sent, [note]);
-  assert.deepEqual(output, { results: [{ request: { id: "r", reoffer: {} }, ownerNotified: true }, { request: { id: "r", reoffer: {} } }] });
+  const ownerReply = (output.results as { ownerReply?: { action: string } }[])[0]!.ownerReply;
+  assert.equal(ownerReply?.action, "already_notified");
+  assert.deepEqual(output, { results: [{ request: { id: "r", reoffer: {} }, ownerNotified: true, ownerReply }, { request: { id: "r", reoffer: {} } }] });
   const failed = await calendarOutput(result, async () => { throw new Error(note); });
   assert.equal(failed.ownerNotified, false);
   assert.equal(failed.ownerNotificationWarning, "owner-notification-unconfirmed");

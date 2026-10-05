@@ -20,6 +20,16 @@ export function createGuestTurns() {
       const call = calls.get(id);
       return call && call.sessionKey === sessionKey ? call.startedAt : undefined;
     },
+    async execute(sessionKey, id, execute) {
+      const call = calls.get(id);
+      const run = call && call.sessionKey === sessionKey ? runs.get(call.runId) : undefined;
+      if (!run) return execute();
+      // A pick and its question both update the request. Finish one before
+      // the next reads it, even when the model calls them in parallel.
+      const result = (run.pending ?? Promise.resolve()).then(execute);
+      run.pending = result.then(() => {}, () => {});
+      return result;
+    },
     reply(sessionKey, id, action, result) {
       const call = calls.get(id);
       calls.delete(id);
