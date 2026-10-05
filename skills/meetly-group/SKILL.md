@@ -23,8 +23,8 @@ writes and delivery; never invent an id.
 
 Run `busy.ts --fetch --from <ISO> --to <ISO>` covering dates plus travel. Only in the owner's DM, for events they explicitly allowed
 overlapping, add `--allow-overlap-title <owner-supplied event name>` for each name.
-It checks every configured calendar on the Mac, writes
-`/var/lib/plow/meetly/tmp/busy.json` and returns coverage bounds. Unread time is unknown: extend the read, not global preferences.
+It checks all configured calendars and writes `/var/lib/plow/meetly/tmp/busy.json`
+with coverage bounds. Extend incomplete reads, not global preferences.
 Use busy.ts, never raw calendar listings. Never use calendar writes as probes.
 Never claim the owner is free on an account in `degraded`. Never override a real conflict.
 
@@ -38,14 +38,13 @@ selects it (`meetly-confirm`, "Book the event"). Overlap permission does not aut
 
 ## Offer times
 
-For "next week", run `time.ts next_week --anchor <owner message timestamp>` (it reads the owner’s timezone from config) and use its returned `from`/`to`; pass named
-weekdays separately as `days`. For owner DM requests, save those bounds in
+For "next week", run `time.ts next_week --anchor <owner message timestamp>`; it uses
+the configured owner timezone. Use returned `from`/`to` and pass named weekdays as `days`. For owner DM requests, save those bounds in
 `constraints` and pass them as `--from`/`--to`. For a request started in a group,
 suggested dates/times are `proposed` and only explicit non-relaxable conditions
 are `constraints`. Carry constraints into every re-offer unless the owner changes them.
-Accepted clock times belong in `constraints.startTime` (HH:MM), even without “only”;
-never leave it in `proposed`. Save it before searching with `--start-time`.
-If meeting plus travel cannot fit, ask before offering another time.
+Save accepted clock times in `constraints.startTime` (HH:MM), not `proposed`, before
+searching with `--start-time`. If meeting plus travel cannot fit, ask before alternatives.
 When the owner replaces saved hard conditions, run
 `ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
 before searching or calling the group tool, keeping any hard conditions they did not change.
@@ -144,11 +143,10 @@ closed requests; for a pending question, time approval or booked meeting use `me
 Otherwise follow "Offer times" with the group tool; it resolves the recipient, so do
 not look up Contacts or ask for a phone.
 
-In the owner's DM, before offers check `pipeline.ts contact --handle <handle>`.
-A flagged contact needs private owner confirmation (`meetly-pipeline`); then use
-`--confirm-contact`. In a group, use `meetly_offer_owner_group` for this check and
-private handoff; do not read or discuss contact preferences separately. A `silent`
-result ends the turn without any group reply or separate message.
+Before DM offers, check `pipeline.ts contact --handle <handle>`. Flagged contacts need
+private confirmation (`meetly-pipeline`), then `--confirm-contact`. In groups, use
+`meetly_offer_owner_group` for the check and private handoff; never separately read
+or discuss contact preferences. `silent` means no reply.
 For email outreach use `meetly-email`; never substitute a phone number.
 
 In the owner's DM, choose the request path from the owner's message:
@@ -160,8 +158,8 @@ In the owner's DM, choose the request path from the owner's message:
   If ambiguous, ask which meeting. When no request matches, resolve the recipient from Contacts
   and ask if ambiguous. Unnamed owner-group requests stay in their originating group.
 
-Save the guest name the owner gave in `name`, even when they also supplied a phone
-and Contacts has no card; keep it out of `topic`.
+Save the owner-supplied guest name in `name`, even with a phone and no Contacts card;
+keep it out of `topic`.
 
 Extract the topic, proposed times, hard conditions, explicit duration, format and
 place, and, only in the owner's DM, owner-authorized overlap titles. Follow
