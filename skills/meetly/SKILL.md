@@ -14,6 +14,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | `setup-status.ts` | | `{status:"READY", config, range:{from,to}}` or `{status:"SETUP_NEEDED", next, question, draft}` |
 | `record-setup.ts` | `--field F --value V` \| `--done` | before setup `{saved, next, question}`; after `{saved, config}`; `--done` → `{done, config, crons}` |
 | `register-crons.ts` | `[--pause \| --resume]` | `{paused, actions}` |
+| `poll.ts` | `batch` \| `done <batch id>` | `{batch}`: what the poll job woke you for, or `null`; `done` clears it |
 | `cursor.ts` | `get` \| `set <rowid>` \| `hold <rowid>` \| `release` \| `fail` \| `ok` | the cursor `{rowid, held?, …}`; `set` stops below `held` until the ledger has a request with that `sourceRowid`; `fail` → `{failingSince, warn}` |
 | `request-view.ts` | `--id X` | Group-safe request view with `askDetails`; reserves any permitted format/place question before returning it |
 | `ledger.ts` | `find --handle H [--status asked\|offered]` \| `find --chat U` \| `find --name N` | `{request}`; chat lookup is exact and a name miss returns `{request:null}` |

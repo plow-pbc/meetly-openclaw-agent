@@ -17,10 +17,10 @@ export type CronJob = {
   enabled?: boolean;
   sessionTarget?: string;
   schedule?: { kind?: string; everyMs?: number };
-  payload?: { kind?: string; message?: string; timeoutSeconds?: number };
+  payload?: { kind?: string; argv?: string[]; timeoutSeconds?: number };
 };
 
-export type JobSpec = { name: string; every: string; everyMs: number; timeoutSeconds: number; message: string };
+export type JobSpec = { name: string; every: string; everyMs: number; timeoutSeconds: number; argv: string[] };
 
 export type CronBackend = {
   list(): CronJob[];
@@ -52,10 +52,10 @@ export function cronBackend(runner: Runner = spawnRunner, base: string[] = ["nod
     }
     return proc;
   };
-  const turn = (spec: JobSpec) => [
+  const job = (spec: JobSpec) => [
     "--every", spec.every,
     "--session", "isolated",
-    "--message", spec.message,
+    "--command-argv", JSON.stringify(spec.argv),
     "--timeout-seconds", String(spec.timeoutSeconds),
     "--no-deliver",
   ];
@@ -78,10 +78,10 @@ export function cronBackend(runner: Runner = spawnRunner, base: string[] = ["nod
       return rows as CronJob[];
     },
     create(spec, enabled) {
-      cron(["add", "--name", spec.name, ...turn(spec), ...(enabled ? [] : ["--disabled"]), "--json"]);
+      cron(["add", "--name", spec.name, ...job(spec), ...(enabled ? [] : ["--disabled"]), "--json"]);
     },
     edit(id, spec) {
-      cron(["edit", id, ...turn(spec)]);
+      cron(["edit", id, ...job(spec)]);
     },
     setEnabled(id, enabled) {
       cron(["edit", id, enabled ? "--enable" : "--disable"]);
