@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cronBackend, type CronJob, type Proc } from "../skills/meetly/scripts/cron-backend.ts";
-import { plan, POLL_MESSAGE, reconcile, registerFromConfig, SPEC } from "../skills/meetly/scripts/register-crons.ts";
+import { plan, POLL_ARGV, reconcile, registerFromConfig, SPEC } from "../skills/meetly/scripts/register-crons.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { tmpHome } from "./helpers.ts";
 import { join } from "node:path";
@@ -12,7 +12,7 @@ const poll = (over: Partial<CronJob> = {}): CronJob => ({
   enabled: true,
   sessionTarget: "isolated",
   schedule: { kind: "every", everyMs: 300_000 },
-  payload: { kind: "agentTurn", message: POLL_MESSAGE, timeoutSeconds: 600 },
+  payload: { kind: "command", argv: POLL_ARGV, timeoutSeconds: 120 },
   ...over,
 });
 
@@ -38,7 +38,7 @@ function fakeScheduler(initial: CronJob[] = []) {
         enabled: !rest.includes("--disabled"),
         sessionTarget: flag(rest, "--session"),
         schedule: { kind: "every", everyMs: flag(rest, "--every") === "5m" ? 300_000 : 0 },
-        payload: { kind: "agentTurn", message: flag(rest, "--message"), timeoutSeconds: Number(flag(rest, "--timeout-seconds")) },
+        payload: { kind: "command", argv: JSON.parse(flag(rest, "--command-argv")!), timeoutSeconds: Number(flag(rest, "--timeout-seconds")) },
       };
       jobs.push(job);
       return ok(job);
@@ -52,8 +52,8 @@ function fakeScheduler(initial: CronJob[] = []) {
     if (op === "edit") {
       if (rest.includes("--enable")) job.enabled = true;
       if (rest.includes("--disable")) job.enabled = false;
-      if (flag(rest, "--message")) {
-        job.payload = { kind: "agentTurn", message: flag(rest, "--message"), timeoutSeconds: Number(flag(rest, "--timeout-seconds")) };
+      if (flag(rest, "--command-argv")) {
+        job.payload = { kind: "command", argv: JSON.parse(flag(rest, "--command-argv")!), timeoutSeconds: Number(flag(rest, "--timeout-seconds")) };
         job.schedule = { kind: "every", everyMs: 300_000 };
         job.sessionTarget = flag(rest, "--session");
       }
@@ -64,9 +64,9 @@ function fakeScheduler(initial: CronJob[] = []) {
   return { jobs, calls, runner };
 }
 
-test("the poll message keys the prompt", () => {
-  assert.ok(POLL_MESSAGE.startsWith("Meetly poll."));
+test("the poll is one command job that runs poll.ts", () => {
   assert.deepEqual(SPEC.map((s) => s.name), ["meetly-poll"]);
+  assert.deepEqual(POLL_ARGV, ["node", "/opt/plow/skills/meetly/scripts/poll.ts"]);
 });
 
 test("plan: empty creates, exact match does nothing", () => {
@@ -75,11 +75,13 @@ test("plan: empty creates, exact match does nothing", () => {
 });
 
 test("plan: drift is judged only on reported fields", () => {
-  assert.deepEqual(plan([poll({ payload: { message: "old" } })], SPEC, false), [{ op: "edit", name: "meetly-poll", id: "j1" }]);
+  assert.deepEqual(plan([poll({ payload: { argv: ["node", "old.ts"] } })], SPEC, false), [{ op: "edit", name: "meetly-poll", id: "j1" }]);
+  // The agent-turn poll of earlier images becomes the command job in place.
+  assert.deepEqual(plan([poll({ payload: { kind: "agentTurn", timeoutSeconds: 600 } })], SPEC, false), [{ op: "edit", name: "meetly-poll", id: "j1" }]);
   assert.deepEqual(plan([poll({ schedule: { kind: "every", everyMs: 60_000 } })], SPEC, false)[0]?.op, "edit");
   assert.deepEqual(plan([poll({ schedule: { kind: "cron" } })], SPEC, false)[0]?.op, "edit");
   assert.deepEqual(plan([poll({ sessionTarget: "main" })], SPEC, false)[0]?.op, "edit");
-  assert.deepEqual(plan([poll({ payload: { message: POLL_MESSAGE, timeoutSeconds: 30 } })], SPEC, false)[0]?.op, "edit");
+  assert.deepEqual(plan([poll({ payload: { kind: "command", argv: POLL_ARGV, timeoutSeconds: 30 } })], SPEC, false)[0]?.op, "edit");
   const bare: CronJob = { id: "j1", name: "meetly-poll", enabled: true };
   assert.deepEqual(plan([bare], SPEC, false), []);
 });
@@ -115,8 +117,9 @@ test("create sends the expected argv and no model", () => {
   const text = add.join(" ");
   assert.ok(text.includes("--every 5m --session isolated"));
   assert.ok(add.includes("--no-deliver"));
-  assert.equal(flag(add, "--timeout-seconds"), "600");
-  assert.equal(flag(add, "--message"), POLL_MESSAGE);
+  assert.equal(flag(add, "--timeout-seconds"), "120");
+  assert.deepEqual(JSON.parse(flag(add, "--command-argv")!), POLL_ARGV);
+  assert.ok(!add.includes("--message"));
   assert.ok(!add.includes("--model"));
   assert.ok(!add.includes("--disabled"));
 });

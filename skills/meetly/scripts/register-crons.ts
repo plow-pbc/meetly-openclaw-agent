@@ -9,10 +9,11 @@ import { cronBackend, type CronBackend, type CronJob, type JobSpec } from "./cro
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 
-export const POLL_MESSAGE = "Meetly poll. Load the meetly-poll skill and follow it exactly.";
+// A command job: no model call unless poll.ts finds work and wakes a turn.
+export const POLL_ARGV = ["node", "/opt/plow/skills/meetly/scripts/poll.ts"];
 
 export const SPEC: JobSpec[] = [
-  { name: "meetly-poll", every: "5m", everyMs: 300_000, timeoutSeconds: 600, message: POLL_MESSAGE },
+  { name: "meetly-poll", every: "5m", everyMs: 300_000, timeoutSeconds: 120, argv: POLL_ARGV },
 ];
 
 const PREFIX = "meetly-";
@@ -25,7 +26,8 @@ function drifted(job: CronJob, spec: JobSpec): boolean {
   const { schedule, payload } = job;
   if (schedule?.kind !== undefined && schedule.kind !== "every") return true;
   if (schedule?.everyMs !== undefined && schedule.everyMs !== spec.everyMs) return true;
-  if (payload?.message !== undefined && payload.message !== spec.message) return true;
+  if (payload?.kind !== undefined && payload.kind !== "command") return true;
+  if (payload?.argv !== undefined && JSON.stringify(payload.argv) !== JSON.stringify(spec.argv)) return true;
   if (payload?.timeoutSeconds !== undefined && payload.timeoutSeconds !== spec.timeoutSeconds) return true;
   if (job.sessionTarget !== undefined && job.sessionTarget !== "isolated") return true;
   return false;
