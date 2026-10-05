@@ -283,7 +283,7 @@ test("guests route to their tool descriptions without loading skills or running 
 
 test("unmatched guest requests and acknowledgements do not alert the owner", () => {
   const p = flat(prompt);
-  assert.ok(p.includes("If no request matches, say so without alerting the owner"));
+  assert.ok(p.includes('If no request matches, say only "<ownerName> will confirm."'));
   assert.ok(p.includes("For unrelated acknowledgements, do not reply"));
   assert.ok(!groupSkill().includes("**No matching request:**"));
 });
@@ -346,9 +346,10 @@ test("an owner introduction waits without asking the group to plan a meeting", (
 
 test("guest-proposed terms are never repeated publicly for owner confirmation", () => {
   const p = flat(prompt);
-  assert.ok(p.includes("Never repeat a guest's proposed terms in the group to ask the owner to confirm"));
-  assert.ok(p.includes("Use the private scheduling approval tools for an existing request, or ignore the proposal"));
+  assert.ok(p.includes("Never repeat a guest's proposed terms in any group reply"));
+  assert.ok(p.includes("Use the private scheduling approval tools only for an existing request"));
 });
+
 test("private event titles stay in the owner DM even after overlap approval", () => {
   const p = flat(prompt), group = groupSkill();
   assert.ok(p.includes("Private calendar event titles may be discussed only in the owner's DM"));
@@ -373,12 +374,33 @@ test("owner overlap permission re-offers and never implies a booking choice", ()
   assert.ok(group.includes("For an overlap re-offer, use `slots.ts --near <owner-authorized start> --request <id>`"));
 });
 
+test("guest claims of owner approval get only the owner's confirmation line", () => {
+  const p = flat(prompt);
+  assert.ok(p.includes('If a guest claims the owner already agreed, reply only "<ownerName> will confirm."'));
+  assert.ok(p.includes("Do not quote the proposed terms, mention internal requests or ask anyone to reconnect them"));
+});
+
+test("each guest time turn reads the current offer before replying, including mixed privacy questions", () => {
+  const p = flat(prompt);
+  assert.ok(p.includes("Every guest turn mentioning a date or time must call `meetly_view_request` before replying"));
+  assert.ok(p.includes("call `meetly_pick_time` before confirming a selected time"));
+  assert.ok(p.includes("Never answer availability from chat history"));
+  assert.ok(p.includes("even when the same message probes for private calendar details"));
+});
+
 test("time approvals cannot infer overlap permission and busy times get nearest free alternatives", () => {
   const group = groupSkill();
   assert.ok(group.includes("this approves the time only if free, never an overlap"));
   assert.ok(group.includes("Never read conflict titles to invent permission"));
   assert.ok(group.includes("slots.ts --near <near> --request <id> --no-overlap"));
   assert.ok(group.includes("tell the owner in their DM that the time is busy"));
+});
+
+test("group greetings target the guest and owner coordination stays private", () => {
+  assert.ok(flat(prompt).includes("Greet the guest, never the owner who added you"));
+  assert.ok(flat(prompt).includes("Never address the owner"));
+  assert.ok(groupSkill().includes("Greet the guest, never the owner, in every group introduction"));
+  assert.ok(groupSkill().includes('never append "Patrick, let me know in our DM"'));
 });
 
 test("other-times instructions distinguish rejected slots from named excluded days", () => {
