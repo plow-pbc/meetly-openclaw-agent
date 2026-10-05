@@ -43,7 +43,7 @@ const holds = requestHolds;
 function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledger {
   const request = l.requests.find(r => r.id === id);
   if (request?.status !== "booked") return saveRequest(l, input, now, id);
-  if (!sameHandle(request.handle, input.handle) || request.chatUid !== input.chatUid) throw new Error("offer belongs to another request");
+  if (!sameHandle(request.handle, input.handle) || request.chatUid !== input.chatUid || (input.channel !== undefined && (request.channel ?? "text") !== input.channel)) throw new Error("offer belongs to another request");
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   if (validated.status !== "offered") throw new Error("replacement needs offered times");
   return updateRequest(l, id, {
@@ -148,6 +148,9 @@ export async function calendarAction(id: string, action: CalendarAction, options
     let request = requestById(id);
     let input: CalendarAction = action.action === "book" && request.pendingOwner && "start" in request.pendingOwner
       ? { ...action, timeApproval: true } : action;
+    if (input.action === "book" && request.channel === "email" && request.status !== "booked") {
+      input = { ...input, attendees: [...new Set([request.handle, ...(input.attendees?.split(",") ?? [])].map(value => value.trim().toLowerCase()).filter(Boolean))].join(",") };
+    }
     options.validate?.(request);
     if (intent && request.calendarRevision === intent.id) { rmSync(journal); intent = undefined; }
     if (intent && input.action !== "resume") throw new Error(`calendar operation unresolved for ${id}; run resume first`);
@@ -160,7 +163,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           patch({ reoffer: null, holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]) });
           await cleanup();
           request = requestById(id);
-          return { request, groupNotice: request.chatUid ? {
+          return { request, groupNotice: request.channel !== "email" && request.chatUid ? {
             chatUid: request.chatUid,
             text: request.holdCleanup?.length
               ? "The replacement offer expired; some holds still need cleanup. The original booking remains unchanged."
@@ -178,14 +181,14 @@ export async function calendarAction(id: string, action: CalendarAction, options
       }
       if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(request.status === "booked" && ((input.action === "book" && wasBooked) || input.action === "offer"))) throw new Error(`request is ${request.status}`);
       if (input.action === "duration") {
-        const { origin, handle, name, sourceRowid, chatUid, constraints, proposed, format, location, locale, askDetails } = request;
+        const { channel, origin, handle, name, sourceRowid, chatUid, constraints, proposed, format, location, locale, askDetails } = request;
         const config = loadConfig();
         if (config.paused) throw new Error("Scheduling is paused.");
         const durationMin = requireDuration(input.durationMin);
         if (input.offered.some(slot => Date.parse(slot.end) - Date.parse(slot.start) !== durationMin * 60_000)) {
           throw new Error("Replacement slots must match the new duration.");
         }
-        input = { action: "offer", request: { origin, handle, name, sourceRowid, chatUid, constraints, proposed,
+        input = { action: "offer", request: { channel, origin, handle, name, sourceRowid, chatUid, constraints, proposed,
           format, location, locale, askDetails, durationMin: input.durationMin, topic: input.topic,
           offered: input.offered.map(slot => ({ ...slot, account: config.defaultAccount })) } };
       }

@@ -19,6 +19,11 @@ accountId `chat`, target the meeting's `chatUid`); the owner is in that
 thread. Pipeline nudges always go privately to the owner, even for a linked group.
 For an owner DM, use
 `owner-chat.ts` and target the printed `chatUid`.
+Email requests are different: the base email tool requires an active Plow turn,
+so this unattended poll must never target an email `chatUid` with `message`.
+For email expiry, cleanup or write problems, notify only the owner's DM.
+Email bookings carry their Meet link in the invitation and booking confirmation;
+they do not appear in the scheduled reminder list.
 
 1. Run `setup-status.ts`. If it is not `READY`, or `config.paused` is true, end.
    (Pausing disables this job, so a paused Meetly sends no reminders either.)
@@ -93,7 +98,8 @@ For an owner DM, use
      that request's other mutations and report it to the owner.
    - For each request from `ledger.ts expired`, run `calendar.ts expire --id <id>`.
      The writer rechecks expiry while holding the request lock. If it prints
-     `skipped`, do not announce expiry. If `groupNotice` is present, immediately send
+     `skipped`, do not announce expiry. For an email request, notify only the
+     owner's DM as described above. Otherwise, if `groupNotice` is present, immediately send
      its `text` to `groupNotice.chatUid` with `message` (action `send`, channel
      `plow`, accountId `chat`), in the guest's language. This is required even
      though the request remains `booked`: the replacement times were released,

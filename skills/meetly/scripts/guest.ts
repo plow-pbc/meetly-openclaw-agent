@@ -9,10 +9,11 @@ import { checkTime, findPreferredSlots, preferredSearchCoverage, localeFormatter
 import { readJson, updateJson } from "./store.ts";
 import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, wallParts, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
+import { plowApi } from "./owner-chat.ts";
 
-export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
+export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string; senderIsOwner?: boolean; config?: { channels?: { plow?: { apiBase?: string; emailLineUid?: string } } } };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
-export type GuestArgs = Omit<Constraints, "startTime"> & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string };
+export type GuestArgs = Omit<Constraints, "startTime"> & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string; attendees?: string[] };
 type SendOwner = (text: string) => Promise<void>;
 const EMPTY: Ledger = { requests: [] };
 
@@ -22,8 +23,41 @@ function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
   const chat = chatId(ctx);
   const sender = ctx.requesterSenderId;
   if (ctx.messageChannel !== "plow" || ctx.agentAccountId !== "chat" || !chat || !sender) return;
-  const request = findByChat(ledger, chat);
+  const texts = { requests: ledger.requests.filter(r => r.channel !== "email") };
+  const request = findByChat(texts, chat);
   return request && sameHandle(request.handle, sender) ? request : undefined;
+}
+
+async function resolveRequest(ctx: GuestContext): Promise<Request | undefined> {
+  if (ctx.messageChannel === "plow" && ctx.agentAccountId === "email" && chatId(ctx) && ctx.requesterSenderId && ctx.senderIsOwner !== true) {
+    const chat = chatId(ctx)!;
+    const emails = (ledger: Ledger) => ({ requests: ledger.requests.filter(r => r.channel === "email") });
+    const linked = findByChat(emails(readJson<Ledger>(file("ledger.json"), EMPTY)), chat);
+    if (linked) return linked;
+    // Recover an uncertain opener using the server's thread roster, never tool arguments.
+    const account = ctx.config?.channels?.plow;
+    if (!account?.emailLineUid) return;
+    const api = plowApi({ base: account.apiBase });
+    const response = await api.fetch(`${api.base}/v1/chats/${encodeURIComponent(chat)}`, {
+      headers: api.headers, redirect: "error", signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error("email thread unavailable");
+    const thread = await response.json() as { uid: string; status: string; participants: { type: string; relationship?: string; line?: { uid?: string }; provider_key?: string }[] };
+    if (thread.uid !== chat || thread.status !== "active" || !thread.participants.some(p => p.type === "agent" && p.relationship === "self" && p.line?.uid === account.emailLineUid)) return;
+    const handles = thread.participants.filter(p => p.type === "member").map(p => p.provider_key ?? "");
+    if (!handles.some(handle => sameHandle(handle, ctx.requesterSenderId!))) return;
+    let id: string | undefined;
+    const ledger = updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
+      const existing = findByChat(emails(l), chat);
+      if (existing) { id = existing.id; return l; }
+      const candidates = emails(l).requests.filter(r => r.status === "offered" && !r.chatUid && r.startedAt && handles.some(handle => sameHandle(handle, r.handle)));
+      if (candidates.length !== 1) return l;
+      id = candidates[0]!.id;
+      return updateRequest(l, id, { chatUid: chat }, Date.now());
+    });
+    return ledger.requests.find(r => r.id === id);
+  }
+  return current(readJson<Ledger>(file("ledger.json"), EMPTY), ctx);
 }
 
 function patch(request: Request, change: Patch): Request {
@@ -84,6 +118,7 @@ async function notifyOwner(request: Request, config: Config, change: "moved" | "
     : change === "moved" ? `${subject} moved to ${when} (${config.timezone}).`
     : request.holdCleanup?.length ? `${request.name ?? request.handle} requested cancellation of ${request.topic} on ${when} (${config.timezone}); calendar cleanup is pending.`
     : `${request.name ?? request.handle} cancelled ${request.topic} on ${when} (${config.timezone}).`;
+  if (change === "declined" && request.channel === "email") return { ownerNotice: text };
   try {
     if (!sendOwner) throw new Error("owner messaging unavailable");
     await sendOwner(text);
@@ -93,7 +128,9 @@ async function notifyOwner(request: Request, config: Config, change: "moved" | "
   }
 }
 
-async function pick(request: Request, config: Config, start: string, sendOwner?: SendOwner, turnStartedAt?: number) {
+async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number) {
+  if (attendees !== undefined && (!Array.isArray(attendees) || (attendees.length > 0 && (request.channel !== "email" || request.status === "booked"
+    || attendees.some(email => typeof email !== "string" || !/^[^\s@,]+@[^\s@,]+$/.test(email)))))) return { error: "Additional invitees need email addresses on an unbooked email request." };
   const requested = checkTime({ now: Date.now(), config, busy: [], start,
     meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin }).slot.start;
   const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(requested));
@@ -111,9 +148,9 @@ async function pick(request: Request, config: Config, start: string, sendOwner?:
     return { ...view(request, config), invitationUpdated: "invitationUpdated" in result && result.invitationUpdated === true,
       overlappedWithOwnerApproval: checked.overlap, ...await notifyOwner(request, config, "moved", sendOwner) };
   }
-  const contact = await lookupContact(request.handle);
-  const email = request.handle.includes("@") ? request.handle : contact.found && contact.matches === 1 ? contact.emails[0] : undefined;
-  request = (await write(request, { action: "book", start: offer.start, attendees: email })).request;
+  const contact = request.handle.includes("@") ? undefined : await lookupContact(request.handle);
+  const email = request.handle.includes("@") ? request.handle : contact?.found && contact.matches === 1 ? contact.emails[0] : undefined;
+  request = (await write(request, { action: "book", start: offer.start, attendees: [email, ...attendees ?? []].filter(Boolean).join(",") || undefined })).request;
   return { ...view(request, config), invitationSent: !!email, overlappedWithOwnerApproval: checked.overlap };
 }
 
@@ -187,9 +224,9 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
         : "Those times don't work. I can't confirm another time yet.",
       recovery: { action: "wait", retry: false } };
   }
-  const { origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
+  const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {
-    origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
+    channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
     offered: slots.map(slot => ({ start: slot.start, end: slot.end, account: config.defaultAccount })),
   } })).request;
   return { ...view(request, config), preferencesUnavailable };
@@ -202,7 +239,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   };
   if (request.pendingOwner) return { error: "A question is already open with the owner. Wait for their answer." };
   if ((args.question === undefined) === (args.start === undefined)) return { error: "Provide either a question or a start time, not both." };
-  if (!sendOwner) return { error: "Owner messaging is unavailable. Nothing was sent." };
+  if (request.channel !== "email" && !sendOwner) return { error: "Owner messaging is unavailable. Nothing was sent." };
   let pendingOwner: PendingOwner;
   let question: string;
   const askedAt = new Date(Date.now()).toISOString();
@@ -222,7 +259,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     question = `Can we meet ${localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(checked.slot.start))} (${config.timezone}), outside the meeting window?`;
   }
   // Save the question and its notification together so the poll cannot send a
-  // second owner ask while this DM is in flight or its delivery is uncertain.
+  // second owner ask while the notification is in flight or its delivery is uncertain.
   updateJson<Ledger>(file("ledger.json"), EMPTY, ledger => {
     unchanged(request, ledger.requests.find(r => r.id === request.id)!);
     const next = updateRequest(ledger, request.id, { pendingOwner }, Date.now());
@@ -231,10 +268,12 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
       at: new Date(Date.now()).toISOString(),
     } } : r) };
   });
+  if (request.channel === "email") return { ownerQuestion: question, guestName: request.name, topic: request.topic,
+    replyToOwner: true, message: "Ask the owner in your final text. Do not send an email to the thread or send a separate DM." };
   // Keep the slot on an uncertain send so another turn cannot duplicate it.
   try {
     const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
-    await sendOwner(purpose === "scheduling" && "question" in pendingOwner
+    await sendOwner!(purpose === "scheduling" && "question" in pendingOwner
       ? `Scheduling ${label(request.topic)} with ${label(request.name ?? request.handle)} needs your decision. ${question}`
       : "question" in pendingOwner
       ? `${label(request.name ?? "Your guest")} asked in your ${label(request.topic)} thread. Guest question: ${JSON.stringify(question)}. Reply there, or tell me what to say.`
@@ -248,7 +287,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
   try {
-    let request = current(readJson<Ledger>(file("ledger.json"), EMPTY), ctx);
+    let request = await resolveRequest(ctx);
     const config = loadConfig();
     if (!request) return { ownerName: config.ownerName, error: `${config.ownerName} will confirm.` };
     if (action === "view") return view(request, config);
@@ -264,7 +303,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     if (action === "ask_owner" && ["offered", "booked"].includes(request.status)) {
       if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
       const result = await askOwner(request, config, { question: args.question }, sendOwner, "guest-question");
-      return { ...result, silent: true };
+      return request.channel !== "email" ? { ...result, silent: true } : result;
     }
     if (request.status !== "offered" && request.status !== "booked") return view(request, config);
     if (action === "decline") {
@@ -275,7 +314,7 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
-    return await pick(request, config, args.start, sendOwner, ctx.turnStartedAt);
+    return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt);
   } catch (error) {
     if (error instanceof WeekdayDateRequired) return { error: error.message, code: "DATE_REQUIRED",
       recovery: { action: "ask_date" } };

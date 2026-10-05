@@ -44,8 +44,8 @@ test("AGENTS.md renders the conversation identity and keeps the base's tool and 
   assert.ok(flat(prompt).includes("Guest scheduling tools support Plow chat only; they are unavailable to email guests."));
 });
 
-test("the six Meetly skills exist", () => {
-  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-group", "meetly-pipeline", "meetly-poll", "meetly-setup"]);
+test("the seven Meetly skills exist", () => {
+  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-email", "meetly-group", "meetly-pipeline", "meetly-poll", "meetly-setup"]);
 });
 
 test("every skill has frontmatter naming its directory and a description", () => {
