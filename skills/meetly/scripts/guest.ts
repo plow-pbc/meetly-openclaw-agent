@@ -205,6 +205,13 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   const restored = preferences({ days: args.restoredDays }, config.timezone).days ?? [];
   if (newlyExcluded.some(day => restored.includes(day))) throw new Error("a weekday cannot be both excluded and restored");
   const excludedDays = [...new Set([...(request.excludedDays ?? []).filter(day => !restored.includes(day)), ...newlyExcluded])];
+  const preferredDays = [...new Set([...(preferred.days ?? []), ...(typeof args.start === "object" ? [args.start.weekday] : [])])];
+  const needsRestoration = preferredDays.filter(day => excludedDays.includes(day));
+  if (needsRestoration.length && args.restoredDays === undefined) {
+    const retryArgs = { ...args, restoredDays: needsRestoration };
+    return { error: `The preferred weekday is still excluded. If the guest explicitly says it now works, retry meetly_other_times once with ${JSON.stringify(retryArgs)}. Otherwise keep its exclusion. No calendar search or holds were made.`,
+      code: "DAY_RESTORATION_REQUIRED", days: needsRestoration, recovery: { action: "retry", retry: true, arguments: retryArgs } };
+  }
   const availableDays = { days: DAYS.filter(day => !excludedDays.includes(day)) };
   const relative = args.offer_week === true || typeof args.start === "object" || (!args.start && args.days?.length && !args.from && !args.to && !args.next_week);
   const window = relative ? offerDateWindow(request.reoffer?.offered ?? request.offered, config.timezone) : undefined;

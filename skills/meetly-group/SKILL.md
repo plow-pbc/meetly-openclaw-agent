@@ -40,13 +40,10 @@ selects it (`meetly-confirm`, "Book the event"). Overlap permission does not aut
 
 ## Offer times
 
-For "this week" or "next week", pass typed `week: "this"|"next"` to the group tool,
-or `--week this|next` to `slots.ts` in the owner's DM. The search resolves Monday–Sunday
-in the owner's configured timezone. Never compute or substitute from/to dates for a relative
-week, including after a tool error. Pass named weekdays separately as `days`/`--days`.
-For DM calendar reads, `time.ts next_week --anchor <owner message timestamp>` supplies read
-bounds only; the search must still receive `--week next`. Save the search's exact
-`resolvedConstraints` on the request before offering. The group tool saves the week itself.
+For relative weeks, pass `week: "this"|"next"` to the group tool or `--week this|next`
+to DM `slots.ts`; never calculate from/to. `time.ts next_week --anchor <owner message timestamp>`
+supplies DM read bounds only. Pass weekdays separately; save `resolvedConstraints`.
+Undated DM searches require `--horizon` or `--asap`. On `DATE_SCOPE_REQUIRED`, retry with the owner's scope.
 For explicit calendar dates/ranges, use from/to; the default horizon does not limit them.
 For ASAP or "as soon as possible", use `asap: true` / `--asap`, starting from now,
 including today. Copy each returned `confirmationTime` in both owner replies and guest
@@ -100,15 +97,15 @@ same `travel` to offers. Never expose the base or travel in a group.
    `--at` rejects search filters: no days/after/before/from/to/exclude/count/near.
    If busy in the owner's main DM, read `meetly-travel` and inspect flexible blockers
    before `--near` or any offer. A permission question ends this turn; never remember
-   a historical answer or search alternatives until a fresh reply. Otherwise ask before
-   searching unrequested alternatives; once authorized, use `--near <ISO>` with hard conditions.
+   a historical answer or search alternatives until a fresh reply. With no flexible blocker,
+   search `--near <ISO>` and offer nearest times in this reply, preserving hard conditions.
    - **`incomplete` is set:** availability is not fully known. Fetch its `requiredCoverage`
      and search again; if the calendar is truncated or unavailable, say the read is incomplete.
      Never call unread dates unavailable or relax dates because of an incomplete read.
    - **No slots, complete read.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
-     If `constraints` block it, tell the owner which one and suggest
-     loosening it; stop.
+     Report `searched` dates/days, including guest exclusions. Never claim an unrestricted search.
+     Ask which hard condition to relax.
    - **`degraded` is not empty:** tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
 4. Save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,

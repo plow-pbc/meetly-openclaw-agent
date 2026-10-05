@@ -196,14 +196,14 @@ test("the CLI reads busy.ts output and the stored config", () => {
   }));
   const env = { MEETLY_HOME: home };
   const now = ["--duration", "30", "--now", "2026-09-28T08:00:00-03:00"];
-  const r = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now], env);
+  const r = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now, "--horizon"], env);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.json.slots[0].start, "2026-09-28T11:00:00-03:00");
   assert.deepEqual(r.json.degraded, ["other@example.com"]);
-  const oversized = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now, "--count", "6"], env);
+  const oversized = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now, "--horizon", "--count", "6"], env);
   assert.equal(oversized.status, 0, oversized.stderr);
   assert.deepEqual(oversized.json, r.json);
-  const allowed = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now, "--allow-overlap", '{"account":"jean@example.com","id":"weekly"}', "--count", "1"], env);
+  const allowed = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now, "--horizon", "--allow-overlap", '{"account":"jean@example.com","id":"weekly"}', "--count", "1"], env);
   assert.deepEqual(allowed.json.slots.map((s: { label: string }) => s.label), ["mon 28/9 10:00 America/Sao_Paulo"]);
   const at = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--at", "2026-10-03T10:00:00-03:00", "--duration", "60", "--locale", "pt-BR"], env);
   assert.equal(at.status, 0, at.stderr);
@@ -217,11 +217,11 @@ test("the CLI reads busy.ts output and the stored config", () => {
   assert.equal(cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--owner"], env).status, 1);
   const authorizedFile = join(home, "authorized-busy.json");
   writeJson(authorizedFile, { busy: [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly", account: "jean@example.com" }], allowOverlap: [{ account: "jean@example.com", id: "weekly" }] });
-  const authorized = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", authorizedFile, ...now, "--count", "1"], env);
+  const authorized = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", authorizedFile, ...now, "--horizon", "--count", "1"], env);
   assert.deepEqual(authorized.json.slots, allowed.json.slots);
   assert.equal(cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", authorizedFile, ...now, "--at", "2026-09-28T10:00:00-03:00"], env).json.free, true);
   assert.doesNotMatch(authorized.stdout, /weekly|allowOverlap/);
-  const us = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now, "--locale", "en-US", "--count", "1"], env);
+  const us = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now, "--horizon", "--locale", "en-US", "--count", "1"], env);
   assert.deepEqual(us.json.slots.map((s: { label: string }) => s.label), ["Mon, 9/28, 11:00 AM GMT-3"]);
   assert.equal(cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--locale", "??"], env).status, 1);
   assert.equal(cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--days", "someday"], env).status, 1);
@@ -310,7 +310,7 @@ test("replacement slot search keeps saved and newly resolved overlap authorizati
   }, Date.parse(start), "r_one"));
   const busyFile = join(home, "busy.json");
   writeJson(busyFile, { busy: ["saved", "new", "own-hold"].map(id => ({ id, start, end, account: "jean@example.com" })), allowOverlap: [{ account: "jean@example.com", id: "new" }] });
-  const result = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--after", "10:00", "--count", "1"], env);
+  const result = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--after", "10:00", "--count", "1", "--horizon"], env);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.json.slots[0].start, start);
   assert.doesNotMatch(result.stdout, /saved|new|own-hold|allowOverlap/);
@@ -323,7 +323,7 @@ test("replacement slot search keeps saved and newly resolved overlap authorizati
   assert.equal(approval.status, 0, approval.stderr);
   assert.equal(approval.json.free, false);
   assert.equal(approval.json.reason, "busy");
-  const alternatives = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--near", start, "--no-overlap"], env);
+  const alternatives = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--near", start, "--no-overlap", "--horizon"], env);
   assert.equal(alternatives.status, 0, alternatives.stderr);
   assert.equal(alternatives.json.slots[0].start, end);
 
@@ -364,7 +364,7 @@ for (const meal of ["lunch", "dinner", "coffee"] as const) {
     const start = meal === "lunch" ? "2026-09-28T11:30:00-03:00" : meal === "dinner" ? "2026-09-28T18:00:00-03:00" : "2026-09-28T10:00:00-03:00";
     for (const mode of [[], ["--at", start]]) {
       for (const duration of [undefined, 45]) {
-        const result = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', ...args, ...mode, ...(duration === undefined ? [] : ["--duration", String(duration)])], { MEETLY_HOME: home });
+        const result = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', ...args, ...mode, ...(!mode.length ? ["--horizon"] : []), ...(duration === undefined ? [] : ["--duration", String(duration)])], { MEETLY_HOME: home });
         if (duration === undefined) {
           assert.equal(result.status, 1);
           assert.match(result.stderr, /Set durationMin/);
@@ -393,14 +393,14 @@ test("the CLI accepts coffee and preserves dinner's window and saved duration on
   const busyFile = join(home, "busy.json");
   writeJson(busyFile, { busy: [], degraded: [] });
   const args = ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--now", new Date(NOW).toISOString(), "--duration", "45"];
-  const first = cli("slots.ts", [...args, "--meal", "dinner"], { MEETLY_HOME: home });
+  const first = cli("slots.ts", [...args, "--meal", "dinner", "--horizon"], { MEETLY_HOME: home });
   assert.equal(first.status, 0, first.stderr);
   assert.equal(first.json.slots[0].start, "2026-09-28T18:00:00-03:00");
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
     origin: "owner", handle: "+15551234567", topic: "dinner", meal: "dinner", durationMin: 45,
     offered: first.json.slots.map((s: object) => ({ ...s, account: CONFIG.defaultAccount })),
   }, NOW, "dinner"));
-  const again = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--now", new Date(NOW).toISOString(), "--request", "dinner", "--after", "19:00"], { MEETLY_HOME: home });
+  const again = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--now", new Date(NOW).toISOString(), "--request", "dinner", "--after", "19:00", "--horizon"], { MEETLY_HOME: home });
   assert.equal(again.status, 0, again.stderr);
   assert.equal(again.json.slots[0].start, "2026-09-28T19:00:00-03:00");
   assert.equal(again.json.slots[0].end, "2026-09-28T19:45:00-03:00");
@@ -409,7 +409,7 @@ test("the CLI accepts coffee and preserves dinner's window and saved duration on
   assert.equal(checked.json.free, true);
   assert.equal(checked.json.outsideHours, false);
   assert.equal(checked.json.slot.end, again.json.slots[0].end);
-  const coffee = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--duration", "30", "--in", busyFile, "--now", new Date(NOW).toISOString(), "--meal", "coffee", "--after", "17:00"], { MEETLY_HOME: home });
+  const coffee = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--duration", "30", "--in", busyFile, "--now", new Date(NOW).toISOString(), "--meal", "coffee", "--after", "17:00", "--horizon"], { MEETLY_HOME: home });
   assert.equal(coffee.status, 0, coffee.stderr);
   assert.equal(coffee.json.slots[0].start, "2026-09-28T17:00:00-03:00");
   assert.equal(coffee.json.slots[0].end, "2026-09-28T17:30:00-03:00");
@@ -566,4 +566,26 @@ test("an owner-approved clock time replaces the meal window without constraining
   assert.equal(checkTime({ ...query, ownerStartTime: undefined, start: checked.slot.start }).outsideHours, true);
   assert.equal(checkTime({ ...query, start: checked.slot.start,
     busy: [{ start: "2026-09-28T10:50:00-03:00", end: "2026-09-28T10:55:00-03:00" }] }).free, false);
+});
+
+test("DM search requires an explicit date scope instead of silently spilling next week into the horizon", () => {
+  const home = tmpHome();
+  writeJson(join(home, "config.json"), { ...CONFIG, timezone: "America/Los_Angeles", horizonDays: 14 });
+  writeJson(join(home, "busy.json"), { busy: [5, 6, 7].map(day => ({
+    start: `2026-10-0${day}T09:00:00-07:00`, end: `2026-10-0${day}T18:00:00-07:00`,
+  })) });
+  const args = ["--in", join(home, "busy.json"), "--now", "2026-10-05T05:58:00Z", "--meal", "lunch", "--duration", "60", "--travel", '{"beforeMin":15,"afterMin":15}', "--days", "mon,tue,wed"];
+  const unscoped = cli("slots.ts", args, { MEETLY_HOME: home });
+  assert.equal(unscoped.status, 1, "an omitted week must not return October 12 as next week");
+  assert.match(unscoped.stderr, /DATE_SCOPE_REQUIRED/);
+  const next = cli("slots.ts", [...args, "--week", "next"], { MEETLY_HOME: home });
+  assert.equal(next.status, 0, next.stderr);
+  assert.deepEqual(next.json.slots, []);
+  assert.deepEqual(next.json.resolvedConstraints, { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-11" });
+});
+
+test("search output reports guest exclusions in the effective search, separate from owner conditions", () => {
+  const result = findSlots(q({ from: "2026-10-12", to: "2026-10-18", excludedDays: ["mon", "tue", "thu"] }));
+  assert.deepEqual((result as any).searched, { from: "2026-10-12", to: "2026-10-18", days: ["wed", "fri"], excludedDays: ["mon", "tue", "thu"] });
+  assert.deepEqual(result.resolvedConstraints, { from: "2026-10-12", to: "2026-10-18" });
 });

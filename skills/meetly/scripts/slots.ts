@@ -100,6 +100,7 @@ type SlotResult = {
   slots: Slot[];
   durationMin: number;
   resolvedConstraints: Constraints;
+  searched: Constraints & { excludedDays: string[] };
   unknownAfter?: string;
   incomplete?: { reason: "calendar-coverage" | "truncated-calendar"; requiredCoverage: Coverage };
 };
@@ -146,6 +147,9 @@ export function findSlots(q: SlotQuery): SlotResult {
   const tz = config.timezone;
   const resolvedConstraints = resolveSearchConstraints(q, q.week, now, tz);
   q = { ...q, ...resolvedConstraints };
+  const searched = { ...resolvedConstraints, ...searchBounds(q),
+    days: config.days.filter(day => (!q.days || q.days.includes(day)) && !q.excludedDays?.includes(day)),
+    excludedDays: q.excludedDays ?? [] };
   if (q.asap !== undefined && typeof q.asap !== "boolean") throw new Error("asap must be a boolean");
   if (q.asap && q.near) throw new Error("asap searches earliest first; omit near");
   const duration = requireDuration(q.durationMin);
@@ -154,7 +158,7 @@ export function findSlots(q: SlotQuery): SlotResult {
 
   let [startMin, endMin] = windowFor(config, q.meal, q.ownerStartTime, duration);
   const exactStart = q.startTime === undefined ? undefined : minutes(parseTime(q.startTime));
-  if (exactStart !== undefined && exactStart < startMin) return { slots: [], durationMin: duration, resolvedConstraints };
+  if (exactStart !== undefined && exactStart < startMin) return { slots: [], durationMin: duration, resolvedConstraints, searched };
   startMin = exactStart ?? Math.ceil(startMin / STEP_MIN) * STEP_MIN;
 
   const earliest = now + MIN_NOTICE_MIN * 60_000;
@@ -219,7 +223,7 @@ export function findSlots(q: SlotQuery): SlotResult {
     label: label(c.start, tz, format),
     confirmationTime: formatMeetingTime(localIso(c.start, tz), tz, q.locale, now),
   }));
-  return { slots, durationMin: duration, resolvedConstraints, ...(incomplete ? { incomplete } : {}),
+  return { slots, durationMin: duration, resolvedConstraints, searched, ...(incomplete ? { incomplete } : {}),
     ...(q.unknownAfter !== undefined ? { unknownAfter: q.unknownAfter } : {}) };
 }
 
@@ -302,6 +306,7 @@ if (isMain(import.meta.url)) {
         to: { type: "string" },
         week: { type: "string" },
         asap: { type: "boolean" },
+        horizon: { type: "boolean" },
         "allow-overlap": { type: "string", multiple: true },
         "no-overlap": { type: "boolean", default: false },
         exclude: { type: "string", multiple: true },
@@ -370,13 +375,17 @@ if (isMain(import.meta.url)) {
       if (request.booked) q.exclude = [...(q.exclude ?? []), request.booked.start];
     }
     if (values["no-overlap"]) q.allowOverlap = [];
+    requireDuration(q.durationMin);
+    if (values.at === undefined && !q.from && !q.to && !values.week && !values.asap && !values.horizon) {
+      throw new Error("DATE_SCOPE_REQUIRED: pass --week this|next for a relative week, --from/--to for explicit dates, --asap for earliest available, or --horizon only when no date range was requested. Keep named weekdays with --days; do not calculate dates for a relative week.");
+    }
     if (values.at !== undefined) {
-      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "start-time", "week", "asap"] as const) {
+      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "start-time", "week", "asap", "horizon"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
       const result = checkTime({ ...q, start: values.at });
       const next = result.reason === "busy" && !degraded.length ? {
-        ownerMainDM: "Before searching alternatives, call the meetly_movable tool (not a script) with action inspect, this slot as candidates, and the same format/travel or requestId. Read meetly-travel. If a blocker looks flexible, ask once privately, finish NO_REPLY and wait for a new owner message. Do not run --near, grant overlap or offer in this turn. Past permission is not a new answer.",
+        ownerMainDM: "Before searching alternatives, call the meetly_movable tool (not a script) with action inspect, this slot as candidates, and the same format/travel or requestId. Read meetly-travel. If a blocker looks flexible, ask once privately, finish NO_REPLY and wait for a new owner message. While awaiting that answer, do not search, grant overlap or offer. Otherwise search --near now and return the nearest times in this reply. Past permission is not a new answer.",
         otherChats: "Search alternatives without inspecting or disclosing private blockers.",
       } : result.reason === "unknown" ? { read: "Fetch busy.ts --fetch --from ISO --to ISO covering the meeting and all travel, then check again. Unread time is not free. Never use a calendar write to test availability." } : undefined;
       return { ...result, degraded, ...(next ? { next } : {}) };

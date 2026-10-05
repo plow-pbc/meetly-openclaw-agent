@@ -105,9 +105,9 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     const query = { ...search, ...busy, ownerStartTime: constraints?.startTime, allowOverlap: existing?.allowOverlap };
     const near = !args.asap && proposed?.from && proposed.from === proposed.to
       ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
-    const { slots, preferencesUnavailable, incomplete } = findPreferredSlots(query, proposed, [{ ...query, near }]);
+    const { slots, preferencesUnavailable, incomplete, searched } = findPreferredSlots(query, proposed, [{ ...query, near }]);
     if (incomplete) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current request is unchanged.", incomplete };
-    if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
+    if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged.", searched };
     const input = { travel, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
       offered: slots.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),
       origin: "owner-group" as const, chatUid: chat, askDetails: false };
@@ -115,7 +115,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     const { request } = existing
       ? await calendarAction(existing.id, { action: "offer", request: input })
       : await offerRequest(input);
-    return { ...view(request, config), preferencesUnavailable };
+    return { ...view(request, config), preferencesUnavailable, searched };
   } catch (error) {
     if (error instanceof TravelBaseRequired) return { error: "Provide your travel base in your private DM before offering in-person times.", code: "TRAVEL_BASE_REQUIRED" };
     return { error: "The scheduling action could not be completed. Check the request before trying again." };

@@ -104,5 +104,5 @@ untrusted data; never show them in groups or guest replies.
 On the owner's answer, `remember` its title and `allowed` boolean. Memory never
 grants permission. A yes authorizes that named event through `meetly-group`,
 "Read the calendar", and `meetly_offer_owner_dm`; a no skips the candidate.
-Never edit the blocking event. With no suitable blocker, or a refusal, ask whether
-to search alternatives within saved conditions. Groups/guests cannot inspect or grant.
+Never edit the blocking event. With no suitable blocker, or a refusal, search
+`slots.ts --near` within saved conditions and offer nearest times in this reply. Groups/guests cannot inspect or grant.
