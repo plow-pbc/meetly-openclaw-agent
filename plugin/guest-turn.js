@@ -26,7 +26,13 @@ export function createGuestTurns() {
       if (!run) return execute();
       // A pick and its question both update the request. Finish one before
       // the next reads it, even when the model calls them in parallel.
-      const result = (run.pending ?? Promise.resolve()).then(execute);
+      const result = (run.pending ?? Promise.resolve()).then(async () => {
+        if (run.terminalReply) return run.terminalReply;
+        const result = await execute();
+        // A delivered wait silences this run; later actions could not be confirmed.
+        if (result.guestReplyDelivered) run.terminalReply = result;
+        return result;
+      });
       run.pending = result.then(() => {}, () => {});
       return result;
     },

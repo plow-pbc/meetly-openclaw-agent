@@ -99,6 +99,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   });
   const ownerLines: string[] = [];
   const deliveries: Record<string, any>[] = [];
+  const groupDeliveries: Record<string, any>[] = [];
   const routes: Record<string, any>[] = [];
   const delivery = { status: "sent", fail: false };
   const ownerRoute = { agentId: "main", sessionKey: "agent:main:main" };
@@ -107,9 +108,9 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     buildOutboundSessionContext: (args: object) => args,
     sendDurableMessageBatch: async (args: Record<string, any>) => {
       assert.ok(read().requests[0]!.pendingOwner || read().requests[0]!.booked || read().requests[0]!.status === "dropped", "save the question or scheduling change before sending");
-      deliveries.push(args);
+      (args.to === "plow-owner" ? deliveries : groupDeliveries).push(args);
       if (delivery.fail) throw new Error("PRIVATE TRANSPORT ERROR");
-      ownerLines.push(args.payloads[0].text);
+      if (args.to === "plow-owner") ownerLines.push(args.payloads[0].text);
       return { status: delivery.status };
     },
   });
@@ -117,8 +118,8 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   // Baseline scenarios permit the full date horizon unless they explicitly keep the offer week.
   const scopedArgs = (action: GuestAction, args: GuestArgs) => action === "other_times" ? { offer_week: false, ...args } : args;
   registerGuestTools({ runtime: { channel: {
-    routing: { resolveAgentRoute(args: object) {
-      assert.deepEqual(args, { cfg: context.config, channel: "plow", accountId: "chat", peer: { kind: "direct", id: "plow-owner" } });
+    routing: { resolveAgentRoute(args: any) {
+      assert.deepEqual(args, { cfg: context.config, channel: "plow", accountId: "chat", peer: args.peer.id === "plow-owner" ? { kind: "direct", id: "plow-owner" } : { kind: "group", id: context.nativeChannelId } });
       return ownerRoute;
     } },
     session: { resolveStorePath: () => "/sessions", updateLastRoute: async (args: Record<string, any>) => { routes.push(args); } },
@@ -126,7 +127,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     const tool = factory(context); tools.set(tool.name, tool);
   } }, (ctx, action, args, send) => guestAction({ ...ctx, turnStartedAt: now + 1 }, action, scopedArgs(action, args), send), outbound);
   const act = (ctx: GuestContext, action: GuestAction, args: GuestArgs = {}) => guestAction({ turnStartedAt: now + 1, ...ctx }, action, scopedArgs(action, args), sendOwner);
-  return { home, read, save, ledger, participants, events, commands, fail, lost, hooks, tools, act, ownerLines, deliveries, routes, delivery, request: () => read().requests[0]! };
+  return { home, read, save, ledger, participants, events, commands, fail, lost, hooks, tools, act, ownerLines, deliveries, groupDeliveries, routes, delivery, request: () => read().requests[0]! };
 }
 
 for (const [action, args] of actions) test(`${action} refuses missing or mismatched runtime sender/chat and ignores identity arguments`, async t => {
@@ -161,8 +162,10 @@ test("other-times files a free outside-window approval without replacing holds",
   const tool = f.tools.get("meetly_other_times")!;
   const result = JSON.parse((await tool.execute("ask", args)).content[0]!.text);
   assert.equal(result.ownerAskSent, true);
-  assert.equal(result.message, "I've asked Alex and will get back to you here when Alex replies.");
+  assert.equal(result.message, "I've asked Alex to approve that time.");
   assert.equal(result.askDetails, false);
+  assert.equal(result.silent, true);
+  assert.equal(f.groupDeliveries.length, 1);
   assert.deepEqual(f.request().offered, offers);
   assert.equal(f.request().status, "offered");
   assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T20:00:00+00:00", end: "2026-10-05T20:30:00+00:00", askedAt: new Date(now).toISOString() });
@@ -2490,7 +2493,8 @@ test("exhausted scheduling asks the owner once and returns a visible holding rep
   assert.match(result.message, /asked Alex/);
   assert.equal(result.recovery.action, "wait");
   assert.equal(f.ownerLines.length, 1);
-  await f.act(context, "other_times", { offer_week: false });
+  const waiting = await f.act(context, "other_times", { offer_week: false }) as any;
+  assert.equal(waiting.guestReply, "I’m waiting for Alex’s decision about another time.");
   assert.equal(f.ownerLines.length, 1);
 });
 

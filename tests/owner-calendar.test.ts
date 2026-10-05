@@ -192,3 +192,57 @@ test("an in-person confirmation without a location cannot clear the place or sen
   assert.equal(f.notes.length, 0);
   assert.notEqual(result.details.silent, true);
 });
+
+for (const pending of [false, true]) test(`assent to an already applied phone change writes nothing and only answers an open question: pending=${pending}`, async t => {
+  const f = await fixture(t);
+  await calendarAction("r_one", { action: "format", format: "phone", travel: { beforeMin: 0, afterMin: 0 } }, f.options);
+  if (pending) writeJson(join(f.home, "ledger.json"), { requests: [{ ...f.read(), pendingOwner: {
+    question: "Is phone okay?", askedAt: "2026-10-04T12:00:00Z",
+  } }] });
+  const count = f.calls.length;
+  const result = await f.tool.execute("assent", { requestId: "r_one", action: "format", format: "phone",
+    travel: { beforeMin: 0, afterMin: 0 }, confirmation: "Alex is happy to do a phone call." });
+  assert.equal(result.details.unchanged, true);
+  assert.equal(f.calls.length, count, "an unchanged format must not rewrite the calendar");
+  assert.equal(f.guests.length, pending ? 1 : 0);
+  assert.equal(f.notes.length, 0);
+  assert.equal(result.details.silent, true);
+  assert.equal(f.read().pendingOwner, undefined);
+});
+
+test("a meal's stale venue cannot survive a place change in its calendar title or private note", async t => {
+  const f = await fixture(t);
+  writeJson(join(f.home, "ledger.json"), { requests: [{ ...f.read(), meal: "lunch", topic: "lunch at Bakery" }] });
+  const result = await f.tool.execute("place", { requestId: "r_one", action: "format", format: "in_person", location: "Cafe",
+    travel: { beforeMin: 15, afterMin: 15 }, confirmation: "Lunch is now at Cafe." });
+  assert.equal(result.isError, false);
+  const update = f.calls.filter(argv => argv[2] === "update").at(-1)!;
+  assert.equal(update[update.indexOf("--summary") + 1], "lunch with Guest");
+  assert.match(f.notes[0]!, /after lunch at Cafe/);
+  assert.doesNotMatch(f.notes[0]!, /Bakery/);
+});
+
+test("an unchanged calendar does not silence an uncertain pending-answer delivery", async t => {
+  const f = await fixture(t, true);
+  await calendarAction("r_one", { action: "format", format: "phone", travel: { beforeMin: 0, afterMin: 0 } }, f.options);
+  writeJson(join(f.home, "ledger.json"), { requests: [{ ...f.read(), pendingOwner: {
+    question: "Is phone okay?", askedAt: "2026-10-04T12:00:00Z",
+  } }] });
+  const count = f.calls.length;
+  const result = await f.tool.execute("assent", { requestId: "r_one", action: "format", format: "phone",
+    travel: { beforeMin: 0, afterMin: 0 }, confirmation: "Alex is happy to do a phone call." });
+  assert.equal(f.calls.length, count);
+  assert.equal(result.isError, true);
+  assert.notEqual(result.details.silent, true);
+  assert.equal(f.guests.length, 1);
+  assert.ok(f.read().pendingOwner?.answerAttemptedAt);
+});
+
+test("non-meal purposes remain intact when the meeting moves", async t => {
+  const f = await fixture(t);
+  writeJson(join(f.home, "ledger.json"), { requests: [{ ...f.read(), topic: "Research at coastal farms" }] });
+  await f.tool.execute("place", { requestId: "r_one", action: "format", format: "in_person", location: "Cafe",
+    travel: { beforeMin: 15, afterMin: 15 }, confirmation: "The meeting is now at Cafe." });
+  const update = f.calls.filter(argv => argv[2] === "update").at(-1)!;
+  assert.equal(update[update.indexOf("--summary") + 1], "Research at coastal farms with Guest");
+});

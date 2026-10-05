@@ -20,8 +20,8 @@ format/place changes and pass explicit estimates to availability checks.
 
 For email requests, deliver through `meetly-email`. Booking an unchanged offer keeps its saved
 travel estimate. For place changes, re-estimate with `meetly-travel`; the saved owner
-override still wins. In the owner DM use `meetly_set_owner_format` for
-format/place changes, taking private travel facts only from its `effectiveTravel`.
+override still wins. In the owner DM use `meetly_set_owner_format` for every
+format/place answer, even agreement with the saved value. Private travel comes from its `effectiveTravel`.
 Never repeat the owner note.
 
 ## Meeting status and attendee edits
@@ -129,12 +129,12 @@ guest to identify a request. Larger groups are out of scope.
 
 The owner can authorize a time outside the meeting window; conflict overrides require their DM.
 For other times, follow "Offer times" with the saved conditions and the owner's changes.
-For a format/place change in the owner DM, use `meetly_set_owner_format` with
+For a format/place answer in the owner DM, use `meetly_set_owner_format` with
 `confirmation`: a short guest-facing message about the new format/place, without
-travel details, dates/times or invitation claims. The tool applies the change, sends
-to the saved text group and clears its pending question after confirmed delivery.
+travel details, dates/times or invitation claims. The tool skips unchanged meetings without pending questions; otherwise it sends
+to the saved text group and clears the question after confirmed delivery.
 When `guestConfirmation.delivered` is true, do not send another guest message.
-On `silent: true`, finish `NO_REPLY`; both people already received their updates.
+On `silent: true`, finish `NO_REPLY`.
 If guest delivery failed or is uncertain, report it privately without retrying.
 For email follow the returned `guestConfirmation` steps. In the group, run `calendar.ts format --id <id> --json '<format/location>'`.
 After a successful format/place change that did not already deliver its confirmation,

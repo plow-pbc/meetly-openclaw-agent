@@ -97,3 +97,39 @@ for (const replyMode of [undefined, "guess"]) test(`question reply scope must be
   assert.equal(calls, 0);
   assert.equal(result.isError, true);
 });
+
+for (const delivered of [true, false]) test(`a scheduling wait reply is delivered by the tool before channel silence: delivered=${delivered}`, async () => {
+  const sent: any[] = [];
+  let tool: any;
+  const context = { config: {}, messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "guest-group" };
+  registerGuestTools({ registerTool(factory: any) { const candidate = factory(context); if (candidate.name === "meetly_other_times") tool = candidate; },
+    runtime: { channel: { routing: { resolveAgentRoute: () => ({ agentId: "main", sessionKey: "group" }) },
+      session: { resolveStorePath: () => "/sessions", updateLastRoute: async () => {} } } } },
+    async () => ({ code: "NO_ALTERNATIVES", error: "No alternatives", guestReply: "I'm waiting for Alex's decision about another time.", recovery: { action: "wait", retry: false } }),
+    async () => ({ buildOutboundSessionContext: (args: any) => args, sendDurableMessageBatch: async (args: any) => {
+      sent.push(args); return { status: delivered ? "sent" : "unknown" };
+    } }));
+  const result = await tool.execute("waiting", { offer_week: false });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, "guest-group");
+  assert.equal(sent[0].payloads[0].text, "I'm waiting for Alex's decision about another time.");
+  assert.equal(result.details.silent === true, delivered);
+  if (!delivered) assert.match(result.details.error, /delivery.*unconfirmed/i);
+});
+
+test("a delivered scheduling wait ends mutations and replies for that run, including queued calls", async t => {
+  const turn = { runId: "terminal-wait", sessionKey: "waiting-group" };
+  guestTurns.begin(turn);
+  t.after(() => guestTurns.end({}, turn));
+  for (const id of ["wait", "decline"]) guestTurns.beforeTool({ toolName: id === "wait" ? "meetly_other_times" : "meetly_decline" }, { ...turn, toolCallId: id });
+  let mutations = 0;
+  const held = { silent: true, guestReplyDelivered: true };
+  const wait = guestTurns.execute(turn.sessionKey, "wait", async () => {
+    await new Promise(resolve => setTimeout(resolve, 5));
+    return held;
+  });
+  const decline = guestTurns.execute(turn.sessionKey, "decline", async () => { mutations++; return { status: "dropped" }; });
+  assert.deepEqual(await wait, held);
+  assert.deepEqual(await decline, held);
+  assert.equal(mutations, 0);
+});

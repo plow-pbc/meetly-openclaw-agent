@@ -249,11 +249,12 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     const handoff = await askOwner(request, config, {
       question: "No alternative times fit the meeting conditions. May we look on another day or widen the time window?",
     }, sendOwner, "scheduling");
+    const message = "ownerAskSent" in handoff && handoff.ownerAskSent
+      ? `Those times don't work. I've asked ${config.ownerName} about another day or time.`
+      : "Those times don't work. I can't confirm another time yet.";
     return { error: "No other times are available within the owner’s conditions. The current offer is unchanged.",
-      ...handoff, code: "NO_ALTERNATIVES", conditions: request.constraints ?? {},
-      message: "ownerAskSent" in handoff && handoff.ownerAskSent
-        ? `Those times don't work. I've asked ${config.ownerName} about another day or time and will get back to you here.`
-        : "Those times don't work. I can't confirm another time yet.",
+      ...handoff, code: "NO_ALTERNATIVES", conditions: request.constraints ?? {}, message,
+      ...(request.channel !== "email" ? { guestReply: request.pendingOwner && "guestReply" in handoff ? handoff.guestReply : message } : {}),
       recovery: { action: "wait", retry: false } };
   }
   const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
@@ -268,7 +269,9 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   args = { ...args,
     start: typeof args.start === "string" ? args.start.trim() || undefined : args.start,
   };
-  if (request.pendingOwner) return { error: "A question is already open with the owner. Wait for their answer." };
+  if (request.pendingOwner) return { error: "A question is already open with the owner. Wait for their answer.",
+    ...(purpose === "scheduling" && request.channel !== "email"
+      ? { guestReply: `I’m waiting for ${config.ownerName}’s decision about another time.` } : {}) };
   if ((args.question === undefined) === (args.start === undefined)) return { error: "Provide either a question or a start time, not both." };
   if (request.channel !== "email" && !sendOwner) return { error: "Owner messaging is unavailable. Nothing was sent." };
   let pendingOwner: PendingOwner;
@@ -313,7 +316,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
   }
   return { ownerName: config.ownerName, ownerAskSent: true, askDetails: false,
-    ...(purpose === "guest-question" ? { silent: true } : { message: `I've asked ${config.ownerName} and will get back to you here when ${config.ownerName} replies.` }) };
+    ...(purpose === "guest-question" ? { silent: true } : { message: `I've asked ${config.ownerName} to approve that time.`, guestReply: `I've asked ${config.ownerName} to approve that time.` }) };
 }
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
