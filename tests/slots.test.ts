@@ -422,7 +422,7 @@ test("only a known busy exact-time check routes the model to private inspection"
   writeJson(join(home, "config.json"), CONFIG);
   const start = "2026-09-28T10:00:00-03:00";
   const busy = [{ start, end: "2026-09-28T11:00:00-03:00", id: "private-id", account: "private-account" }];
-  const args = ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--at", start, "--format", "phone", "--travel", '{"beforeMin":0,"afterMin":0}'];
+  const args = ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--at", start, "--duration", "30", "--format", "phone", "--travel", '{"beforeMin":0,"afterMin":0}'];
   for (const [input, guided] of [
     [{ busy, degraded: [] }, true],
     [{ busy: [], degraded: [] }, false],
