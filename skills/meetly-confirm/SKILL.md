@@ -1,6 +1,6 @@
 ---
 name: meetly-confirm
-description: The owner's answers to pending meeting questions and time approvals, bookings, attendee additions/removals, and changes to or cancellation of existing meetings.
+description: The owner's answers to pending meeting questions and time approvals, meeting status, bookings, attendee additions/removals, and changes to or cancellation of existing meetings.
 ---
 # Meetly confirm
 
@@ -20,6 +20,24 @@ format/place changes and pass explicit estimates to availability checks.
 
 For email requests, deliver through `meetly-email`. Booking an unchanged offer keeps its saved
 travel estimate. For place changes, re-estimate with `meetly-travel`. Never repeat the owner note.
+
+## Meeting status and attendee edits
+
+Read the ledger in this turn before replying, even for a follow-up or when earlier
+messages say the meeting is not booked. In the owner's DM run `ledger.ts find
+--scope all`; it includes asked, offered, booked and closed requests. Match by
+person, topic and context; ask which meeting if more than one fits. You may narrow
+with an exact `--id` or existing guest `--handle`. A supplied attendee email is not
+necessarily that guest's handle. For a name-only reference, inspect the list so a
+first name does not miss a full-name record. Do not use the ordinary open-only
+`find --handle`/`--name` to conclude a booking does not exist. In a group use
+`ledger.ts find --chat <runtime chat uid>` and act only on that group's request.
+
+Report only the current returned status. If the lookup fails, say it could not be
+checked; do not substitute chat history. For attendee edits, use "Changes after
+booking" below when the matched request is booked, including one with replacement
+offers. If it is not booked, explain that current state; do not promise to save or
+apply an attendee edit later when nothing has been saved.
 
 ## Owner confirms
 
@@ -121,8 +139,8 @@ the link here 10 minutes before." Wrong: pasting the link now, or a link someone
 Keep the booked request and thread. Guest tools handle replacement offers, picks
 and cancellations, and send the owner a private DM; `ownerNotified` confirms it.
 Confirm the meeting result once in the group; never duplicate the DM.
-In the owner's DM, match `ledger.ts booked` by person, topic and context; ask if
-ambiguous. In a group, use `ledger.ts find --chat <this chat uid>`. Keep its id
+In the owner's DM, read `ledger.ts find --scope all` in this turn and match by
+person, topic and context; ask if ambiguous. In a group, use `ledger.ts find --chat <this chat uid>`. Keep its id
 and `chatUid`. Before owner-requested offers/moves, run `pipeline.ts contact
 --handle <handle>`; flagged contacts need the DM warning and confirmation from
 `meetly-pipeline`, then `--confirm-contact`. Cancellation remains allowed.

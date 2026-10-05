@@ -18,6 +18,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | `cursor.ts` | `get` \| `set <rowid>` \| `hold <rowid>` \| `release` \| `fail` \| `ok` | the cursor `{rowid, held?, …}`; `set` stops below `held` until the ledger has a request with that `sourceRowid`; `fail` → `{failingSince, warn}` |
 | `request-view.ts` | `--id X` | Group-safe view; reserves the details question. Ask format/place only when `askDetails` is true. |
 | `ledger.ts` | `find --handle H [--status asked\|offered]` \| `find --chat U` \| `find --name N` | `{request}` or `{request:null}` |
+| | `find --scope all [--id X] [--handle H] [--name N] [--chat U] [--status S]` | `{requests}`: fresh meeting lookup across all statuses, booked and closed included; filters are exact and combined; without filters lists all candidates for the model to match or ask about |
 | | `add --json '<obj>'` \| `--json-file F` | `{request}` (refused if the person already has an open request) |
 | | `save --json '<obj>'` \| `--json-file F` | `{request}` (reuses the open handle/source request and delivery state; `asked` preserves an open offer) |
 | | `update --id X --json '<patch>'` | `{request}`; patch keys: `chatUid, name, constraints, topic, pendingOwner, locale` (`null` clears `pendingOwner`); duration and other fields belong to their owning scripts |
