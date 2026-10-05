@@ -222,3 +222,15 @@ test("slot planning uses the owner's configured duration when omitted", () => {
   const checked = checkTime({ ...query, start: slot.start });
   assert.equal(Date.parse(checked.slot.end) - Date.parse(checked.slot.start), 45 * 60_000);
 });
+
+test("typed meal defaults and saved exact owner starts survive slot planning", () => {
+  for (const meal of ["lunch", "dinner", "coffee"] as const) {
+    const query = { ...q(), durationMin: undefined, meal };
+    const slot = findSlots(query).slots[0]!;
+    assert.equal(Date.parse(slot.end) - Date.parse(slot.start), (meal === "coffee" ? 30 : 60) * 60_000);
+    assert.equal(checkTime({ ...query, start: slot.start }).free, true);
+  }
+  const slots = findSlots(q({ meal: "dinner", ownerStartTime: "17:15", startTime: "17:15", durationMin: 90 })).slots;
+  assert.ok(slots.length);
+  assert.ok(slots.every(slot => slot.start.slice(11, 16) === "17:15" && slot.end.slice(11, 16) === "18:45"));
+});

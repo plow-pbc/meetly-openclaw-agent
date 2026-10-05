@@ -5,6 +5,7 @@ const object = (properties = {}, required = []) => ({ type: "object", properties
 const text = description => ({ type: "string", description });
 const start = text("An offered ISO start time; for an owner approval request, ISO with offset or YYYY-MM-DDTHH:MM in the owner's timezone.");
 export const constraints = object({
+  startTime: text("Owner-selected exact clock time, HH:MM."),
   days: { type: "array", items: { type: "string", enum: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] } },
   after: text("Earliest time, HH:MM."), before: text("Latest end time, HH:MM."),
   from: text("First date, YYYY-MM-DD."), to: text("Last date, YYYY-MM-DD."),
@@ -15,6 +16,8 @@ const definitions = [
   ["meetly_other_times", "other_times", "Find and hold other times for this request, narrowed by the guest's preferences and the owner's conditions. If those preferences have no slots, returns new times within the owner's conditions instead; explain the refusal and offer those times. Pass start for an exact requested time; ask for a specific date and time if needed. If that time is free but outside the meeting window, this tool automatically asks the owner for approval and keeps the current offer. While waiting for time approval, use ownerName in the holding reply and do not ask about format or place, even if an earlier view allowed it. Only say you asked or checked with the owner when ownerAskSent is true; relay the returned message and do not send a second ask. Times use the owner's timezone; no owner conditions can be loosened.", object({
     start,
     ...constraints.properties,
+    excludedDays: { ...constraints.properties.days, description: "Weekdays explicitly ruled out by the guest; retained until restored." },
+    restoredDays: { ...constraints.properties.days, description: "Previously excluded weekdays explicitly made available again." },
   })],
   ["meetly_set_format", "format", "Record how or where to meet; also updates the calendar after booking. Use meet only for an explicit Google Meet or video request, in_person for a place, phone for a phone call, otherwise unknown. Read meetly_view_request first. Ask format/place only when askDetails is true. A supplied external link is a location, not a Google Meet link.", object({
     format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] }, location: text("Meeting place or guest-supplied external link, when applicable."),

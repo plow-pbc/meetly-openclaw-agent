@@ -3,7 +3,7 @@ import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
-import { findByChat, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { findByChat, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type HoldRef, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { checkTime, findPreferredSlots, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -12,7 +12,7 @@ import { view } from "./request-view.ts";
 
 export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
-export type GuestArgs = Constraints & { start?: string; question?: string; format?: Format; location?: string };
+export type GuestArgs = Constraints & { excludedDays?: string[]; restoredDays?: string[]; start?: string; question?: string; format?: Format; location?: string };
 type SendOwner = (text: string) => Promise<void>;
 const EMPTY: Ledger = { requests: [] };
 
@@ -67,7 +67,7 @@ function preferences(args: GuestArgs): Constraints {
 }
 
 async function check(request: Request, config: Config, start: string) {
-  const query = { now: Date.now(), config, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
+  const query = { now: Date.now(), config, meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
   const { slot } = checkTime({ ...query, busy: [] });
   const busy = await busyFor(request, config, slot.start, slot.end);
   const checked = checkTime({ ...query, ...busy });
@@ -89,10 +89,18 @@ async function pick(request: Request, config: Config, start: string) {
 
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
   const preferred = preferences(args);
+  const newlyExcluded = preferences({ days: args.excludedDays }).days ?? [];
+  const restored = preferences({ days: args.restoredDays }).days ?? [];
+  if (newlyExcluded.some(day => restored.includes(day))) throw new Error("a weekday cannot be both excluded and restored");
+  const excludedDays = [...new Set([...(request.excludedDays ?? []).filter(day => !restored.includes(day)), ...newlyExcluded])];
+  const availableDays = { days: DAYS.filter(day => !excludedDays.includes(day)) };
+  const bounds = intersectConstraints(request.constraints, availableDays);
+  if (args.excludedDays !== undefined || args.restoredDays !== undefined) request = patch(request, { excludedDays });
   const start = args.start;
   let exact: Slot | undefined;
   if (start) {
     const checked = await check(request, config, start);
+    if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) return { error: "That weekday was ruled out. Choose a different day." };
     if (checked.free && checked.outsideHours) return askOwner(request, config, { start }, sendOwner);
     if (checked.free && withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) exact = checked.slot;
     preferred.from = preferred.to = checked.slot.start.slice(0, 10);
@@ -101,13 +109,13 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   const now = Date.now();
   const busy = await busyFor(request, config, localIso(now, config.timezone), localIso(now + (config.horizonDays + 1) * 86_400_000, config.timezone));
-  const query: SlotQuery = { ...busy, ...request.constraints, now, config,
-    durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
+  const query: SlotQuery = { ...busy, ...bounds, now, config,
+    meal: request.meal, ownerStartTime: request.constraints?.startTime, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: request.offered.map(o => o.start) };
   const { slots, preferencesUnavailable } = exact ? { slots: [exact], preferencesUnavailable: false } : findPreferredSlots(query, preferred);
   if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
-  const { origin, handle, name, sourceRowid, chatUid, topic, location, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
+  const { origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {
-    origin, handle, name, sourceRowid, chatUid, topic, location, durationMin, constraints, proposed, allowOverlap, format, locale,
+    origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
     offered: slots.map(slot => ({ start: slot.start, end: slot.end, account: config.defaultAccount })),
   } })).request;
   return { ...view(request, config), preferencesUnavailable };
@@ -134,9 +142,9 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
       return { error: "That time is outside the owner's conditions. Choose another time from the current offer." };
     }
     if (!checked.free) return { error: "That time is not available. Offer the current times or ask for other times." };
-    if (!checked.outsideHours) return { error: "That time is within working hours. Ask for other times to get an offer." };
+    if (!checked.outsideHours) return { error: "That time is within the meeting window. Ask for other times to get an offer." };
     pendingOwner = { start: checked.slot.start, end: checked.slot.end, askedAt };
-    question = `Can we meet ${localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(checked.slot.start))} (${config.timezone}), outside your working hours?`;
+    question = `Can we meet ${localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(checked.slot.start))} (${config.timezone}), outside the meeting window?`;
   }
   patch(request, { pendingOwner });
   // Keep the slot on an uncertain send so another turn cannot duplicate it.

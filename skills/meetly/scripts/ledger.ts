@@ -5,8 +5,9 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
-import { holdHours, reminderLeadMin } from "./config.ts";
+import { holdHours, loadConfig, reminderLeadMin } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
+import { DAYS } from "./time.ts";
 import { file } from "./paths.ts";
 import { uniqueEvents, type EventRef } from "./busy.ts";
 import type { Constraints } from "./slots.ts";
@@ -30,7 +31,8 @@ export const OWNER_QUESTION_LIMIT = 500;
 export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ start: string; end: string } | { question: string });
 export function intersectConstraints(owner: Constraints = {}, guest: Constraints = {}): Constraints {
   return {
-    days: owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
+    ...(owner.startTime || guest.startTime ? { startTime: owner.startTime ?? guest.startTime } : {}),
+    days: owner.startTime && guest.startTime && owner.startTime !== guest.startTime ? [] : owner.days && guest.days ? owner.days.filter(d => guest.days!.includes(d)) : owner.days ?? guest.days,
     after: [owner.after, guest.after].filter(Boolean).sort().at(-1),
     before: [owner.before, guest.before].filter(Boolean).sort()[0],
     from: [owner.from, guest.from].filter(Boolean).sort().at(-1),
@@ -38,6 +40,10 @@ export function intersectConstraints(owner: Constraints = {}, guest: Constraints
   };
 }
 
+export type Meal = "lunch" | "dinner" | "coffee";
+export function meetingDuration(explicit: number | undefined, meal: Meal | undefined, fallback: number): number {
+  return requireDuration(explicit ?? (meal === "lunch" || meal === "dinner" ? 60 : meal === "coffee" ? 30 : fallback));
+}
 // How the meeting happens. `unknown` until the request or an answer says it.
 export type Format = "meet" | "in_person" | "phone" | "unknown";
 // The booked event's time, and the Google account it lives on.
@@ -56,6 +62,8 @@ export type Request = {
   topic: string;
   location?: string;
   durationMin: number;
+  meal?: Meal;
+  excludedDays?: string[];
   // The owner's conditions, kept for every offer of this request.
   constraints?: Constraints;
   // Times the person proposed; only the first offer uses them.
@@ -90,7 +98,7 @@ export type NewRequest = Omit<Request,
   | "notifyAttemptedAt" | "notifiedAt" | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
-  "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "topic" | "format" | "locale">> & {
+  "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "excludedDays" | "topic" | "format" | "locale">> & {
   pendingOwner?: PendingOwner | null;
   booked?: Booked | null;
   meetUrl?: string | null;
@@ -102,7 +110,7 @@ const OPEN: readonly Status[] = ["asked", "offered"];
 const FORMATS: readonly Format[] = ["meet", "in_person", "phone", "unknown"];
 const OUTCOMES: readonly Reminder["outcome"][] = ["sent", "cancelled", "no-link"];
 const PATCH_KEYS = [
-  "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "topic", "pendingOwner",
+  "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "excludedDays", "topic", "pendingOwner",
   "format", "locale", "booked", "meetUrl", "reminder",
 ];
 // Keys a patch can clear with null.
@@ -174,6 +182,10 @@ export function findByChat(ledger: Ledger, chatUid: string, handle?: string): Re
     ?? ledger.requests.findLast((r) => r.chatUid === chatUid && r.status !== "asked");
 }
 
+function checkExcludedDays(days: unknown): void {
+  if (!Array.isArray(days) || days.some(day => !DAYS.includes(day))) throw new Error("excludedDays must contain weekdays mon–sun");
+}
+
 function checkOffers(offered: unknown): Offer[] {
   if (!Array.isArray(offered) || offered.length === 0) throw new Error("offered must be a non-empty list");
   for (const o of offered as Offer[]) {
@@ -200,6 +212,8 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   if (input.origin !== "inbound" && input.origin !== "owner" && input.origin !== "owner-group") throw new Error(`origin must be inbound, owner or owner-group, got ${input.origin}`);
   if (typeof input.topic !== "string" || !input.topic.trim()) throw new Error("topic is required");
   requireDuration(input.durationMin);
+  if (input.meal !== undefined && !["lunch", "dinner", "coffee"].includes(input.meal)) throw new Error("meal must be lunch, dinner or coffee");
+  if (input.excludedDays !== undefined) checkExcludedDays(input.excludedDays);
   const status = input.status ?? "offered";
   if (status === "offered") checkOffers(input.offered);
   else if (status !== "asked") throw new Error(`a new request is asked or offered, got ${status}`);
@@ -265,6 +279,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   for (const key of Object.keys(patch)) {
     if (!PATCH_KEYS.includes(key)) throw new Error(`unknown key: ${key} (allowed: ${PATCH_KEYS.join(", ")})`);
   }
+  if (patch.excludedDays !== undefined) checkExcludedDays(patch.excludedDays);
   if (patch.status !== undefined && !STATUSES.includes(patch.status)) throw new Error(`bad status: ${patch.status}`);
   if (patch.offered !== undefined) checkOffers(patch.offered);
   const pending = patch.pendingOwner;
@@ -433,6 +448,9 @@ if (isMain(import.meta.url)) {
       }
       case "save": {
         const input = jsonArg(values);
+        if (input.origin === "inbound" && input.status === "asked" && input.durationMin === undefined) {
+          input.durationMin = meetingDuration(input.durationMin, input.meal, loadConfig().durationMin);
+        }
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));

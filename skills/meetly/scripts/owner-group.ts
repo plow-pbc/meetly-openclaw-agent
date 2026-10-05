@@ -10,7 +10,7 @@ import { findOpenByHandle, normalizeHandle, sameHandle, type Ledger } from "./le
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "topic" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & { durationMin: number };
+type GroupRequest = Pick<OfferInput, "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & { durationMin: number };
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -50,6 +50,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
     const config = loadConfig(), now = Date.now();
     const { topic, format } = args;
     const location = args.location ?? existing?.location;
+    const meal = args.meal ?? existing?.meal;
     const durationMin = args.durationMin;
     const locale = args.locale ?? existing?.locale;
     const constraints = args.constraints ?? existing?.constraints;
@@ -57,12 +58,12 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
     const busy = await fetchBusy(config, { from: new Date(now).toISOString(), to: new Date(now + (config.horizonDays + 1) * 86_400_000).toISOString() });
     if (busy.degraded.length) throw new Error("calendar unavailable");
     busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
-    const query = { ...busy, ...constraints, now, config, durationMin, locale, allowOverlap: existing?.allowOverlap };
+    const query = { ...busy, ...constraints, now, config, meal, ownerStartTime: constraints?.startTime, durationMin, locale, allowOverlap: existing?.allowOverlap };
     const near = proposed?.from && proposed.from === proposed.to
       ? `${proposed.from}T${proposed.after || config.windowStart}` : undefined;
     const { slots, preferencesUnavailable } = findPreferredSlots(query, proposed, [{ ...query, near }]);
     if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
-    const { request } = await offerRequest({ handle, name, topic, durationMin, constraints, proposed, format, location, locale,
+    const { request } = await offerRequest({ handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
       offered: slots.map(({ start, end }) => ({ start, end })),
       origin: "owner-group", chatUid: chat, askDetails: false });
     return { ...view(request, config), preferencesUnavailable };

@@ -7,6 +7,7 @@ import {
   type Ledger, type NewRequest, type Patch,
 } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
+import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
 const T0 = Date.parse("2026-09-28T12:00:00Z");
@@ -463,4 +464,21 @@ test("DM name lookup finds only an unambiguous open request", () => {
   const ambiguous = find("Bo");
   assert.equal(ambiguous.status, 1);
   assert.match(ambiguous.stderr, /ambiguous/i);
+});
+
+test("inbound meal classification applies code defaults and preserves explicit lengths", () => {
+  for (const [meal, explicit, expected] of [
+    ["lunch", undefined, 60], ["dinner", undefined, 60], ["coffee", undefined, 30],
+    [undefined, undefined, 45], ["lunch", 90, 90], ["dinner", 30, 30],
+  ] as const) {
+    const home = tmpHome();
+    writeJson(join(home, "config.json"), { ...DEFAULTS, durationMin: 45, ownerName: "Alex", timezone: "UTC", defaultAccount: "owner@example.com", calendars: [{ account: "owner@example.com", id: "primary" }], setupDoneAt: new Date(T0).toISOString() });
+    const result = cli("ledger.ts", ["save", "--json", JSON.stringify({
+      origin: "inbound", status: "asked", handle: "+15551234567", topic: "Catch up", meal,
+      ...(explicit === undefined ? {} : { durationMin: explicit }), sourceRowid: 1,
+    })], { MEETLY_HOME: home });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.json.request.durationMin, expected);
+    assert.equal(result.json.request.meal, meal);
+  }
 });

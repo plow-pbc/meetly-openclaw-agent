@@ -39,7 +39,7 @@ test("without a name from Plow the gate does not invent one", () => {
 });
 
 test("once the name and zone are known the gate does not ask: it reads the calendars, finishes and does the owner's request", () => {
-  const context = gateContext(status({ status: "SETUP_NEEDED", next: "calendars", question: "Which of your calendars should count as busy?", draft: { ownerName: "Ana" }, defaults: DEFAULTS, mac: { connected: true } }))!;
+  const context = gateContext(status({ status: "SETUP_NEEDED", next: "calendars", question: "Which of your calendars should count as busy?", draft: { ownerName: "Ana" }, defaults: { ...DEFAULTS, durationMin: 45 }, mac: { connected: true } }))!;
   assert.doesNotMatch(context, /and end the turn: Which of your calendars/);
   assert.match(context, /Do not ask which calendars to use/);
   assert.match(context, /selected: true/);
@@ -47,7 +47,7 @@ test("once the name and zone are known the gate does not ask: it reads the calen
   assert.match(context, /carry out what the owner asked in this same turn/);
   // The one line that introduces Meetly says what it does and the defaults it starts with.
   assert.match(context, /you are Meetly, their AI scheduling assistant/);
-  assert.match(context, /mon,tue,wed,thu,fri, 09:00-18:00, 30-minute meetings, up to 14 days ahead/);
+  assert.match(context, /mon,tue,wed,thu,fri, 09:00-18:00, 45-minute meetings by default; coffee 30 minutes, lunch and dinner 60 minutes; up to 14 days ahead/);
   assert.match(context, /change any of it by saying so/);
   assert.doesNotMatch(context, /a few questions/);
 });

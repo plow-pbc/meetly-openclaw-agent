@@ -1002,3 +1002,62 @@ for (const replacement of [undefined, { days: ["wed"], from: "2026-10-07", to: "
     saved.constraints = f.request().constraints;
   });
 }
+
+test("guests can re-offer and book dinner but cannot widen its meal window", async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.meal = "dinner";
+  request.durationMin = 60;
+  request.constraints = { days: ["mon", "tue"], from: "2026-10-05", to: "2026-10-06" };
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { after: "17:00", before: "23:00" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  const offered = f.request().offered;
+  assert.equal(offered.length, 3);
+  assert.ok(offered.every(o => o.start.slice(11, 16) >= "18:00" && o.end.slice(11, 16) <= "21:00"));
+  const booked = await guestAction(context, "pick", { start: offered[0]!.start });
+  assert.ok(!("error" in booked), JSON.stringify(booked));
+  assert.equal(f.request().status, "booked");
+});
+
+test("an owner duration change keeps an unanswered opener question suppressed on guest re-offers", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.detailsAskedAt = new Date(now).toISOString();
+  f.ledger.requests[0]!.durationMin = 60;
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { days: ["tue"] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal("askDetails" in result && result.askDetails, false);
+  assert.equal(f.request().detailsAskedAt, new Date(now).toISOString());
+  assert.equal(f.request().format, "unknown");
+  assert.equal(f.request().durationMin, 60);
+});
+
+test("owner-group lunch uses the selected duration within the meal window", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  f.events.clear();
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Lunch", meal: "lunch", durationMin: 60 });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().meal, "lunch");
+  assert.ok(f.request().offered.every(o => o.start.slice(11, 16) >= "11:30" && o.end.slice(11, 16) <= "13:30"));
+  assert.equal(f.request().durationMin, 60);
+  assert.equal(f.request().offered[0]!.account, "owner@example.com");
+});
+
+test("guest exclusions persist until explicitly restored", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = { from: "2026-10-05", to: "2026-10-09" };
+  f.save(f.ledger);
+  for (const args of [{ excludedDays: ["tue"] }, {}]) {
+    const result = await guestAction(context, "other_times", args);
+    assert.ok(!("error" in result), JSON.stringify(result));
+    assert.deepEqual(f.request().excludedDays, ["tue"]);
+    assert.ok(f.request().offered.every(o => !o.start.startsWith("2026-10-06")));
+  }
+  const restored = await guestAction(context, "other_times", { restoredDays: ["tue"], days: ["tue"] });
+  assert.ok(!("error" in restored), JSON.stringify(restored));
+  assert.deepEqual(f.request().excludedDays, []);
+  assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-06")));
+});
