@@ -148,7 +148,9 @@ is not a scheduling request. Reply only with a short introduction, such as
 actual request. Do not ask the guest or group what, when, format or place;
 do not search the calendar or create a request from this introduction.
 
-In the owner's DM, first run `ledger.ts find --name <guest name>` for a named meeting.
+In the owner's DM, a scheduling request with an explicit phone or email handle is a new request. Use that handle and follow "Offer times"; do not search existing requests by name or ask whether it is new. Save the guest name separately from the topic even when Contacts has no card.
+
+When the owner refers to someone without a handle, first run `ledger.ts find --name <guest name>` for a named meeting.
 Reuse the matched open request's handle and chat. If ambiguous, ask which meeting.
 When no request matches, resolve the recipient from Contacts and ask if ambiguous.
 Unnamed owner-group requests stay in their originating group.
@@ -173,7 +175,6 @@ duration unless the owner requests a change. Never patch duration with
 
 Extract the topic, proposed times, hard conditions, explicit duration, format,
 place. Extract owner-authorized overlap titles only in the owner's DM.
-Reuse an open request and its chat.
 Follow "Offer times" with `origin: owner` in the DM or the group entry tool here.
 If a requested time is busy, say there is an existing commitment and
 immediately find and offer the nearest available times; do not ask whether
@@ -262,7 +263,10 @@ disclose private information.
   `requestId`, `askedAt` from that pending question, and `text` phrased as Meetly
   relaying the owner's answer. From the DM, it sends to the recorded group and
   clears that question only after the send succeeds. In the same group, the
-  owner's answer is already visible: it clears without sending; acknowledge briefly.
+  owner's answer is already visible: it clears silently without sending or acknowledging.
+  After `silent: true`, output nothing, including commentary or a "(Silent — …)" note.
+  If the owner answers a different question already visible in the group, leave the
+  unrelated pending question open and output nothing; never clear it as answered.
   Never send the answer separately. If delivery is unknown, tell the owner;
   do not resend automatically. Only if the owner explicitly authorizes a retry,
   run `ledger.ts delivery --id <id> --kind answer --action clear` before calling

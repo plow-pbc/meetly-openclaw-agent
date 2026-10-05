@@ -13,7 +13,7 @@ export function registerOwnerTools(api, execute = run, outbound) {
   const required = ["requestId", "askedAt", "text"];
   api.registerTool(context => ({
     name: "meetly_answer_owner", label: "Answer a meeting question",
-    description: "Resolve a pending meeting question or time approval from the owner's own answer. First match ledger.ts pending by person and topic. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. For a question in that same group, the owner's answer is already visible: clears without sending, then acknowledge briefly. When silent is true, end the turn without a group reply. Owner only. For time approvals, first finish the calendar booking or alternative-time flow, then call this tool with the result; it sends the result once even in the group and clears the approval.",
+    description: "Resolve a pending meeting question or time approval from the owner's own answer. First match ledger.ts pending by person and topic. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. For a question in that same group, the owner's answer is already visible: clears silently without sending or acknowledging. When silent is true, output nothing: no group reply, commentary or \"(Silent — …)\" note. Owner only. For time approvals, first finish the calendar booking or alternative-time flow, then call this tool with the result; it sends the result once even in the group and clears the approval.",
     parameters: {
       type: "object", additionalProperties: false, required,
       properties: {
@@ -24,7 +24,10 @@ export function registerOwnerTools(api, execute = run, outbound) {
     },
     async execute(_id, args) {
       const result = await execute(context, cleanArgs(args, required), (to, text) => sendPlowMessage(api, context, to, text, "group", outbound));
-      return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      return { isError: "error" in result, content: [
+        { type: "text", text: JSON.stringify(result) },
+        ...(result.silent ? [{ type: "text", text: "The question is resolved in this group. Finish with exactly NO_REPLY; do not emit a visible silence label or repeat the answer." }] : []),
+      ], details: result };
     },
   }));
 }
