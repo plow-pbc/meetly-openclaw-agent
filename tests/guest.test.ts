@@ -1046,6 +1046,21 @@ test("owner-group lunch uses the selected duration within the meal window", asyn
   assert.equal(f.request().offered[0]!.account, "owner@example.com");
 });
 
+test("guests can book an owner-selected start that crosses midnight", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] }); f.events.clear();
+  const offered = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Late call", durationMin: 60, constraints: { days: ["mon"], startTime: "23:30" } });
+  assert.ok(!("error" in offered), JSON.stringify(offered));
+  const slot = f.request().offered[0]!;
+  assert.equal(slot.start, "2026-10-05T23:30:00+00:00");
+  assert.equal(slot.end, "2026-10-06T00:30:00+00:00");
+  const result = await f.tools.get("meetly_pick_time")!.execute("pick", { start: slot.start });
+  assert.equal(JSON.parse(result.content[0]!.text).status, "booked", result.content[0]!.text);
+  assert.equal(f.request().status, "booked");
+  assert.equal(f.request().booked!.end, slot.end);
+});
+
 test("guest exclusions persist until explicitly restored", async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.constraints = { from: "2026-10-05", to: "2026-10-09" };

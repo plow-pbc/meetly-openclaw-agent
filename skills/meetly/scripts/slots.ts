@@ -184,7 +184,7 @@ export function checkTime(q: {
   const e = wallParts(end, tz);
   const sameDay = s.y === e.y && s.m === e.m && s.d === e.d;
   const [windowStart, windowEnd] = windowFor(q.config, q.meal, q.startTime, meetingDuration(q.durationMin, q.meal, q.config.durationMin));
-  const outsideHours = !q.config.days.includes(s.weekday) || !sameDay ||
+  const outsideHours = !q.config.days.includes(s.weekday) || (q.startTime === undefined && !sameDay) ||
     s.hh * 60 + s.mm < windowStart || e.hh * 60 + e.mm > windowEnd;
   let reason: TimeCheck["reason"];
   if (q.unknownAfter !== undefined && end > Date.parse(q.unknownAfter)) reason = "unknown";
