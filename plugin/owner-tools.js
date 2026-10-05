@@ -16,7 +16,7 @@ export function registerOwnerTools(api, execute = run, outbound) {
       properties: {
         requestId: { type: "string", description: "The matched request's id." },
         askedAt: { type: "string", description: "The matched pending question or time approval's askedAt." },
-        text: { type: "string", description: "The owner's answer, phrased as Meetly for the group." },
+        text: { type: "string", description: "The owner's answer or a completed result, in Meetly's voice. No promises to search or follow up later." },
         outcome: { type: "string", enum: ["answer", "calendar_change"], description: "answer for words only; calendar_change after successfully applying a change to the meeting. Calendar changes are confirmed to the guest even when the owner answered in the group. Never include private travel details in text." },
         emailSent: { type: "boolean", description: "Only true after plow_send_email confirms sent: true for the email answer returned by this tool. Keep the same requestId, askedAt, outcome and text." },
       },

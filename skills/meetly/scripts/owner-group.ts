@@ -51,11 +51,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     }
     name = args.name?.trim() || name;
     const ledger = readJson<Ledger>(file("ledger.json"), { requests: [] });
-    try {
-      checkContact(ledger, handle);
-    } catch (error) {
-      if (!(error instanceof ContactConfirmationRequired)) throw error;
-      // The group receives only the coordination outcome, never the private reason.
+    const coordinatePrivately = async (code: string, reason: string) => {
       const dates = (label: string, value?: Constraints) => {
         const parts = [value?.from && `from ${value.from}`, value?.to && `through ${value.to}`,
           value?.days?.length && `on ${value.days.join(", ")}`, value?.after && `after ${value.after}`, value?.before && `before ${value.before}`].filter(Boolean);
@@ -66,15 +62,26 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
         if (sendOwner) {
           await sendOwner(`You asked in your group for ${args.durationMin}-minute ${JSON.stringify(args.topic)} with ${name ?? handle} (${handle}).`
             + dates("Required dates/times", args.constraints) + dates("Preferred dates/times", args.proposed)
+            + (args.week ? ` Requested week: ${args.week}.` : "") + (args.asap ? " As soon as possible." : "")
             + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")
-            + (args.format ? ` Format: ${args.format}.` : "")
-            + " You previously marked this person do not contact. Please confirm here in our private DM if you want to schedule this meeting. Your preference stays in place unless you ask to clear it.");
+            + (args.format ? ` Format: ${args.format}.` : "") + ` ${reason}`);
           ownerAskSent = true;
         }
       } catch {
         // An uncertain delivery is never retried or explained in the group.
       }
-      return { code: "OWNER_CONFIRMATION_REQUIRED", silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
+      return { code, silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
+    };
+    try {
+      checkContact(ledger, handle);
+    } catch (error) {
+      if (!(error instanceof ContactConfirmationRequired)) throw error;
+      return coordinatePrivately("OWNER_CONFIRMATION_REQUIRED",
+        "You previously marked this person do not contact. Please confirm here in our private DM if you want to schedule this meeting. Your preference stays in place unless you ask to clear it.");
+    }
+    if (args.requestId === undefined && ledger.requests.some(r => r.status === "booked" && r.chatUid === chat && sameHandle(r.handle, handle))) {
+      return coordinatePrivately("SEPARATE_MEETING_REQUIRED",
+        "This group already has a booked meeting, which stays unchanged. I can arrange the separate meeting in a new conversation. Shall I do that?");
     }
     const existing = args.requestId === undefined ? findOpenByHandle(ledger, handle)
       : ledger.requests.find(r => r.id === args.requestId && ["asked", "offered", "booked"].includes(r.status)

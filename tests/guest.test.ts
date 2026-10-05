@@ -2366,16 +2366,18 @@ test("guest booking returns the exact weekday and owner-zone time to copy in the
   assert.equal(Date.parse(f.request().booked!.start), Date.parse(slot.start));
 });
 
-for (const existing of [true, false]) for (const delivery of ["sent", "unknown", "throws"]) {
-  test(`owner-group contact confirmation stays private (${existing ? "existing request" : "preference only"}, ${delivery})`, async t => {
+for (const kind of ["flagged-request", "flagged-contact", "booked"]) for (const delivery of ["sent", "unknown", "throws"]) {
+  test(`owner-group coordination stays private (${kind}, ${delivery})`, async t => {
     const f = fixture(t);
-    f.ledger.requests[0]!.doNotContact = true;
-    if (!existing) {
+    f.ledger.requests[0]!.doNotContact = kind !== "booked";
+    if (kind === "flagged-contact") {
       f.ledger.requests[0]!.status = "dropped";
       delete f.ledger.requests[0]!.chatUid;
       f.ledger.requests[0]!.offered = [];
     }
     f.save(f.ledger);
+    if (kind === "booked") await f.act(context, "pick", { start: offers[0]!.start });
+    const commands = f.commands.length;
     const before = f.read();
     const sent: any[] = [];
     let tool: any;
@@ -2413,15 +2415,15 @@ for (const existing of [true, false]) for (const delivery of ["sent", "unknown",
     assert.match(sent[0].payloads[0].text, /Guest.*\+15551234567/);
     assert.match(sent[0].payloads[0].text, /Coffee/);
     assert.match(sent[0].payloads[0].text, /2026-10-05.*2026-10-11/);
-    assert.match(sent[0].payloads[0].text, /do not contact/i);
-    assert.match(sent[0].payloads[0].text, /confirm.*here/i);
+    assert.match(sent[0].payloads[0].text, kind === "booked" ? /separate meeting.*new conversation/i : /do not contact/i);
+    if (kind !== "booked") assert.match(sent[0].payloads[0].text, /confirm.*here/i);
     assert.equal(result.details.silent, true);
     assert.equal(result.details.ownerAskSent, delivery === "sent");
     assert.equal(result.details.recovery.action, "silent");
     assert.equal(result.details.recovery.retry, false);
     assert.doesNotMatch(JSON.stringify(result), /do.?not.?contact|marked|blocked|PRIVATE|Guest|Coffee|15551234567/i);
     assert.deepEqual(f.read(), before);
-    assert.equal(f.commands.length, 0);
+    assert.equal(f.commands.length, commands, "private coordination must precede all calendar reads and writes");
     await hooks.before_prompt_build!({}, turn);
     await Promise.all([ask("rename", "Guest again"), ask("retry")]);
     assert.equal(sent.length, 1, "name corrections, parallel calls and uncertain sends must not repeat the owner ask");

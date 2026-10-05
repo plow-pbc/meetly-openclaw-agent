@@ -78,8 +78,8 @@ tell the owner; do not resend. Only if the owner explicitly authorizes a retry, 
   If `meetly_set_owner_format` returns `guestConfirmation.delivered: true`, the
   question is already resolved: do not call another delivery tool.
   On a failed or unresolved write, leave the question pending; resume unresolved
-  writes and never claim the change completed. `text` relays the confirmed result,
-  or the owner's answer when no calendar change is needed.
+  writes and never claim the change completed. `text` contains only the owner's answer or a completed result,
+  never a promise to search or follow up later.
   Set `outcome: "calendar_change"` for a successfully applied meeting change: the
   tool sends the confirmed result to the guest even in the same group, then clears.
   Otherwise set `outcome: "answer"`; in the same group the tool clears silently without
