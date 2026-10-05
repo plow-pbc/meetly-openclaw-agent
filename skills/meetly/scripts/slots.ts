@@ -250,7 +250,12 @@ if (isMain(import.meta.url)) {
       if (values["allow-overlap"]) check.allowOverlap = values["allow-overlap"].map(value => JSON.parse(value));
       if (values.locale !== undefined) check.locale = values.locale;
       if (values["no-overlap"]) check.allowOverlap = [];
-      return { ...checkTime(check), degraded };
+      const result = checkTime(check);
+      const next = result.reason === "busy" && !degraded.length ? {
+        ownerMainDM: "Before searching alternatives, call the meetly_movable tool (not a script) with action inspect, this slot as candidates, and the same format/travel or requestId. Read meetly-travel. If a blocker looks flexible, ask once privately, finish NO_REPLY and wait for a new owner message. Do not run --near, grant overlap or offer in this turn. Past permission is not a new answer.",
+        otherChats: "Search alternatives without inspecting or disclosing private blockers.",
+      } : undefined;
+      return { ...result, degraded, ...(next ? { next } : {}) };
     }
     const q: SlotQuery = { ...travelInput, now, config, meal, busy: input.busy, allowOverlap: input.allowOverlap };
     if (input.unknownAfter !== undefined) q.unknownAfter = input.unknownAfter;

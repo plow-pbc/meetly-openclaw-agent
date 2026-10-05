@@ -161,9 +161,10 @@ Follow "Offer times" with `origin: owner` in the DM or the group entry tool here
 Check an explicitly preferred start with `slots.ts --in <busy file> --at <ISO>
 --duration <minutes> --format <format> --travel <JSON>`. Do not combine `--at`
 with date/day/window filters, `--near` or `--count`; those are search options.
-For a busy preferred time or few free options in the owner's main DM, read
-`meetly-travel`, "Flexible blockers", before searching nearest times or offering.
-The inspection and fresh owner answer come first. In groups, or after no flexible
+In the owner's main DM, a busy preferred time branches to `meetly-travel`,
+"Flexible blockers": inspect first. If a blocker looks flexible, ask once and end
+this turn; wait for the owner's next reply before searching alternatives or offering.
+Use the same inspection when few free options fit. In groups, or after no flexible
 candidate/refusal, offer nearest free times with `slots.ts --near <requested ISO start>`,
 preserving duration, explicit travel and hard conditions. If none fit, ask the owner
 privately which condition to relax. Confirm offers once in the meeting thread.
