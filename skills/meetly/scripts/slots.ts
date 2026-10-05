@@ -73,7 +73,7 @@ export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}
 export function findSlots(q: SlotQuery): { slots: Slot[]; unknownAfter?: string } {
   const { config, now } = q;
   const tz = config.timezone;
-  const duration = requireDuration(q.durationMin);
+  const duration = requireDuration(q.durationMin ?? q.config.durationMin);
   const count = q.count ?? SLOT_COUNT;
   const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, busy: [], durationMin: duration, start: q.near }).slot.start);
 
@@ -160,7 +160,7 @@ export function checkTime(q: {
     ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz)
     : Date.parse(q.start);
   if (Number.isNaN(start)) throw new Error(`not a time: ${q.start}`);
-  const end = start + requireDuration(q.durationMin) * 60_000;
+  const end = start + requireDuration(q.durationMin ?? q.config.durationMin) * 60_000;
   const s = wallParts(start, tz);
   const e = wallParts(end, tz);
   const sameDay = s.y === e.y && s.m === e.m && s.d === e.d;

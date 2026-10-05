@@ -519,13 +519,15 @@ for (const durationMin of [15, 60]) test(`offer rejects intervals that differ fr
   assert.deepEqual(f.calls, []);
 });
 
-test("an unsaved offer without duration must ask the model to set it", async t => {
-  const f = fixture(t);
+test("a new offer uses the owner's configured duration when none is supplied", async t => {
+  const f = fixture(t), { durationMin, ...offer } = f.offer;
   writeJson(join(f.home, "ledger.json"), { requests: [] });
-  const { durationMin, ...offer } = f.offer;
-  await assert.rejects(offerRequest(offer, f.options), /set.*durationMin/i);
-  assert.deepEqual(readJson(join(f.home, "ledger.json"), {}), { requests: [] });
-  assert.deepEqual(f.calls, []);
+  const config = readJson<any>(join(f.home, "config.json"), {});
+  writeJson(join(f.home, "config.json"), { ...config, durationMin: 45 });
+  f.events.clear();
+  const { request } = await offerRequest({ ...offer, offered: [{ start, end: "2026-10-05T10:45:00Z" }] }, f.options);
+  assert.equal(request.durationMin, 45);
+  assert.equal(Date.parse(request.offered[0]!.end) - Date.parse(request.offered[0]!.start), 45 * 60_000);
 });
 
 test("an offer uses saved duration rather than the configured duration", async t => {

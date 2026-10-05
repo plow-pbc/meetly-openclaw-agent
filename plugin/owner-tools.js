@@ -35,7 +35,7 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
-    description: "Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals, guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread; participants determine identity. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless you decide to change it. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Reply here using the returned askDetails flag. Owner only.",
+    description: "Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals, guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread; participants determine identity. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless the owner requests a change. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Reply here using the returned askDetails flag. Owner only.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
       durationMin: { type: "integer", minimum: 1, description: "Your chosen meeting duration in minutes, recorded on the request." },
       topic: string, name: { type: "string", description: "Guest name explicitly given by the owner in this thread, if known." },
@@ -59,7 +59,7 @@ export function registerOwnerDmTool(api, execute = runDm) {
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_dm", label: "Offer owner-authorized times",
-    description: "Offer times from the owner's main Plow DM. Only pass allowOverlapTitles for events the owner explicitly authorized overlapping in this DM. Resolves titles internally and holds the supplied times through the calendar writer. Read meetly-group. Never call from a group. Save the request with your chosen durationMin first; this tool uses only that saved duration and rejects mismatched intervals.",
+    description: "Offer times from the owner's main Plow DM. Only pass allowOverlapTitles for events the owner explicitly authorized overlapping in this DM. Resolves titles internally and holds the supplied times through the calendar writer. Read meetly-group. Never call from a group. Uses the saved request duration or the owner's configured duration for a new request; rejects mismatched intervals. Save an explicit owner-requested duration on the request first.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
       origin: { type: "string", enum: ["owner", "inbound", "owner-group"] }, handle: string, topic: string,
       name: string, sourceRowid: { type: "integer" }, chatUid: string,

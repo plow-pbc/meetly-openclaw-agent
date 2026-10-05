@@ -6,7 +6,7 @@ import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
 import { findPreferredSlots } from "./slots.ts";
 import { view } from "./request-view.ts";
-import { findOpenByHandle, intersectConstraints, normalizeHandle, sameHandle, type Ledger } from "./ledger.ts";
+import { findOpenByHandle, normalizeHandle, sameHandle, type Ledger } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
@@ -48,10 +48,11 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest): Pr
       throw new Error("request belongs to another conversation");
     }
     const config = loadConfig(), now = Date.now();
-    const { topic, format, location } = args;
+    const { topic, format } = args;
+    const location = args.location ?? existing?.location;
     const durationMin = args.durationMin;
     const locale = args.locale ?? existing?.locale;
-    const constraints = args.constraints ? intersectConstraints(existing?.constraints, args.constraints) : existing?.constraints;
+    const constraints = args.constraints ?? existing?.constraints;
     const proposed = args.proposed ?? (existing?.status === "asked" ? existing.proposed : undefined);
     const busy = await fetchBusy(config, { from: new Date(now).toISOString(), to: new Date(now + (config.horizonDays + 1) * 86_400_000).toISOString() });
     if (busy.degraded.length) throw new Error("calendar unavailable");

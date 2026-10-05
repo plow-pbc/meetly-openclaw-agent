@@ -323,7 +323,7 @@ export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, 
   const current = ledger();
   const saved = findOpenByHandle(current, args.handle) ?? current.requests.find(r => args.origin === "inbound" &&
     args.sourceRowid !== undefined && r.sourceRowid === args.sourceRowid && ["asked", "offered"].includes(r.status));
-  const durationMin = requireDuration(args.durationMin === undefined ? saved?.durationMin : args.durationMin);
+  const durationMin = requireDuration(args.durationMin ?? saved?.durationMin ?? config.durationMin);
   if (args.offered.some(slot => Date.parse(slot.end) - Date.parse(slot.start) !== durationMin * 60_000)) {
     throw new Error("Every offered interval must match the request durationMin. Set the request duration and search again.");
   }
@@ -348,7 +348,7 @@ export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, 
   });
   return calendarAction(id, { action: "offer", request: input, provisional }, { ...options, validate(request) {
     options.validate?.(request);
-    if (args.durationMin === undefined && request.durationMin !== durationMin) throw new Error("Request duration changed; read the saved request and search again.");
+    if (args.durationMin === undefined && (request.durationMin ?? config.durationMin) !== durationMin) throw new Error("Request duration changed; read the saved request and search again.");
   } });
 }
 

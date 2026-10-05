@@ -215,7 +215,10 @@ test("replacement slot search keeps saved and newly resolved overlap authorizati
   assert.notEqual(cli("slots.ts", args.map(a => a === "r_one" ? "missing" : a), env).status, 0);
 });
 
-test("slot planning requires an explicit duration instead of the config default", () => {
-  assert.throws(() => findSlots(q({ durationMin: undefined })), /[Ss]et durationMin/);
-  assert.throws(() => checkTime({ ...q({ durationMin: undefined }), start: "2026-09-28T10:00:00-03:00" }), /[Ss]et durationMin/);
+test("slot planning uses the owner's configured duration when omitted", () => {
+  const query = q({ durationMin: undefined, config: { ...CONFIG, durationMin: 45 } });
+  const slot = findSlots(query).slots[0]!;
+  assert.equal(Date.parse(slot.end) - Date.parse(slot.start), 45 * 60_000);
+  const checked = checkTime({ ...query, start: slot.start });
+  assert.equal(Date.parse(checked.slot.end) - Date.parse(checked.slot.start), 45 * 60_000);
 });

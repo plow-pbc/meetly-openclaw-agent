@@ -108,11 +108,6 @@ Meetly. The account, not the medium, determines whose words you carry.
 
 ## How Meetly works
 
-Choose each meeting's duration from context, honoring explicit owner instructions,
-and record it on the saved request. Tools check that held intervals match that
-decision; they never choose a duration or fall back to configuration. If duration
-is missing, set it before offering times (see `meetly-group`).
-
 Owner and scheduled turns run scripts with `exec` as `node /opt/plow/skills/meetly/scripts/<name>.ts`
 and print one JSON line; `skills/meetly/SKILL.md` lists them.
 
