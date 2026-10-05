@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
-import { holdHours, loadConfig, reminderLeadMin } from "./config.ts";
+import { holdHours, loadConfig, MEAL_DEFAULTS, reminderLeadMin, type Meal } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { DAYS } from "./time.ts";
 import { file } from "./paths.ts";
@@ -40,9 +40,9 @@ export function intersectConstraints(owner: Constraints = {}, guest: Constraints
   };
 }
 
-export type Meal = "lunch" | "dinner" | "coffee";
+export type { Meal } from "./config.ts";
 export function meetingDuration(explicit: number | undefined, meal: Meal | undefined, fallback: number): number {
-  return requireDuration(explicit ?? (meal === "lunch" || meal === "dinner" ? 60 : meal === "coffee" ? 30 : fallback));
+  return requireDuration(explicit ?? (meal ? MEAL_DEFAULTS[meal]?.durationMin : undefined) ?? fallback);
 }
 // How the meeting happens. `unknown` until the request or an answer says it.
 export type Format = "meet" | "in_person" | "phone" | "unknown";
@@ -126,6 +126,7 @@ function checkLocale(locale: unknown): void {
   if (typeof locale !== "string" || !locale.trim() || locale.length > 35) {
     throw new Error(`locale must be a language tag like pt-BR, got ${JSON.stringify(locale)}`);
   }
+  new Intl.DateTimeFormat(locale);
 }
 
 function checkBooked(b: Booked): void {

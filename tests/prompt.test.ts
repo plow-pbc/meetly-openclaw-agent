@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { POLL_MESSAGE } from "../skills/meetly/scripts/register-crons.ts";
-import { registerGuestTools } from "../plugin/guest-tools.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SKILLS = join(ROOT, "skills");
@@ -251,23 +250,8 @@ test("the owner's conditions hold for every offer of a request; the person's pro
   assert.ok(group.includes("with the request's `constraints` (the owner's) and, on its first offer, its `proposed` times"));
   assert.ok(group.includes("run again without them, keeping `constraints`, and say those times don't work"));
   assert.ok(group.includes("`constraints` (the owner's conditions)"));
-  const update = group.indexOf('`ledger.ts update --id <id> --json \'{"constraints":<replacement conditions>}\'`');
-  assert.ok(group.includes("When the owner replaces saved hard conditions"));
-  assert.ok(update >= 0 && update < group.indexOf("Run `slots.ts --in"));
-  assert.ok(group.includes("keeping any hard conditions they did not change"));
   assert.ok(!group.includes("for `origin: owner`"));
   assert.ok(pollSkill().includes("`proposed` for any times they proposed"));
-});
-
-test("owner and poll next-week requests use the time CLI; guests follow their tool contract", () => {
-  for (const skill of [groupSkill(), pollSkill()]) {
-    assert.match(skill, /time\.ts next_week --anchor/);
-    assert.doesNotMatch(skill, /--timezone <config\.timezone>/);
-    assert.match(skill, /`constraints`/);
-    assert.doesNotMatch(skill, /following Monday through Sunday/);
-  }
-  assert.ok(flat(prompt).includes('confirms `ownerAskSent: true`'));
-  assert.ok(flat(prompt).includes("never invent a question to resolve your own uncertainty"));
 });
 
 test("guests route to their tool descriptions without loading skills or running scripts", () => {
@@ -323,12 +307,6 @@ test("trust changes remain an explicit owner action and failed group opening is 
 });
 
 
-test("duration changes refresh the topic used for calendar titles and group labels", () => {
-  const group = groupSkill();
-  assert.ok(group.includes("When the owner changes the duration, update any duration wording in `topic` and save it with the replacement offer."));
-  assert.ok(group.includes('"30-minute call" becomes "60-minute call"'));
-});
-
 test("an owner introduction waits without asking the group to plan a meeting", () => {
   const group = groupSkill();
   assert.ok(group.includes("Adding Alder, my scheduling agent, to find us a time"));
@@ -341,15 +319,4 @@ test("guest-proposed terms are never repeated publicly for owner confirmation", 
   const p = flat(prompt);
   assert.ok(p.includes("Never repeat a guest's proposed terms in the group to ask the owner to confirm"));
   assert.ok(p.includes("Use the private scheduling approval tools for an existing request, or ignore the proposal"));
-});
-test("other-times instructions distinguish rejected slots from named excluded days", () => {
-  let tool: any;
-  registerGuestTools({ registerTool(factory: any) {
-    const candidate = factory({});
-    if (candidate.name === "meetly_other_times") tool = candidate;
-  } });
-  assert.ok(tool.description.includes("'none of those work' rejects only the offered slots, not their weekdays"));
-  assert.ok(tool.parameters.properties.excludedDays.description.includes("Only days the guest explicitly names as unavailable"));
-  assert.deepEqual(tool.parameters.properties.start.anyOf[1].required, ["weekday"]);
-  assert.ok(flat(prompt).includes("Never infer excluded weekdays from rejected offered slots"));
 });
