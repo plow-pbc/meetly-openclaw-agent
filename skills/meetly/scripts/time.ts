@@ -64,7 +64,23 @@ export function localIso(ms: number, tz: string): string {
   const off = Math.round(offsetMs(ms, tz) / 60_000);
   const sign = off < 0 ? "-" : "+";
   const abs = Math.abs(off);
-  return `${p.y}-${pad(p.m)}-${pad(p.d)}T${pad(p.hh)}:${pad(p.mm)}:${pad(p.ss)}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+  const millis = (ms % 1000 + 1000) % 1000;
+  const fraction = millis ? `.${String(millis).padStart(3, "0")}` : "";
+  return `${p.y}-${pad(p.m)}-${pad(p.d)}T${pad(p.hh)}:${pad(p.mm)}:${pad(p.ss)}${fraction}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+}
+
+// Offsetless starts use the owner's clock; reject dates and clock times that normalize.
+export function parseStart(start: string, tz: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?$/.exec(start);
+  if (!match) throw new Error(`not a time: ${start}`);
+  const [, y, m, d, hh, mm, ss = "00", fraction = "", zone] = match;
+  const instant = zone ? Date.parse(start)
+    : zonedToUtc(Number(y), Number(m), Number(d), Number(hh), Number(mm), tz) + Number(ss) * 1000 + Number(`0${fraction}`) * 1000;
+  if (!Number.isFinite(instant)) throw new Error(`not a time: ${start}`);
+  const offset = !zone || zone === "Z" ? 0 : (zone[0] === "-" ? -1 : 1) * (Number(zone.slice(1, 3)) * 60 + Number(zone.slice(4))) * 60_000;
+  const roundTrip = zone ? new Date(instant + offset).toISOString() : localIso(instant, tz);
+  if (roundTrip.slice(0, 19) !== `${y}-${m}-${d}T${hh}:${mm}:${ss}`) throw new Error(`not a time: ${start}`);
+  return instant;
 }
 
 export function formatMeetingTime(start: string, timezone: string, locale = "en-US"): string {

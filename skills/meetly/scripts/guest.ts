@@ -7,7 +7,7 @@ import { findByChat, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, upd
 import { file } from "./paths.ts";
 import { checkTime, findPreferredSlots, preferredSearchCoverage, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
-import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, type WeekdayTime } from "./time.ts";
+import { DAYS, localIso, nextWeek, offerDateWindow, parseStart, resolveWeekday, WeekdayDateRequired, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
 
 export type GuestContext = { messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
@@ -103,16 +103,14 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     return { error: message, code: "DATE_SCOPE_CONFLICT", recovery: { action: "retry", message } };
   }
   try {
-    if (typeof args.start === "string" && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(args.start)) {
-      throw new Error("invalid start");
-    }
+    if (typeof args.start === "string") parseStart(args.start, config.timezone);
     if (args.start !== undefined && typeof args.start !== "string") {
       resolveWeekday(args.start!, request.offered, config.timezone);
     }
   } catch (error) {
     if (error instanceof WeekdayDateRequired) throw error;
     const message = 'Provide a nested weekday object, for example arguments {"start":{"weekday":"thu"}} for Thursday. Allowed weekday values: mon, tue, wed, thu, fri, sat, sun. Optional time must be HH:MM; omit it for a day-only preference. Do not quote the object as a JSON string or pass a bare weekday. Only for an explicitly dated time, start may be an ISO string YYYY-MM-DDTHH:MM[:SS[.sss]][Z|±HH:MM]. Never invent a clock time to repair a weekday-only request.';
-    return { error: message, code: "INVALID_START", recovery: { action: "retry", retry: true, message } };
+    return { error: message, code: "INVALID_START", recovery: { action: "retry", message } };
   }
   const preferred = preferences(args, config.timezone);
   const newlyExcluded = preferences({ days: args.excludedDays }, config.timezone).days ?? [];

@@ -112,14 +112,14 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
       return { status: delivery.status };
     },
   });
-  const tools = new Map<string, { execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
+  const tools = new Map<string, { parameters: { properties: Record<string, { description: string }> }; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
   registerGuestTools({ runtime: { channel: {
     routing: { resolveAgentRoute(args: object) {
       assert.deepEqual(args, { cfg: context.config, channel: "plow", accountId: "chat", peer: { kind: "direct", id: "plow-owner" } });
       return ownerRoute;
     } },
     session: { resolveStorePath: () => "/sessions", updateLastRoute: async (args: Record<string, any>) => { routes.push(args); } },
-  } }, registerTool(factory: (ctx: GuestContext) => { name: string; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
+  } }, registerTool(factory: (ctx: GuestContext) => { name: string; parameters: { properties: Record<string, { description: string }> }; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
     const tool = factory(context); tools.set(tool.name, tool);
   } }, guestAction, outbound);
   const act = (ctx: GuestContext, action: GuestAction, args: GuestArgs = {}) => guestAction(ctx, action, args, sendOwner);
@@ -1470,7 +1470,6 @@ test(`weekday text is rejected before effects and an enum retry succeeds: ${JSON
   assert.match(rejected.error, /weekday.*mon, tue, wed, thu, fri, sat, sun/);
   assert.match(rejected.error, /HH:MM/);
   assert.match(rejected.error, /ISO/);
-  assert.equal(rejected.recovery.retry, true);
   assert.deepEqual(f.request(), before);
   assert.deepEqual(f.commands, []);
   assert.deepEqual(f.ownerLines, []);
@@ -1483,6 +1482,8 @@ test("ask-owner rejects over-length text without sending and preserves a correct
   const f = fixture(t);
   const before = f.request();
   const tool = f.tools.get("meetly_ask_owner")!;
+  assert.match(tool.parameters.properties.question!.description, /verbatim/);
+  assert.match(tool.parameters.properties.question!.description, /ask the guest to shorten/i);
   const rejected = JSON.parse((await tool.execute("long", { question: "x".repeat(501) })).content[0]!.text);
   assert.match(rejected.error, /500 characters or fewer/);
   assert.deepEqual(f.request(), before);
@@ -1496,4 +1497,19 @@ test("ask-owner rejects over-length text without sending and preserves a correct
   assert.ok(pending && "question" in pending);
   assert.equal(pending.question, question);
   assert.ok(f.ownerLines[0]!.includes(JSON.stringify(question)));
+});
+
+for (const [start, timezone] of [
+  ["2026-11-31T10:00", "UTC"], ["2026-02-29T10:00:00Z", "UTC"],
+  ["2026-10-05T24:00", "UTC"], ["2026-10-05T10:00:60", "UTC"],
+  ["2026-10-05T10:00:00+25:00", "UTC"], ["2026-03-08T02:30", "America/New_York"],
+]) test(`malformed exact start is rejected before effects: ${start}`, async t => {
+  const f = fixture(t, undefined, timezone);
+  const before = f.read();
+  const result = JSON.parse((await f.tools.get("meetly_other_times")!.execute("invalid", { offer_week: false, start, excludedDays: ["wed"] })).content[0]!.text);
+  assert.equal(result.code, "INVALID_START");
+  assert.equal(result.recovery.action, "retry");
+  assert.deepEqual(f.read(), before);
+  assert.deepEqual(f.commands, []);
+  assert.deepEqual(f.ownerLines, []);
 });
