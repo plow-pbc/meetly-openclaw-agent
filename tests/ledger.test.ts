@@ -27,7 +27,11 @@ test("handles normalize phones and emails", () => {
   for (const handle of ['(555) 123-4567', '5551234567', '+05551234567', '+15551234567junk', '+1234567890123456', 'guest@', 'guest name@example.com', '']) {
     assert.throws(() => normalizeHandle(handle), /handle/);
   }
-  assert.equal(normalizeHandle(" Ana@Example.COM "), "ana@example.com");
+  for (const char of "`$\"'\\;&|<>(){}[]*?!~#") {
+    assert.throws(() => normalizeHandle(`x${char}id@example.com`), /handle/);
+    assert.throws(() => normalizeHandle(`guest@exa${char}mple.com`), /handle/);
+  }
+  assert.equal(normalizeHandle(" Ana+Coffee@Example.COM "), "ana+coffee@example.com");
   assert.ok(sameHandle("+1 (555) 123-4567", "+15551234567"));
   assert.ok(!sameHandle("+15551234567", "(555) 123-4567"));
   assert.ok(sameHandle("ANA@example.com", "ana@EXAMPLE.com"));
@@ -470,7 +474,7 @@ test("inbound meal classification applies code defaults and preserves explicit l
 
 test("find reads externally sourced email handles as literal file data", () => {
   const home = tmpHome();
-  const handle = 'x`id`$(whoami)\'"@example.com';
+  const handle = 'ana+coffee@example.com';
   writeJson(join(home, "ledger.json"), addRequest(empty(), input({ origin: "owner", channel: "email", handle }), T0, "literal-address"));
   const handleFile = join(home, "address.txt");
   writeFileSync(handleFile, handle + "\n");

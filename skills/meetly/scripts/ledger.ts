@@ -158,7 +158,7 @@ function checkReminder(r: Reminder): void {
 export function normalizeHandle(h: string): string {
   if (typeof h !== "string") throw new Error("handle must be an E.164 phone or email");
   const value = h.trim();
-  if (/^[^\s@]+@[^\s@]+$/.test(value)) return value.toLowerCase();
+  if (/^[^\s@]+@[^\s@]+$/.test(value) && !/[`$"'\\;&|<>(){}\[\]*?!~#]/.test(value)) return value.toLowerCase();
   const phone = value.replace(/[\s().-]/g, "");
   if (/^\+[1-9]\d{1,14}$/.test(phone)) return phone;
   throw new Error("handle must be an E.164 phone or email");
