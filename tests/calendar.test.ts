@@ -3,8 +3,9 @@ import { test, type TestContext } from "node:test";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
+import { confirmContactOffer } from "../skills/meetly/scripts/contact-policy.ts";
 import { approveTime, calendarAction, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
-import { setDoNotContact, addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
+import { doNotContact, setDoNotContact, addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { macOutcome, type MacCommand, type MacOutcome } from "../skills/meetly/scripts/mac.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
@@ -21,8 +22,10 @@ function fixture(t: TestContext, chatUid?: string) {
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, input, now - 72 * 3_600_000, "r_one"));
   writeJson(join(home, "config.json"), { ...DEFAULTS, defaultAccount: account, timezone: "UTC", ownerName: "Alex", setupDoneAt: new Date(now).toISOString(), calendars: [{account, id: account}] });
   const { events, calls, command } = fakeCalendar(offered.map(o => calendarEvent(o.holdId, o.start, o.end)));
-  const read = () => readJson<Ledger>(join(home, "ledger.json"), { requests: [] }).requests[0]!;
-  return { home, input, offer: { ...input, offered: offered.map(({ holdId, ...slot }) => slot) }, read, calls, events, command, options: { command, now: () => now } satisfies CalendarOptions };
+  const path = join(home, "ledger.json");
+  const read = () => readJson<Ledger>(path, { requests: [] }).requests[0]!;
+  const blockContact = (at = now) => writeJson(path, setDoNotContact(readJson<Ledger>(path, { requests: [] }), input.handle, true, at));
+  return { home, path, blockContact, input, offer: { ...input, offered: offered.map(({ holdId, ...slot }) => slot) }, read, calls, events, command, options: { command, now: () => now } satisfies CalendarOptions };
 }
 
 for (const path of ["raw", "duration"] as const) test(`four-slot ${path} offer is rejected before calendar or ledger effects`, async t => {
@@ -86,7 +89,7 @@ test("expiry wins before a later booking and leaves no bookable stale holds", as
   assert.ok([...f.events.values()].every(e => e.status === "cancelled"));
 });
 
-test("a ledger commit failure after the calendar update resumes without repeating the write", async t => {
+for (const revoked of [false, true]) test(`a ledger commit failure after the calendar update resumes without repeating the write: revoked=${revoked}`, async t => {
   const f = fixture(t);
   const rename = fs.renameSync;
   let fail = true;
@@ -100,8 +103,10 @@ test("a ledger commit failure after the calendar update resumes without repeatin
   assert.equal(f.read().status, "offered");
   assert.ok(f.events.get("hold-one")!.extendedProperties!.private.meetlyOperation);
   fail = false;
+  if (revoked) f.blockContact();
   await calendarAction("r_one", { action: "resume" }, f.options);
   assert.equal(f.read().status, "booked");
+  assert.equal(doNotContact(readJson<Ledger>(f.path, { requests: [] }), f.input.handle), revoked);
   assert.equal(f.calls.filter(c => c[2] === "update").length, 1);
 });
 
@@ -575,17 +580,25 @@ test("an offer waiting for the lock cannot overwrite a newer saved duration", as
   assert.equal(f.calls.filter(cmd => cmd[2] === "create").length, 1);
 });
 
-test("a pending time approval cannot book over even a saved overlap permission", async t => {
+for (const approval of [false, true]) test(`pending approval does not change explicit booking mode: timeApproval=${approval}`, async t => {
   const f = fixture(t);
   const ledger = readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] });
   ledger.requests[0]!.pendingOwner = { askedAt: new Date(now).toISOString(), start, end };
   ledger.requests[0]!.allowOverlap = [{ account, id: "conflict" }];
   writeJson(join(f.home, "ledger.json"), ledger);
   f.events.set("conflict", calendarEvent("conflict", start, end));
-  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /time approval.*busy/i);
-  assert.equal(f.read().status, "offered");
-  assert.ok(f.read().pendingOwner);
-  assert.equal(f.calls.some(c => ["create", "update"].includes(c[2]!)), false);
+  if (approval) {
+    const result = await approveTime("r_one", {}, f.options);
+    assert.equal("approved" in result && result.approved, false);
+    assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
+    assert.equal(f.read().status, "offered");
+    assert.ok(f.read().pendingOwner);
+    assert.equal(f.calls.some(c => ["create", "update"].includes(c[2]!)), false);
+  } else {
+    const result = await calendarAction("r_one", { action: "book", start }, f.options);
+    assert.equal(result.request.status, "booked");
+    assert.deepEqual(result.request.allowOverlap, []);
+  }
 });
 
 for (const busy of [false, true]) test(`time approval without a pending ask ${busy ? "refuses busy time" : "books a free time"}`, async t => {
@@ -596,7 +609,7 @@ for (const busy of [false, true]) test(`time approval without a pending ask ${bu
   writeJson(join(f.home, "ledger.json"), ledger);
   if (busy) f.events.set("conflict", calendarEvent("conflict", approvedStart, approvedEnd));
   const result = await approveTime("r_one", { start: approvedStart }, f.options);
-  assert.equal(result.approved, !busy);
+  assert.equal("approved" in result && result.approved, !busy);
   if (busy) {
     assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
     assert.equal("near" in result && Date.parse(result.near!), Date.parse(approvedStart));
@@ -607,7 +620,7 @@ for (const busy of [false, true]) test(`time approval without a pending ask ${bu
     assert.equal(f.read().status, "booked");
     assert.equal(Date.parse(f.read().booked!.end), Date.parse(approvedEnd));
   }
-  t.diagnostic(JSON.stringify({ approved: result.approved, ...("code" in result ? { code: result.code, near: result.near, recovery: result.recovery } : {}) }));
+  t.diagnostic(JSON.stringify({ approved: "approved" in result && result.approved, ...("code" in result ? { code: result.code, near: result.near, recovery: result.recovery } : {}) }));
 });
 
 test("a time approval reports a conflict that appears after its calendar read", async t => {
@@ -615,7 +628,7 @@ test("a time approval reports a conflict that appears after its calendar read", 
   const command = async (cmd: MacCommand) => cmd.argv[2] === "update"
     ? { error: "Calendar slot is busy", code: "calendar-conflict" as const } : f.command(cmd);
   const result = await approveTime("r_one", { start }, { ...f.options, command });
-  assert.equal(result.approved, false);
+  assert.equal("approved" in result && result.approved, false);
   assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
   assert.equal(f.read().status, "offered");
   assert.deepEqual(pendingCalendarWrites(), []);
@@ -631,7 +644,7 @@ test("a time approval never sends a conflict override even across its own hold",
     return { error: "Calendar slot is busy", code: "calendar-conflict" as const };
   };
   const result = await approveTime("r_one", { start: "2026-10-05T10:15:00Z" }, { ...f.options, command });
-  assert.equal(result.approved, false);
+  assert.equal("approved" in result && result.approved, false);
   assert.equal(writes.length, 1);
   assert.equal(writes.some(c => c.includes("--confirm-conflict")), false);
 });
@@ -646,14 +659,18 @@ test("booked replacement holds preserve the event, expire independently and clea
   ] };
   await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
   assert.equal(f.read().status, "booked");
+  assert.equal(f.read().bookedReplacement, true);
   assert.deepEqual(f.read().booked, booked);
   assert.equal(f.events.get("hold-one")!.start.dateTime, start);
   const early = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 47 * 3600_000 });
+  assert.ok(!("error" in early));
   assert.equal(early.skipped, true, "expiry uses the replacement timestamp, not the original offer");
   assert.equal(early.groupNotice, undefined);
   const expired = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
+  assert.ok(!("error" in expired));
   assert.equal(expired.request.status, "booked");
-  assert.equal(expired.request.reoffer, undefined);
+  assert.deepEqual(expired.request.offered, []);
+  assert.equal(expired.request.bookedReplacement, false);
   assert.equal(f.events.get("hold-one")!.status, "confirmed");
   assert.equal(f.events.get("new-1")!.status, "cancelled");
   assert.equal(f.events.get("new-2")!.status, "cancelled");
@@ -661,13 +678,15 @@ test("booked replacement holds preserve the event, expire independently and clea
   assert.match(expired.groupNotice?.text ?? "", /replacement times were released.*booking.*unchanged/i);
   t.diagnostic(`Group expiry notice: ${expired.groupNotice?.text}`);
   const again = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
+  assert.ok(!("error" in again));
   assert.equal(again.skipped, true);
   assert.equal(again.groupNotice, undefined);
   await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
   await calendarAction("r_one", { action: "book", start: replacement.offered[0]!.start }, f.options);
   assert.equal(f.read().eventId, "hold-one");
   assert.equal(f.read().booked!.start, replacement.offered[0]!.start);
-  assert.equal(f.read().reoffer, undefined);
+  assert.deepEqual(f.read().offered, []);
+  assert.equal(f.read().bookedReplacement, false);
   assert.equal(f.events.get("new-3")!.status, "cancelled");
   assert.equal(f.events.get("new-4")!.status, "cancelled");
   assert.ok(f.calls.filter(c => c[2] === "delete").every(c => c[4] !== "hold-one"));
@@ -690,7 +709,7 @@ for (const outcome of ["failure", "lost-response"] as const) test(`booked reoffe
   const original = f.read().booked;
   const input = { ...f.offer, offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account }] };
   await calendarAction("r_one", { action: "offer", request: input }, f.options);
-  const previous = f.read().reoffer;
+  const previous = f.read().offered;
   const command = async (cmd: MacCommand) => {
     if (cmd.argv[2] !== "create") return f.command(cmd);
     if (outcome === "failure") return { error: "offline" };
@@ -699,11 +718,11 @@ for (const outcome of ["failure", "lost-response"] as const) test(`booked reoffe
   const replacement = calendarAction("r_one", { action: "offer", request: input }, { ...f.options, command });
   if (outcome === "failure") {
     await assert.rejects(replacement, /previous offer retained/);
-    assert.deepEqual(f.read().reoffer, previous);
+    assert.deepEqual(f.read().offered, previous);
     assert.equal(f.events.get("new-1")!.status, "confirmed");
   } else {
     await replacement;
-    assert.equal(f.read().reoffer!.offered[0]!.holdId, "new-2");
+    assert.equal(f.read().offered[0]!.holdId, "new-2");
     assert.equal(f.events.get("new-1")!.status, "cancelled");
   }
   assert.deepEqual(f.read().booked, original);
@@ -727,10 +746,10 @@ test("a reconciled move commits once and retains failed reoffer cleanup for retr
   await assert.rejects(calendarAction("r_one", { action: "book", start: "2026-10-06T10:00:00Z" }, options), /approval is pending/);
   assert.equal(moved, true);
   assert.deepEqual(f.read().booked, before);
-  assert.ok(f.read().reoffer);
+  assert.ok(f.read().offered.length);
   await calendarAction("r_one", { action: "resume" }, { ...options, poll: async () => ({ output: JSON.stringify(f.events.get("hold-one")) }) });
   assert.equal(f.read().eventId, "hold-one");
-  assert.equal(f.read().reoffer, undefined);
+  assert.deepEqual(f.read().offered, []);
   assert.equal(f.read().holdCleanup!.length, 2);
   await calendarAction("r_one", { action: "cleanup" }, f.options);
   assert.deepEqual(f.read().holdCleanup, []);
@@ -742,14 +761,17 @@ test("format changes retain a live reoffer; cancel releases it and notifies only
   const f = fixture(t);
   await calendarAction("r_one", { action: "book", start }, f.options);
   await calendarAction("r_one", { action: "offer", request: f.offer }, f.options);
-  const replacement = f.read().reoffer;
+  const replacement = f.read().offered;
+  assert.equal(f.read().bookedReplacement, true);
   await calendarAction("r_one", { action: "format", format: "meet" }, f.options);
-  assert.deepEqual(f.read().reoffer, replacement);
+  assert.deepEqual(f.read().offered, replacement);
+  assert.equal(f.read().bookedReplacement, true);
   assert.equal(f.events.get("new-1")!.status, "confirmed");
   assert.equal(f.events.get("new-2")!.status, "confirmed");
   await calendarAction("r_one", { action: "cancel" }, f.options);
   assert.equal(f.read().status, "dropped");
-  assert.equal(f.read().reoffer, undefined);
+  assert.equal(f.read().bookedReplacement, false);
+  assert.deepEqual(f.read().offered, []);
   assert.deepEqual(f.read().holdCleanup, []);
   for (const id of ["hold-one", "new-1", "new-2"]) {
     assert.equal(f.events.get(id)!.status, "cancelled");
@@ -799,11 +821,224 @@ for (const collision of [false, true]) test(`overlap approval applies only to it
 
 test("a flagged owner offer requires explicit confirmation and retains the contact flag afterwards", async t => {
   const f = fixture(t);
-  const path = join(f.home, "ledger.json");
-  writeJson(path, setDoNotContact(readJson<Ledger>(path, { requests: [] }), f.input.handle, true, now));
+  f.blockContact();
   await assert.rejects(offerRequest(f.offer, f.options), /Confirm in the owner's DM/);
   assert.deepEqual(f.calls, [], "no calendar operation before confirmation");
-  const result = await offerRequest(f.offer, { ...f.options, confirmContact: true });
-  assert.equal(result.request.doNotContact, true);
+  const result = await confirmContactOffer({ requestId: "r_one", offered: f.offer.offered }, f.options);
+  assert.equal(result.request.contactApproved, true);
+  assert.equal(doNotContact(readJson<Ledger>(f.path, { requests: [] }), f.input.handle), true);
   assert.ok(f.calls.some(c => c[2] === "create"));
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  assert.equal(f.read().status, "booked");
+  f.blockContact();
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /Confirm in the owner's DM/);
+});
+
+test("booking consumes overlap permission before any later move", async t => {
+  const f = fixture(t, "chat-one");
+  f.events.set("private", calendarEvent("private", start, "2026-10-05T12:00:00Z"));
+  writeJson(join(f.home, "ledger.json"), { requests: [{ ...f.read(), allowOverlap: [{ account, id: "private" }] }] });
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  assert.deepEqual(f.read().allowOverlap, []);
+  await assert.rejects(calendarAction("r_one", { action: "book", start: "2026-10-05T11:00:00Z", end: "2026-10-05T11:30:00Z" }, f.options));
+  assert.equal(Date.parse(f.read().booked!.start), Date.parse(start));
+});
+
+test("a booked replacement cannot reuse a legacy overlap grant", async t => {
+  const f = fixture(t, "chat-one");
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const allowOverlap = [{ account, id: "private" }];
+  writeJson(join(f.home, "ledger.json"), { requests: [{ ...f.read(), allowOverlap }] });
+  const replacement = { start: "2026-10-07T10:00:00Z", end: "2026-10-07T10:30:00Z", account };
+  f.events.set("private", calendarEvent("private", replacement.start, replacement.end));
+  const creates = f.calls.filter(c => c[2] === "create").length;
+  await assert.rejects(calendarAction("r_one", { action: "offer", request: { ...f.offer, allowOverlap, offered: [replacement] } }, f.options));
+  assert.equal(f.calls.filter(c => c[2] === "create").length, creates);
+  assert.equal(Date.parse(f.read().booked!.start), Date.parse(start));
+});
+
+test("an owner replacement commits revised conditions on the booked request", async t => {
+  const f = fixture(t, "chat-one");
+  const constraints = { from: "2026-10-05", to: "2026-10-05" };
+  writeJson(join(f.home, "ledger.json"), { requests: [{ ...f.read(), constraints }] });
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const booked = f.read().booked;
+  const revised = { from: "2026-10-07", to: "2026-10-07" };
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, constraints: revised,
+    offered: [{ start: "2026-10-07T10:00:00Z", end: "2026-10-07T10:30:00Z", account }] } }, f.options);
+  assert.deepEqual(f.read().constraints, revised);
+  assert.deepEqual(f.read().booked, booked);
+  assert.equal(readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] }).requests.length, 1);
+});
+
+for (const action of ["offer", "duration", "book", "approve-time"] as const) test(`contact policy blocks direct ${action} before calendar effects`, async t => {
+  const f = fixture(t);
+  f.blockContact();
+  const before = fs.readFileSync(f.path, "utf8");
+  const input = action === "offer" ? { action, request: f.offer }
+    : action === "duration" ? { action, durationMin: 30, topic: "Call", offered: f.offer.offered }
+    : { action, start };
+  await assert.rejects(calendarAction("r_one", input, f.options), /Confirm in the owner's DM/);
+  assert.deepEqual(f.calls, []);
+  assert.equal(fs.readFileSync(f.path, "utf8"), before);
+  await calendarAction("r_one", { action: "cancel" }, f.options);
+  assert.equal(f.read().status, "dropped", "contact policy must leave cancellation reachable");
+});
+
+test("failed contact confirmation cannot authorize the previous offer", async t => {
+  const f = fixture(t, "chat-one");
+  f.blockContact();
+  const proposed = [{ start: "2026-10-07T10:00:00Z", end: "2026-10-07T10:30:00Z" }];
+  await assert.rejects(confirmContactOffer({ requestId: "r_one", offered: proposed }, { ...f.options,
+    command: async command => command.argv[2] === "create" ? { error: "failed" } : f.command(command),
+  }));
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /Confirm in the owner's DM/);
+  assert.equal(f.read().contactApproved, undefined);
+  assert.ok(f.read().pendingOwner && "contact" in f.read().pendingOwner!);
+  assert.equal(f.read().status, "offered");
+  await confirmContactOffer({ requestId: "r_one", offered: proposed }, f.options);
+  assert.equal(f.read().pendingOwner, undefined);
+  await calendarAction("r_one", { action: "book", start: proposed[0]!.start }, f.options);
+  assert.equal(f.read().status, "booked");
+});
+
+for (const response of ["success", "lost", "pending"] as const) test(`contact revocation reconciles a sent booking update: ${response}`, async t => {
+  const f = fixture(t);
+  let sent!: MacCommand, writes = 0;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] !== "update") return f.command(cmd);
+    sent = cmd; writes++;
+    f.blockContact();
+    if (response === "pending") return undefined;
+    const result = await f.command(cmd);
+    return response === "lost" ? undefined : result;
+  };
+  const options = { ...f.options, command };
+  const booking = calendarAction("r_one", { action: "book", start }, options);
+  if (response === "pending") {
+    await assert.rejects(booking, /unresolved/);
+    await assert.rejects(calendarAction("r_one", { action: "resume" }, options), /unresolved/);
+    assert.deepEqual(pendingCalendarWrites(), ["r_one"]);
+    await assert.rejects(calendarAction("r_one", { action: "expire" }, options), /unresolved/);
+    assert.ok(f.calls.every(c => c[2] !== "delete"));
+    await f.command(sent);
+    await calendarAction("r_one", { action: "resume" }, options);
+  } else await booking;
+  assert.equal(f.read().status, "booked");
+  assert.equal(f.read().eventId, "hold-one");
+  assert.equal(f.read().contactApproved, undefined);
+  assert.equal(doNotContact(readJson<Ledger>(f.path, { requests: [] }), f.input.handle), true);
+  assert.deepEqual(pendingCalendarWrites(), []);
+  assert.equal(writes, 1);
+  await calendarAction("r_one", { action: "expire" }, options);
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+  assert.equal(f.events.get("hold-two")!.status, "cancelled");
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, options), /Confirm in the owner's DM/);
+});
+
+for (const revokeAt of ["unresolved", "availability", "last-create"] as const) test(`contact revocation wins at ${revokeAt} and cleans the replacement`, async t => {
+  const f = fixture(t, "chat-one");
+  const revoke = () => f.blockContact(now + 1);
+  revoke();
+  const proposed = [{ start: "2026-10-07T10:00:00Z", end: "2026-10-07T10:30:00Z" }];
+  let revoked = false;
+  const command: CalendarOptions["command"] = async cmd => {
+    if (revokeAt === "availability" && cmd.argv[2] === "events" && !revoked) { revoke(); revoked = true; }
+    const result = await f.command(cmd);
+    if (cmd.argv[2] === "create") {
+      if (revokeAt === "last-create") revoke();
+      if (revokeAt === "unresolved") return undefined;
+    }
+    if (revokeAt === "unresolved" && cmd.argv.includes("--private-prop-filter")) return { output: '{"events":[]}' };
+    return result;
+  };
+  await assert.rejects(confirmContactOffer({ requestId: "r_one", offered: proposed }, { ...f.options, command }));
+  if (revokeAt === "unresolved") {
+    revoke();
+    await assert.rejects(calendarAction("r_one", { action: "resume" }, f.options), /Confirm in the owner's DM/);
+  }
+  assert.deepEqual(pendingCalendarWrites(), []);
+  assert.deepEqual(f.read().offered, f.input.offered);
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /Confirm in the owner's DM/);
+  assert.ok([...f.events.values()].filter(e => e.id.startsWith("new-")).every(e => e.status === "cancelled"));
+  if (revokeAt === "availability") assert.equal(f.calls.filter(c => c[2] === "create").length, 0);
+});
+
+test("time approval uses the duration committed while it waits for the calendar lock", async t => {
+  const f = fixture(t);
+  let entered!: () => void, release!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const replacement = calendarAction("r_one", { action: "duration", durationMin: 60, topic: "Hour",
+    offered: [{ start: "2026-10-07T10:00:00Z", end: "2026-10-07T11:00:00Z" }] }, { ...f.options,
+    command: async cmd => { if (cmd.argv[2] === "create") { entered(); await gate; } return f.command(cmd); } });
+  await waiting;
+  const approval = approveTime("r_one", { start }, f.options);
+  release();
+  await replacement;
+  const result = await approval;
+  assert.equal("approved" in result && result.approved, true);
+  assert.equal(f.read().durationMin, 60);
+  assert.equal(Date.parse(f.read().booked!.end) - Date.parse(f.read().booked!.start), 60 * 60_000);
+  t.diagnostic(JSON.stringify({ durationMin: f.read().durationMin, booked: f.read().booked }));
+});
+
+for (const outcome of ["busy", "success"] as const) for (const batch of [false, true]) test(`deferred time approval resumes with ${outcome}: batch=${batch}`, async t => {
+  const f = fixture(t);
+  let completed: Awaited<ReturnType<typeof f.command>>;
+  const options = { ...f.options,
+    command: async (cmd: MacCommand) => {
+      if (cmd.argv[2] !== "update") return f.command(cmd);
+      if (outcome === "success") completed = await f.command(cmd);
+      return { handle: "approval" };
+    }, poll: async () => ({ handle: "approval" }) };
+  await assert.rejects(approveTime("r_one", { start }, options), /unresolved/);
+  const journal = join(f.home, "calendar/r_one.json");
+  const intent = readJson(journal, {});
+  const resumed = { ...options, poll: async () => outcome === "success" ? completed
+    : { error: "PRIVATE CONFLICT DETAILS", code: "calendar-conflict" as const } };
+  const resume = async () => batch ? (await resumePending(resumed)).results[0]! : calendarAction("r_one", { action: "resume" }, resumed);
+  const result = await resume();
+  assert.equal("approved" in result && result.approved, outcome === "success");
+  assert.equal(f.read().status, outcome === "success" ? "booked" : "offered");
+  assert.deepEqual(pendingCalendarWrites(), []);
+  t.diagnostic(JSON.stringify(result));
+  if (outcome === "busy") {
+    assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
+    assert.equal("near" in result && Date.parse(result.near as string), Date.parse(start));
+    assert.deepEqual("recovery" in result && result.recovery, { action: "find_nearest", allowOverlap: false });
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE CONFLICT/);
+  } else {
+    writeJson(journal, intent);
+    const recovered = await resume();
+    assert.equal("approved" in recovered && recovered.approved, true);
+    assert.deepEqual(pendingCalendarWrites(), []);
+    t.diagnostic(JSON.stringify({ recovered }));
+  }
+});
+
+test("booked replacement expiry clears its overlap grant", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const booked = f.read().booked;
+  const allowOverlap = [{ account, id: "private-conflict" }];
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, allowOverlap } }, { ...f.options, overlapApproved: true });
+  assert.deepEqual(f.read().allowOverlap, allowOverlap);
+  await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
+  assert.deepEqual(f.read().allowOverlap, []);
+  assert.deepEqual(f.read().booked, booked);
+});
+
+
+test("contact confirmation can replace a booked offer without changing its decision snapshot", async t => {
+  const f = fixture(t, "chat-one");
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const booked = f.read().booked;
+  f.blockContact();
+  const proposed = [{ start: "2026-10-07T10:00:00Z", end: "2026-10-07T10:30:00Z" }];
+  await confirmContactOffer({ requestId: "r_one", offered: proposed }, f.options);
+  assert.equal(f.read().pendingOwner, undefined);
+  assert.equal(f.read().contactApproved, true);
+  assert.deepEqual(f.read().booked, booked);
+  assert.equal(f.read().offered[0]!.start, proposed[0]!.start);
 });

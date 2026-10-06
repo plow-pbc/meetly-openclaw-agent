@@ -210,7 +210,7 @@ message is skipped.
   The model decides; the scripts count.
 - **State.** `/var/lib/plow/meetly`: `config.json` (your setup),
   `cursor.json` (last message read), `ledger.json` (requests, offered times,
-  hold ids). Writes are atomic and locked.
+  hold ids, blocked canonical handles; `contactApproved` applies only to its request). Writes are atomic and locked.
 
 ## Model
 
@@ -225,7 +225,8 @@ Existing model settings in the state volume are left unchanged.
 - Groups require a phone number; Meetly asks you for one before reading the
   calendar or creating holds if only an email is known.
 - Ask Meetly to cancel a booked meeting; it deletes the event and notifies invitees.
-  Rescheduling a booked meeting is still left to you.
+  Guests can hold replacement times while the current booking stays intact;
+  a later guest choice moves the existing event.
 - If the model provider is unreachable, that five-minute check is skipped and
   the next one catches up from the same cursor.
 

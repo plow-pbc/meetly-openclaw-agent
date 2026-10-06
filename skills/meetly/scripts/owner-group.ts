@@ -3,10 +3,10 @@ import { offerRequest, type OfferInput } from "./calendar.ts";
 import { lookupContact } from "./contact.ts";
 import { DAYS, loadConfig } from "./config.ts";
 import { file } from "./paths.ts";
-import { readJson } from "./store.ts";
+import { readJson, updateJson } from "./store.ts";
 import { findPreferredSlots, resolveSearchConstraints, preferredSearchCoverage, type SearchTiming } from "./slots.ts";
 import { view } from "./request-view.ts";
-import { checkContact, ContactConfirmationRequired, findOpenByHandle, normalizeHandle, sameHandle, type Constraints, type Ledger } from "./ledger.ts";
+import { nudgeFingerprint, checkContact, ContactConfirmationRequired, addRequest, requestId, findOpenByHandle, normalizeHandle, sameHandle, type Constraints, type Ledger } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
@@ -44,37 +44,11 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     }
     name = args.name?.trim() || name;
     const ledger = readJson<Ledger>(file("ledger.json"), { requests: [] });
-    try {
-      checkContact(ledger, handle);
-    } catch (error) {
-      if (!(error instanceof ContactConfirmationRequired)) throw error;
-      // The group receives only the coordination outcome, never the private reason.
-      const dates = (label: string, value?: Constraints) => {
-        const parts = [value?.from && `from ${value.from}`, value?.to && `through ${value.to}`,
-          value?.days?.length && `on ${value.days.join(", ")}`, value?.after && `after ${value.after}`, value?.before && `before ${value.before}`].filter(Boolean);
-        return parts.length ? ` ${label}: ${parts.join("; ")} (${loadConfig().timezone}).` : "";
-      };
-      let ownerAskSent = false;
-      try {
-        if (sendOwner) {
-          await sendOwner(`You asked in your group for ${args.durationMin}-minute ${JSON.stringify(args.topic)} with ${name ?? handle} (${handle}).`
-            + dates("Required dates/times", args.constraints) + dates("Preferred dates/times", args.proposed)
-            + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")
-            + (args.format ? ` Format: ${args.format}.` : "")
-            + " You previously marked this person do not contact. Please confirm here in our private DM if you want to schedule this meeting. Your preference stays in place unless you ask to clear it.");
-          ownerAskSent = true;
-        }
-      } catch {
-        // An uncertain delivery is never retried or explained in the group.
-      }
-      return { code: "OWNER_CONFIRMATION_REQUIRED", silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
-    }
     const existing = findOpenByHandle(ledger, handle);
     if (existing && existing.chatUid !== chat && !(existing.status === "asked" && existing.chatUid === undefined)) {
       throw new Error("request belongs to another conversation");
     }
     const config = loadConfig(), now = Date.now();
-    if (config.paused) throw new Error("Scheduling is paused.");
     const { topic, format } = args;
     const location = args.location ?? existing?.location;
     const meal = args.meal ?? existing?.meal;
@@ -87,6 +61,42 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     const constraints = args.constraints !== undefined || args.week !== undefined
       ? resolveSearchConstraints(args.constraints ?? savedPolicy, args.week, now, config.timezone) : existing?.constraints;
     const proposed = args.proposed ?? (existing?.status === "asked" ? existing.proposed : undefined);
+    try {
+      checkContact(ledger, handle, existing);
+    } catch (error) {
+      if (!(error instanceof ContactConfirmationRequired)) throw error;
+      const contact = { origin: "owner-group" as const, handle, name, topic, meal, durationMin, constraints, proposed,
+        format, location, locale, chatUid: chat, askDetails: false, offered: [], status: "asked" as const };
+      let id = existing?.id ?? requestId();
+      updateJson<Ledger>(file("ledger.json"), { requests: [] }, current => {
+        const saved = findOpenByHandle(current, handle);
+        if (saved && saved.chatUid && saved.chatUid !== chat) throw new Error("request belongs to another conversation");
+        id = saved?.id ?? id;
+        if (!saved) current = addRequest(current, contact, now, id);
+        return { ...current, requests: current.requests.map(r => r.id === id ? { ...r, pendingOwner: { contact, askedAt: new Date(now).toISOString() },
+          lastNudge: { fingerprint: nudgeFingerprint("owner-decision", new Date(now).toISOString()), at: new Date(now).toISOString() }, chatUid: chat } : r) };
+      });
+      // The group receives only the coordination outcome, never the private reason.
+      const dates = (label: string, value?: Constraints) => {
+        const parts = [value?.from && `from ${value.from}`, value?.to && `through ${value.to}`,
+          value?.days?.length && `on ${value.days.join(", ")}`, value?.after && `after ${value.after}`, value?.before && `before ${value.before}`].filter(Boolean);
+        return parts.length ? ` ${label}: ${parts.join("; ")} (${loadConfig().timezone}).` : "";
+      };
+      let ownerAskSent = false;
+      try {
+        if (sendOwner) {
+          await sendOwner(`Request ${id}: you asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Name: ${JSON.stringify(name ?? handle)}. Handle: ${JSON.stringify(handle)}.`
+            + dates("Required dates/times", args.constraints) + dates("Preferred dates/times", args.proposed)
+            + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")
+            + (args.format ? ` Format: ${args.format}.` : "")
+            + " You previously marked this person do not contact. Please confirm here in our private DM if you want to schedule this meeting. Your preference stays in place unless you ask to clear it.");
+          ownerAskSent = true;
+        }
+      } catch {
+        // An uncertain delivery is never retried or explained in the group.
+      }
+      return { code: "OWNER_CONFIRMATION_REQUIRED", silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
+    }
     const search = { ...constraints, now, config, meal, durationMin, locale, asap: args.asap, busy: [] };
     const busy = await fetchBusy(config, preferredSearchCoverage(search, proposed));
     if (busy.degraded.length) throw new Error("calendar unavailable");

@@ -7,7 +7,7 @@ import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findByChat
 import { file } from "./paths.ts";
 import { checkTime, findPreferredSlots, preferredSearchCoverage, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
-import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, wallParts, type WeekdayTime } from "./time.ts";
+import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
 
 export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
@@ -65,9 +65,11 @@ function preferences(args: GuestArgs, timezone: string): Constraints {
   return args.next_week === undefined ? out : intersectConstraints(out, nextWeek(args.next_week, timezone));
 }
 
+const referenceTimes = (r: Request) => currentOffers(r).length ? currentOffers(r) : r.booked ? [r.booked] : [];
+
 async function check(request: Request, config: Config, requested: string | WeekdayTime) {
   if (typeof requested === "object" && requested.time === undefined) throw new Error("An exact time is required");
-  const start = typeof requested === "string" ? requested : resolveWeekday(requested, request.reoffer?.offered ?? request.offered, config.timezone);
+  const start = typeof requested === "string" ? requested : resolveWeekday(requested, referenceTimes(request), config.timezone);
   const query = { now: Date.now(), config, meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
   const { slot } = checkTime({ ...query, busy: [] });
   const busy = await busyFor(request, config, slot.start, slot.end);
@@ -100,7 +102,7 @@ async function pick(request: Request, config: Config, start: string, sendOwner?:
   if (!offer) return { error: "Choose one of the currently offered start times." };
   // Only a replacement held before this run can represent the guest's choice.
   if (request.status === "booked" && !(Number.isFinite(turnStartedAt)
-    && Date.parse(request.reoffer!.offeredAt) < turnStartedAt!)) {
+    && Date.parse(request.offeredAt!) < turnStartedAt!)) {
     return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
   }
   const checked = await check(request, config, offer.start);
@@ -132,22 +134,17 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   if (newlyExcluded.some(day => restored.includes(day))) throw new Error("a weekday cannot be both excluded and restored");
   const excludedDays = [...new Set([...(request.excludedDays ?? []).filter(day => !restored.includes(day)), ...newlyExcluded])];
   const availableDays = { days: DAYS.filter(day => !excludedDays.includes(day)) };
-  const window = args.offer_week ? offerDateWindow(currentOffers(request), config.timezone) : undefined;
+  const window = args.offer_week ? offerDateWindow(referenceTimes(request), config.timezone) : undefined;
   const bounds = intersectConstraints(intersectConstraints(request.constraints, window), availableDays);
   if (args.excludedDays !== undefined || args.restoredDays !== undefined) request = patch(request, { excludedDays });
   let start = args.start;
   if (typeof start === "object" && start.time === undefined) {
-    preferred.from = preferred.to = resolveWeekday({ weekday: start.weekday }, currentOffers(request), config.timezone);
+    preferred.from = preferred.to = resolveWeekday({ weekday: start.weekday }, referenceTimes(request), config.timezone);
     start = undefined;
   }
-  const bookedDate = request.status === "booked" && request.booked
-    ? localIso(Date.parse(request.booked.start), config.timezone).slice(0, 10) : undefined;
-  let requestedBookedDate = bookedDate !== undefined && (preferred.from === preferred.to && preferred.from === bookedDate
-    || args.days?.length === 1 && args.days[0] === wallParts(Date.parse(request.booked!.start), config.timezone).weekday);
   let exact: Slot | undefined;
   if (start) {
     const checked = await check(request, config, start);
-    requestedBookedDate = checked.slot.start.slice(0, 10) === bookedDate;
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) {
       return { error: "That weekday was ruled out. Choose a different day." };
     }
@@ -161,7 +158,6 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   const now = Date.now();
   const query: SlotQuery = { busy: [], ...bounds, now, config,
-    excludeDates: bookedDate && !requestedBookedDate ? [bookedDate] : [],
     meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
   const range = preferredSearchCoverage(query, preferred);
   const fromDate = localIso(Date.parse(range.from), config.timezone).slice(0, 10);
@@ -178,10 +174,10 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   if (incomplete && !slots.length) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current offer is unchanged.", code: "INCOMPLETE_CALENDAR", incomplete };
   if (!slots.length) {
     const handoff = await askOwner(request, config, {
-      question: "No alternative times fit the meeting conditions. May we look on another day or widen the time window?",
+      question: "No alternative times fit the meeting conditions. May I check for other times again? Tell me if I can change the dates or time window.",
     }, sendOwner, "scheduling");
     return { error: "No other times are available within the owner’s conditions. The current offer is unchanged.",
-      ...handoff, code: "NO_ALTERNATIVES", conditions: request.constraints ?? {},
+      ...handoff, code: "NO_ALTERNATIVES",
       message: "ownerAskSent" in handoff && handoff.ownerAskSent
         ? `Those times don't work. I've asked ${config.ownerName} about another day or time and will get back to you here.`
         : "Those times don't work. I can't confirm another time yet.",
@@ -210,7 +206,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
     question = args.question.replace(/\s+/g, " ").trim();
     question = question.slice(0, OWNER_QUESTION_LIMIT);
-    pendingOwner = { question, askedAt };
+    pendingOwner = { question, askedAt, ...(purpose === "scheduling"
+      ? { alternatives: { previousStarts: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] } } : {}) };
   } else {
     const checked = await check(request, config, args.start!);
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) {
@@ -226,7 +223,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   updateJson<Ledger>(file("ledger.json"), EMPTY, ledger => {
     unchanged(request, ledger.requests.find(r => r.id === request.id)!);
     const next = updateRequest(ledger, request.id, { pendingOwner }, Date.now());
-    return { requests: next.requests.map(r => r.id === request.id ? { ...r, lastNudge: {
+    return { ...next, requests: next.requests.map(r => r.id === request.id ? { ...r, lastNudge: {
       fingerprint: nudgeFingerprint("question" in pendingOwner ? "owner-question" : "time-approval", pendingOwner.askedAt),
       at: new Date(Date.now()).toISOString(),
     } } : r) };
@@ -249,8 +246,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
   try {
     let request = current(readJson<Ledger>(file("ledger.json"), EMPTY), ctx);
+    if (!request) return { error: "No scheduling request matches you in this conversation." };
     const config = loadConfig();
-    if (!request) return { ownerName: config.ownerName, error: `${config.ownerName} will confirm.` };
     if (action === "view") return view(request, config);
     if (config.paused) return { error: "Scheduling is paused. The owner can resume it." };
     if (action === "format") {

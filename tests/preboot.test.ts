@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-for (const failure of ["plugin", "config", "fresh", "existing", "name-fallback"]) test(`boot renders identity, preserves base model defaults and requires plugin activation (${failure})`, t => {
+for (const failure of ["plugin", "config", "fresh", "existing", "name-fallback"]) test(`boot renders identity, preserves base model defaults and requires plugin activation (${failure})`, async t => {
   const agentName = failure === "name-fallback" ? "Rowan" : "Alder";
   const baseModel = { primary: "plow/z-ai/glm-5.2", fallbacks: ["plow/anthropic/claude-sonnet-5"] };
   const marker = `${failure.toUpperCase()}_FAILED`;
@@ -42,9 +43,18 @@ for (const failure of ["plugin", "config", "fresh", "existing", "name-fallback"]
   `);
   writeFileSync(join(dir, "prompt.md"), "Use your configured name.");
   if (failure !== "fresh") writeFileSync(join(dir, "openclaw.json"), JSON.stringify({ agents: { defaults: { model: baseModel } } }));
-  const result = spawnSync(process.execPath, ["--import", hook, new URL(preboot).pathname], {
-    env: { ...process.env, PLOW_API_BASE: "http://fixture.invalid" }, encoding: "utf8", timeout: 1_000,
+  const child = spawn(process.execPath, ["--import", hook, new URL(preboot).pathname], {
+    env: { ...process.env, PLOW_API_BASE: "http://fixture.invalid" }, timeout: 30_000,
   });
+  t.after(() => child.kill());
+  let stdout = "", stderr = "";
+  child.stdout.setEncoding("utf8").on("data", data => { stdout += data; });
+  child.stderr.setEncoding("utf8").on("data", data => {
+    stderr += data;
+    if (failure === "config" && stderr.includes("plow-boot: parked:")) child.kill();
+  });
+  const [status, signal] = await once(child, "close");
+  const result = { stdout, stderr, status, signal };
   if (failure === "plugin" || failure === "config") assert.match(result.stderr, new RegExp(marker));
   if (failure === "plugin") {
     assert.doesNotMatch(result.stdout, /GATEWAY_STARTED/);
@@ -52,7 +62,7 @@ for (const failure of ["plugin", "config", "fresh", "existing", "name-fallback"]
   } else if (failure === "config") {
     assert.doesNotMatch(result.stdout, /GATEWAY_STARTED/);
     assert.match(result.stderr, /plow-boot: parked/);
-    assert.equal((result.error as NodeJS.ErrnoException)?.code, "ETIMEDOUT");
+    assert.equal(result.signal, "SIGTERM");
   } else {
     const config = JSON.parse(readFileSync(join(dir, "openclaw.json"), "utf8"));
     if (failure === "fresh") assert.ok(config.tools.alsoAllow.includes("meetly_offer_owner_dm"), "owner DM overlap tool must survive the messaging profile allowlist");

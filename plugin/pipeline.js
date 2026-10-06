@@ -4,13 +4,13 @@ const record = async (event, ctx) => {
   const { updateJson } = await import("/opt/plow/skills/meetly/scripts/store.ts");
   const { file } = await import("/opt/plow/skills/meetly/scripts/paths.ts");
   updateJson(file("ledger.json"), { requests: [] }, ledger => recordGuestReply(
-    ledger, ctx.conversationId, ctx.senderId ?? event.senderId ?? event.from, event.timestamp ?? Date.now(),
+    ledger, ctx.conversationId, ctx.senderId, event.timestamp ?? Date.now(),
   ));
 };
 
 export function registerPipelineHooks(api, recordReply = record) {
   api.on("message_received", async (event, ctx) => {
-    if (ctx.channelId !== "plow" || ctx.accountId !== "chat" || !ctx.conversationId) return;
+    if (ctx.channelId !== "plow" || ctx.accountId !== "chat" || !ctx.conversationId || !ctx.senderId) return;
     try { await recordReply(event, { ...ctx, conversationId: ctx.conversationId.replace(/^plow:/, "") }); }
     catch { api.logger.info("meetly pipeline: could not record guest reply"); }
   });
