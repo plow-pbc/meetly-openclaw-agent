@@ -848,6 +848,13 @@ test("owner DM offers still resolve named overlap permission", async t => {
   const creates = f.commands.filter(c => c[2] === "create");
   assert.equal(creates.length, 1);
   assert.ok(creates[0]!.includes("--confirm-conflict"));
+  assert.equal(f.request().status, "offered");
+  assert.equal(f.request().booked, undefined);
+  assert.ok(creates[0]![creates[0]!.indexOf("--summary") + 1]!.startsWith("Hold:"));
+  assert.equal(cli("ledger.ts", ["update", "--id", request.id, "--json", JSON.stringify({ chatUid: context.nativeChannelId })], { MEETLY_HOME: f.home }).status, 0);
+  const chosen = await f.act(context, "pick", { start: request.offered[0]!.start });
+  assert.equal("status" in chosen && chosen.status, "booked");
+  assert.equal("overlappedWithOwnerApproval" in chosen && chosen.overlappedWithOwnerApproval, true);
 });
 
 test("owner-group binds a same-handle unlinked asked request and the guest can book", async t => {

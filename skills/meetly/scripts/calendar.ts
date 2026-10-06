@@ -11,6 +11,7 @@ import { holdHours, loadConfig, SLOT_COUNT } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
 import { expiredRequests, findOpenByHandle, meetingDuration, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
+import { checkTime } from "./slots.ts";
 import { formatMeetingTime } from "./time.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
@@ -19,12 +20,18 @@ import { readJson, updateJson, withLock, writeJson } from "./store.ts";
 export type CalendarAction =
   | { action: "offer"; request: NewRequest; provisional?: boolean }
   | { action: "duration"; durationMin: number; topic: string; offered: OfferInput["offered"] }
-  | { action: "book"; start: string; end?: string; attendees?: string }
+  | { action: "book"; start: string; end?: string; attendees?: string; timeApproval?: boolean }
+  | { action: "approve-time"; start?: string; attendees?: string }
   | { action: "format"; format: Request["format"]; location?: string }
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
 type Step = { verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
 type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" }>; steps: Step[]; failed?: boolean };
 export type CalendarOptions = { validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+class TimeApprovalBusy extends Error {
+  start: string;
+  constructor(start: string) { super("Time approval cannot book a busy slot; no overlap was authorized."); this.start = start; }
+}
+
 const EMPTY: Ledger = { requests: [] };
 const CREATE_WAIT_MS = 10 * 60_000;
 const ledger = () => readJson<Ledger>(file("ledger.json"), EMPTY);
@@ -40,6 +47,14 @@ const checkedEvent = (step: Step) => {
     || (step.verb === "update" && event.id !== step.eventId)) throw new Error("unexpected calendar event; operation kept for reconciliation");
   return event;
 };
+
+const bookingResult = (request: Request, { input }: Intent) => ({
+  request,
+  ...(input.action === "book" && input.timeApproval ? { approved: true } : {}),
+  invitationSent: input.action === "book" && !!input.attendees,
+  meetUrl: request.meetUrl ?? null,
+  ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}),
+});
 
 // A live process owns its lock for the entire remote operation. Never expire
 // it by age: an approval or a slow calendar call may still be running.
@@ -71,7 +86,7 @@ export function pendingCalendarWrites(): string[] {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
 }
 
-export async function calendarAction(id: string, input: CalendarAction, options: CalendarOptions = {}) {
+export async function calendarAction(id: string, action: CalendarAction, options: CalendarOptions = {}) {
   const now = options.now ?? Date.now;
   const command = options.command ?? runOnMacOutcome;
   const poll = options.poll ?? (handle => macOutcome("plow_get_result", { handle }));
@@ -127,8 +142,16 @@ export async function calendarAction(id: string, input: CalendarAction, options:
     const journal = file(`calendar/${encodeURIComponent(id)}.json`);
     let intent = readJson<Intent | undefined>(journal, undefined);
     let request = requestById(id);
+    let input: CalendarAction = action;
     options.validate?.(request);
-    if (intent && request.calendarRevision === intent.id) { rmSync(journal); intent = undefined; }
+    if (intent && request.calendarRevision === intent.id) {
+      if (input.action === "resume") {
+        await cleanup();
+        rmSync(journal);
+        return bookingResult(requestById(id), intent);
+      }
+      rmSync(journal); intent = undefined;
+    }
     if (intent && input.action !== "resume") throw new Error(`calendar operation unresolved for ${id}; run resume first`);
     if (!intent) {
       if (input.action === "resume" || input.action === "cleanup") { await cleanup(); return { request: requestById(id) }; }
@@ -145,6 +168,14 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         return { request: requestById(id) };
       }
       if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked") throw new Error(`request is ${request.status}`);
+      if (input.action === "approve-time" || (input.action === "book" && input.timeApproval)) {
+        const pending = request.pendingOwner && "start" in request.pendingOwner ? request.pendingOwner : undefined;
+        const start = input.start ?? pending?.start;
+        if (!start) throw new Error("Time approval needs an exact start or a pending time approval.");
+        const { slot } = checkTime({ now: now(), config: loadConfig(), busy: [], start,
+          meal: request.meal, durationMin: request.durationMin });
+        input = { action: "book", start: slot.start, end: slot.end, attendees: input.attendees, timeApproval: true };
+      }
       if (input.action === "duration") {
         const { origin, handle, name, sourceRowid, chatUid, constraints, proposed, format, location, locale, askDetails } = request;
         const config = loadConfig();
@@ -200,7 +231,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       intent = { id: randomUUID(), input, steps };
       writeJson(journal, intent);
     }
-    const fail = async () => {
+    const fail = async (error?: Error) => {
       const notification = intent.input.action === "book" ? { sendUpdates: "all" as const } : {};
       const created: HoldCleanup[] = intent.steps.filter(s => s.verb === "create" && s.output).map(s => ({ holdId: parseEvent(s.output!).id, account: s.account, ...notification }));
       created.push(...intent.steps.filter(s => s.abandoned).map(s => ({ token: s.token, account: s.account, start: s.start, end: s.end, ...notification })));
@@ -209,7 +240,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       if (provisional) patch({ status: "dropped" });
       rmSync(journal);
       await cleanup();
-      throw new Error(provisional ? "calendar write failed; new request dropped" : "calendar write failed; previous offer retained");
+      throw error ?? new Error(provisional ? "calendar write failed; new request dropped" : "calendar write failed; previous offer retained");
     };
     if (intent.failed) await fail();
     for (const step of intent.steps) {
@@ -236,11 +267,13 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const own = [...holds(requestById(id)), ...intent.steps.filter(s => s.output).map(s => ({ holdId: parseEvent(s.output!).id, account: s.account }))];
         if (request.eventId && request.booked) own.push({ holdId: request.eventId, account: request.booked.account });
         const overlaps = busy.busy.filter(b => Date.parse(b.start) < Date.parse(step.end) && Date.parse(b.end) > Date.parse(step.start));
-        const allowed = intent.input.action === "offer" ? intent.input.request.allowOverlap : request.allowOverlap;
+        const timeApproval = intent.input.action === "book" && intent.input.timeApproval;
+        const allowed = timeApproval ? [] : intent.input.action === "offer" ? intent.input.request.allowOverlap : request.allowOverlap;
         if (overlaps.some(b => !own.some(h => h.holdId === b.id && h.account === b.account) && !allowsOverlap(b, allowed))) {
           if (intent.input.action === "offer") { step.skipped = true; writeJson(journal, intent); continue; }
+          if (timeApproval) await fail(new TimeApprovalBusy(step.start));
           intent.failed = true; writeJson(journal, intent);
-        } else if (step.verb === "create" && overlaps.length && !step.args.includes("--confirm-conflict")) step.args.push("--confirm-conflict");
+        } else if (!timeApproval && step.verb === "create" && overlaps.length && !step.args.includes("--confirm-conflict")) step.args.push("--confirm-conflict");
       }
       if (step.sentAt === undefined && !intent.failed) {
         step.sentAt = now(); writeJson(journal, intent);
@@ -249,6 +282,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         if (outcome && "output" in outcome) step.output = outcome.output;
         if (outcome && "handle" in outcome) step.handle = outcome.handle;
         if (outcome && "error" in outcome) {
+          if (outcome.code === "calendar-conflict" && intent.input.action === "book" && intent.input.timeApproval) await fail(new TimeApprovalBusy(step.start));
           if (intent.input.action === "offer" && outcome.code === "calendar-conflict") step.skipped = true;
           else intent.failed = true;
         }
@@ -258,6 +292,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         const outcome = await poll(step.handle).catch(() => undefined);
         if (outcome && "output" in outcome) step.output = outcome.output;
         if (outcome && "error" in outcome) {
+          if (outcome.code === "calendar-conflict" && intent.input.action === "book" && intent.input.timeApproval) await fail(new TimeApprovalBusy(step.start));
           if (intent.input.action === "offer" && outcome.code === "calendar-conflict") step.skipped = true;
           else intent.failed = true;
         }
@@ -308,14 +343,22 @@ export async function calendarAction(id: string, input: CalendarAction, options:
         return { ...r, calendarRevision: completed.id, holdCleanup: cleanup };
       }) };
     });
-    rmSync(journal);
     await cleanup();
-    request = requestById(id);
-    return { request, invitationSent: completed.input.action === "book" && !!completed.input.attendees, meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
+    rmSync(journal);
+    return bookingResult(requestById(id), completed);
   }).then(result => ({
     ...result,
     ...(result.request.booked ? { confirmationTime: formatMeetingTime(result.request.booked.start, loadConfig().timezone, result.request.locale) } : {}),
-  }));
+  })).catch(error => {
+    if (!(error instanceof TimeApprovalBusy)) throw error;
+    return { request: requestById(id), approved: false, code: "TIME_APPROVAL_BUSY", error: error.message,
+      near: error.start, recovery: { action: "find_nearest", allowOverlap: false } };
+  });
+}
+
+// A yes to a time is distinct from permission to overlap a calendar event.
+export async function approveTime(id: string, args: { start?: string; attendees?: string } = {}, options: CalendarOptions = {}) {
+  return calendarAction(id, { ...args, action: "approve-time" }, options);
 }
 
 export type OfferInput = Omit<NewRequest, "durationMin" | "offered"> & {
@@ -375,6 +418,7 @@ if (isMain(import.meta.url)) run(async () => {
   if (action === "pending") return { ids: pendingCalendarWrites() };
   if ("allowOverlap" in args || "allowOverlapTitles" in args) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
   if (action === "offer") return offerRequest(args);
-  if (!values.id || !["duration", "book", "format", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | duration|book|format|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
+  if (action === "approve-time" && values.id) return approveTime(values.id, args);
+  if (!values.id || !["duration", "book", "format", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | approve-time|duration|book|format|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
   return calendarAction(values.id, { ...args, action } as CalendarAction);
 });
