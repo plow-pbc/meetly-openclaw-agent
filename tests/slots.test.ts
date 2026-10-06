@@ -228,19 +228,19 @@ test("checkTime: a time the person insists on", () => {
   assert.throws(() => check("someday"), /not a time/);
 });
 
-test("replacement slot search keeps saved and newly resolved overlap authorizations private", () => {
+test("replacement slot search skips saved overlap grants; exact checks retain their interval privately", () => {
   const home = tmpHome(), env = { MEETLY_HOME: home };
   writeJson(join(home, "config.json"), CONFIG);
   const start = "2026-09-28T10:00:00-03:00", end = "2026-09-28T11:00:00-03:00";
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, { travel: { beforeMin: 0, afterMin: 0 },
     origin: "owner", chatUid: "group", handle: "+15551234567", topic: "Lunch", durationMin: 60,
-    allowOverlap: [{ account: "jean@example.com", id: "saved" }], offered: [{ start, end, holdId: "own-hold", account: "jean@example.com" }],
+    allowOverlap: [{ account: "jean@example.com", id: "saved", start, end }], offered: [{ start, end, holdId: "own-hold", account: "jean@example.com" }],
   }, Date.parse(start), "r_one"));
   const busyFile = join(home, "busy.json");
   writeJson(busyFile, { coverage, busy: ["saved", "new", "own-hold"].map(id => ({ id, start, end, account: "jean@example.com" })), allowOverlap: [{ account: "jean@example.com", id: "new" }] });
   const result = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--after", "10:00", "--count", "1"], env);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.json.slots[0].start, start);
+  assert.equal(result.json.slots[0].start, end);
   assert.doesNotMatch(result.stdout, /saved|new|own-hold|allowOverlap/);
   const args = ["--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--at", start];
   const checked = cli("slots.ts", args, env);
@@ -453,6 +453,35 @@ test("an owner-approved clock time replaces the meal window without constraining
   assert.equal(checkTime({ ...query, startTime: undefined, start: checked.slot.start }).outsideHours, true);
   assert.equal(checkTime({ ...query, start: checked.slot.start,
     busy: [{ start: "2026-09-28T10:50:00-03:00", end: "2026-09-28T10:55:00-03:00" }] }).free, false);
+});
+
+test("only a known busy exact-time check routes the model to private inspection", () => {
+  const home = tmpHome(), busyFile = join(home, "busy.json");
+  writeJson(join(home, "config.json"), CONFIG);
+  const start = "2026-09-28T10:00:00-03:00";
+  const busy = [{ start, end: "2026-09-28T11:00:00-03:00", id: "private-id", account: "private-account" }];
+  const args = ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--at", start, "--duration", "30", "--format", "phone", "--travel", '{"beforeMin":0,"afterMin":0}'];
+  for (const [input, guided] of [
+    [{ coverage, busy, degraded: [] }, true],
+    [{ coverage, busy: [], degraded: [] }, false],
+    [{ coverage, busy, degraded: ["unread"] }, false],
+    [{ coverage, busy, degraded: [], unknownAfter: start }, false],
+  ] as const) {
+    writeJson(busyFile, input);
+    const result = cli("slots.ts", args, { MEETLY_HOME: home });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(!!result.json.next?.ownerMainDM, guided);
+    if (result.json.reason === "unknown") assert.match(result.json.next.read, /Fetch busy.ts/);
+    if (guided) {
+      assert.match(result.json.next.ownerMainDM, /meetly_movable/);
+      assert.match(result.json.next.otherChats, /alternatives/);
+      assert.doesNotMatch(JSON.stringify(result.json.next), /private-id|private-account/);
+    }
+  }
+  writeJson(busyFile, { coverage, busy, degraded: [] });
+  const soon = cli("slots.ts", [...args, "--now", start], { MEETLY_HOME: home });
+  assert.equal(soon.json.reason, "too-soon");
+  assert.equal(soon.json.next, undefined);
 });
 
 for (const format of ["meet", "in_person"] as const) test(`held replacement exact-time check uses its ${format} format and travel`, () => {

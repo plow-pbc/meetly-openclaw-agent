@@ -5,7 +5,7 @@ export function withoutPrivateTravel(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withoutPrivateTravel);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).filter(([key]) =>
-    !["travel", "travelEvents", "ownerTravelNote", "beforeMin", "afterMin"].includes(key))
+    !["overlap", "overlapApproval", "travel", "travelEvents", "ownerTravelNote", "beforeMin", "afterMin"].includes(key))
     .map(([key, child]) => [key, withoutPrivateTravel(child)]));
 }
 

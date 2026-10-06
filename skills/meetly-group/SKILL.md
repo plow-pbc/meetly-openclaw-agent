@@ -30,25 +30,26 @@ writes and delivery; never invent or retype an id from memory or a session slug.
 
 ## Read the calendar
 
-Run `busy.ts --fetch`. Only in the owner's DM, for events they explicitly allowed overlapping, add
-`--allow-overlap-title <owner-supplied event name>` for each name. Matching `{account, id}` references stay in the busy file; slot search uses them without exposing them.
-Overlap permission does not authorize sharing the event title in the group. Keep
-private titles in the owner's DM; group offers and confirmations give only meeting times.
-Overlap permission alone is not a time selection. "Noon is fine, it can overlap my
-other event" grants permission to offer noon, not to book it. In the owner's DM,
-use `meetly_offer_owner_dm` with the selected `requestId` for an existing meeting and `allowOverlapTitles` to resolve the named
-permission, re-offer and hold times, then let the guest choose. Never write
-`allowOverlap` with the ledger CLI. Only an explicit booking instruction such as "book noon" selects it
-on the owner's behalf (`meetly-confirm`, "Book the event").
-For an overlap re-offer, use `slots.ts --near <owner-authorized start> --request <id>`
-with the fresh busy file and its resolved overlap permissions. Offer the returned
-slots in order, including the authorized time when available and the nearest
-alternatives, while keeping the request's hard conditions.
-The reader checks every calendar in the config on the Mac itself and writes `/var/lib/plow/meetly/tmp/busy.json`; it prints only
-`{file, busy, degraded, unknownAfter?}`. Never run `plow-gog calendar events`
-yourself or copy a calendar listing into a file. An account in `degraded`
-could not be read: `slots.ts` reports it, and you never claim the owner is
-free there.
+In the owner’s main DM, read `meetly-travel`, "Flexible blockers", before searching
+alternatives to a busy preferred time. Use `slots.ts --at <time>` with the same
+format/travel to check that exact candidate. Inspect with `meetly_movable` before
+`--near`. If a blocker looks flexible, ask once privately, finish `NO_REPLY` and
+wait for a new owner message; previous decisions never authorize overlap. Only
+if no blocker looks flexible or the owner refuses should you search alternatives.
+Group and guest requests use alternatives without private inspection.
+
+
+Run `busy.ts --fetch`.
+It checks every configured calendar on the Mac, writes
+`/var/lib/plow/meetly/tmp/busy.json` and prints only `{file, busy, degraded, unknownAfter?}`.
+Never run `plow-gog calendar events` yourself or copy a calendar listing into a file.
+Never claim the owner is free on an account in `degraded`.
+
+**Overlap permission.** `meetly_movable` binds a private pending question to the inspected event. Overlap permission alone is not a time selection.
+"Noon is fine, it can overlap my other event" grants permission to offer noon, not to book it:
+answer the pending question through `meetly_answer_owner` with `allow_overlap` and the inspected candidate index. The tool holds that time and delivers the offer, then the guest chooses. Use `slots.ts --near <owner-authorized start> --request <id>` for nearest alternatives. Never write
+`allowOverlap` with the ledger CLI. Only an explicit booking instruction such as "book noon"
+selects it (`meetly-confirm`, "Book the event"). Overlap permission does not authorize sharing the event title in the group.
 
 ## Offer times
 
@@ -104,15 +105,21 @@ before searching, keeping any hard conditions they did not change.
    exclude this request's own holds. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale>`, with the request's `constraints` (the owner's) and, on its
    first offer, its `proposed` times: `--days`, `--after`, `--before`,
-   `--from`/`--to`, `--duration`. For a busy requested time, use `--near <requested ISO start>`
-   instead, keeping hard conditions such as "only at 11:30", and offer in the returned order.
+   `--from`/`--to`, `--duration`. Check an exact candidate with
+   `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --at <ISO> --duration <minutes>
+   --format <format> --travel '<estimate>'` (plus `--request <id>` for saved requests).
+   `--at` rejects search filters: no days/after/before/from/to/exclude/count/near.
+   If busy in the owner's main DM, use the inspection flow above before `--near` or offers.
+   A permission question ends this turn. Ask before searching unrequested alternatives;
+   once authorized use `--near <requested ISO start>`, keeping hard conditions such as
+   "only at 11:30", and offer in the returned order.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
      If `constraints` block it, tell the owner which one and suggest
      loosening it; stop.
    - **`degraded` is not empty:** tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
-4. For new overlap permission, use `meetly_offer_owner_dm` with the selected `requestId` for an existing meeting and `allowOverlapTitles`; the raw CLI cannot authorize overlaps. Otherwise save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,
+4. Resolve a pending private overlap question through `meetly_answer_owner`; the raw CLI cannot authorize overlaps. Otherwise save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,
    `name`, `sourceRowid`, known `chatUid`, `topic`, `location`, `meal` if applicable, optional `durationMin`,
    `constraints` (the owner's conditions), `proposed`, `format`, `travel`,
    `locale`, and `offered[]` with each slot's `start`/`end`. Do not supply hold ids.
@@ -185,10 +192,11 @@ Save the guest name the owner gave in `name`, even when they also supplied a pho
 and Contacts has no card; keep it out of `topic`.
 
 Extract the topic, proposed times, hard conditions, explicit duration, format and
-place, and, only in the owner's DM, owner-authorized overlap titles. Follow
-"Offer times" with `origin: owner`. If a requested time is busy, say there is an
-existing commitment and offer the nearest available times right away; do not ask
-whether to search or schedule over the conflict. Confirm the offer once in its meeting thread.
+place, and the request's saved overlap permission. Follow
+"Offer times" with `origin: owner`, including its inspection and wait branch for busy
+preferred times. Inspect also when few free options fit. Ask before searching
+unrequested alternatives; preserve duration, travel and hard conditions. State the
+time zone and confirm the offer once in its meeting thread.
 
 For an owner-requested duration change on an open request, read busy times and run
 `slots.ts --request <saved id> --duration <minutes>` with the busy file and saved

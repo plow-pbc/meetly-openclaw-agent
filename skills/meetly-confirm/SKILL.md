@@ -10,8 +10,8 @@ calendar write goes through `calendar.ts`; an unresolved write is resumed with
 in the third person, using `ownerName`; a conflict is "an existing commitment", never an
 event title. Copy the request's exact `chatUid` from the ledger. New offers follow
 `meetly-group`, "Offer times". Overlap permission ("noon is fine, it can overlap my
-other event") is not a time approval or a booking: pass the selected `requestId` to
-`meetly_offer_owner_dm` for that meeting, and follow `meetly-group`, "Read the calendar".
+other event") follows `meetly-travel`'s pending-answer flow through `meetly_answer_owner`,
+using the inspected requestId and askedAt. Approval offers that exact interval; the guest still chooses whether to book.
 
 For email requests, deliver through `meetly-email`.
 
@@ -51,14 +51,9 @@ tell the owner; do not resend. For a pending item, only if the owner explicitly 
   and their labels as the selection question; it sends the offer once even in the same group. If no times fit or a write is
   unresolved, leave the decision pending and tell the owner. If the owner declines,
   call the answer tool with `outcome:"decline_alternatives"` and their refusal; retain the existing offer.
-- **Question (`pendingOwner.question`, without `alternatives`):** if the owner's answer changes location, format or time,
-  apply it first: use `calendar.ts format` for place/format, or
-  "Book the event" / "Changes after booking" for time changes. Wait until the
-  calendar writer succeeds before calling `meetly_answer_owner` or acknowledging.
-  On a failed or unresolved write, leave the question pending; resume unresolved
-  writes and never claim the change completed. `text` relays the confirmed result,
-  or the owner's answer when no calendar change is needed.
-  For a successful change set `outcome: "calendar_change"`: the tool delivers the confirmed result even in the same group. Otherwise set `outcome: "answer"`; in the same group the tool clears silently without
+- **Overlap (`pendingOwner.overlap`):** follow `meetly-travel`'s pending-answer flow; use `allow_overlap` or `refuse_overlap`, never generic `outcome:"answer"`.
+- **Question (`pendingOwner.question`, without `alternatives` or `overlap`):** `text` is Meetly relaying the owner's answer.
+  Apply any requested calendar change first. On failure or an unresolved write, leave the question pending. For a successful change set `outcome: "calendar_change"`: the tool delivers the confirmed result even in the same group. Otherwise set `outcome: "answer"`; in the same group the tool clears silently without
   sending or acknowledging; after `silent: true`, output nothing. If the owner answers
   a different question already visible in the group, leave the unrelated pending
   question open and output nothing. Never send the answer separately.

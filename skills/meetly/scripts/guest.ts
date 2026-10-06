@@ -1,6 +1,6 @@
 // Scheduling actions scoped to the sender and conversation supplied by OpenClaw.
 import { checkTravel, travelNote, travelRange, type Travel } from "./travel.ts";
-import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
+import { allowsOverlap, overlapFor, fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
@@ -69,12 +69,13 @@ const referenceTimes = (r: Request) => currentOffers(r).length ? currentOffers(r
 async function check(request: Request, config: Config, requested: string | WeekdayTime) {
   if (typeof requested === "object" && requested.time === undefined) throw new Error("An exact time is required");
   const start = typeof requested === "string" ? requested : resolveWeekday(requested, referenceTimes(request), config.timezone);
-  const query = { now: Date.now(), config, travel: request.travel, format: request.format, meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
+  const query = { now: Date.now(), config, travel: request.travel, format: request.format, meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, start, locale: request.locale };
   const { slot } = checkTime({ ...query, busy: [] });
   const range = travelRange(slot.start, slot.end, request);
   const busy = await busyFor(request, config, range.from, range.to);
-  const checked = checkTime({ ...query, ...busy });
-  const overlap = busy.busy.some(b => allowsOverlap(b, request.allowOverlap)
+  const allowOverlap = overlapFor(request.allowOverlap, slot.start, slot.end);
+  const checked = checkTime({ ...query, ...busy, allowOverlap });
+  const overlap = busy.busy.some(b => allowsOverlap(b, allowOverlap)
     && Date.parse(b.start) < Date.parse(range.to) && Date.parse(b.end) > Date.parse(range.from));
   return { ...checked, overlap };
 }
@@ -154,7 +155,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   let exact: Slot | undefined;
   if (start) {
-    const checked = await check({ ...request, ...meeting, travel }, config, start);
+    const checked = await check({ ...request, ...meeting, travel, allowOverlap: [] }, config, start);
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) {
       return { error: "That weekday was ruled out. Choose a different day." };
     }
@@ -168,7 +169,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   const now = Date.now();
   const query: SlotQuery = { busy: [], ...bounds, now, config, travel, format: meeting.format,
-    meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
+    meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
   const range = preferredSearchCoverage(query, preferred);
   const fromDate = localIso(Date.parse(range.from), config.timezone).slice(0, 10);
   const toDate = localIso(Date.parse(range.to), config.timezone).slice(0, 10);
@@ -193,9 +194,9 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
         : "Those times don't work. I can't confirm another time yet.",
       recovery: { action: "wait", retry: false } };
   }
-  const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = { ...request, ...meeting };
+  const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, format, locale } = { ...request, ...meeting };
   request = (await write(request, { action: "offer", request: {
-    channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale, travel,
+    channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, format, locale, travel,
     offered: slots.map(slot => ({ start: slot.start, end: slot.end, account: config.defaultAccount })),
   } })).request;
   return { ...view(request, config), preferencesUnavailable };
