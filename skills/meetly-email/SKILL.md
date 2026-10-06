@@ -42,8 +42,8 @@ to an originating trusted group.
    with `to: [<email>]`, a meeting subject and the opener as `body`. The base
    includes the owner. For an already-linked request, send to its `chatUid`
    without preparing another start or repeating the details question.
-5. Pass the new-thread tool receipt unchanged to `email.ts receipt --id <id>
-   --json '<receipt>'` (or `--json-file`). It records completion and links the
+5. Save the new-thread tool receipt unchanged with the file-writing tool, then
+   run `email.ts receipt --id <id> --json-file <path>`. It records completion and links the
    returned `chat_uid` atomically, or drops a definitely failed request through
    the calendar writer to release holds. Unknown delivery stays reserved;
    without a receipt uid it remains unlinked. Never infer a link from thread
