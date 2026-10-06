@@ -872,3 +872,16 @@ for (const action of ["offer", "duration", "book"] as const) test(`contact polic
   await calendarAction("r_one", { action: "cancel" }, f.options);
   assert.equal(f.read().status, "dropped", "contact policy must leave cancellation reachable");
 });
+
+test("failed contact confirmation cannot authorize the previous offer", async t => {
+  const f = fixture(t, "chat-one");
+  const path = join(f.home, "ledger.json");
+  writeJson(path, setDoNotContact(readJson<Ledger>(path, { requests: [] }), f.input.handle, true, now));
+  const proposed = [{ start: "2026-10-07T10:00:00Z", end: "2026-10-07T10:30:00Z" }];
+  await assert.rejects(confirmContactOffer({ requestId: "r_one", offered: proposed }, { ...f.options,
+    command: async command => command.argv[2] === "create" ? { error: "failed" } : f.command(command),
+  }));
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /Confirm in the owner's DM/);
+  assert.notEqual(f.read().contactConfirmed, true);
+  assert.equal(f.read().status, "offered");
+});
