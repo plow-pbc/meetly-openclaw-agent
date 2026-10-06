@@ -100,9 +100,12 @@ test("holding replies are delivered once and make the run terminal",async t=>{
  guestTurns.beforeTool?.({toolName:"meetly_pick_time",toolCallId:"later"},turn);
  const next=await tools.get("meetly_pick_time").execute("later",{}); assert.equal(next.details.silent,true); assert.equal(executed,1);
 });
-test("false invitation results explicitly forbid a later invitation promise",async()=>{
- let pick:any; registerGuestTools({registerTool(factory:any){const tool=factory({});if(tool.name==="meetly_pick_time")pick=tool;}},async()=>({status:"booked",invitationSent:false}));
- assert.match(JSON.stringify((await pick.execute("pick",{})).content),/no invitation will follow/i);
+const invitationGuidance = [{ invitationUpdated: undefined, expected: true }, { invitationUpdated: true, expected: false }];
+for (const row of invitationGuidance) test(`invitation guidance: update=${row.invitationUpdated}`, async () => {
+  let pick: any;
+  registerGuestTools({ registerTool(factory: any) { const tool = factory({}); if (tool.name === "meetly_pick_time") pick = tool; } },
+    async () => ({ status: "booked", invitationSent: false, invitationUpdated: row.invitationUpdated }));
+  assert.equal(/no invitation will follow/i.test(JSON.stringify((await pick.execute("pick", {})).content)), row.expected);
 });
 
 test("host call bindings isolate overlapping runs in the same session and serialize their actions", async () => {
@@ -163,12 +166,4 @@ test("a delivered holding reply cannot revive an earlier scheduling final", asyn
   assert.equal(reply.silent, true);
   assert.equal(reply.schedulingResult, undefined);
   turns.end({}, turn);
-});
-
-test("an invitation update is never described as no invitation following", async () => {
-  let pick: any;
-  registerGuestTools({ registerTool(factory: any) { const tool = factory({}); if (tool.name === "meetly_pick_time") pick = tool; } },
-    async () => ({ status: "booked", invitationSent: false, invitationUpdated: true }));
-  const result = await pick.execute("move", { start: "2026-10-06T10:00:00Z" });
-  assert.doesNotMatch(result.content.map((item: { text: string }) => item.text).join("\n"), /no invitation will follow/);
 });
