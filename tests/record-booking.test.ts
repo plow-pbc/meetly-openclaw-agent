@@ -12,6 +12,7 @@ const T0 = Date.parse("2026-09-28T12:00:00Z");
 const ACCOUNT = "owner@example.com";
 const offer = { start: "2026-10-10T04:00:00-03:00", end: "2026-10-10T04:30:00-03:00", holdId: "evt123abc", account: ACCOUNT };
 const input = (over: Record<string, unknown> = {}) => ({
+  travel: { beforeMin: 0, afterMin: 0 },
   origin: "inbound", handle: "+15551234567", topic: "coffee", durationMin: 30, offered: [offer], chatUid: "c1", ...over,
 }) as NewRequest;
 const meetEvent = (): EventInfo => parseEvent(fixture("event-meet"));

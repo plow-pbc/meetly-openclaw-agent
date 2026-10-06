@@ -21,7 +21,7 @@ function fixture(t: TestContext, chatUid?: string) {
   const offered = [{ start, end, account, holdId: "hold-one" }, { start: "2026-10-06T10:00:00Z", end: "2026-10-06T10:30:00Z", account, holdId: "hold-two" }];
   const input = { travel: { beforeMin: 0, afterMin: 0 }, origin: "owner" as const, handle: "+15551234567", name: "Guest", chatUid, topic: "Lunch", durationMin: 30, offered };
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, input, now - 72 * 3_600_000, "r_one"));
-  writeJson(join(home, "config.json"), { ...DEFAULTS, travelBase: "Office", defaultAccount: account, timezone: "UTC", ownerName: "Alex", setupDoneAt: new Date(now).toISOString(), calendars: [{account, id: account}] });
+  writeJson(join(home, "config.json"), { ...DEFAULTS, defaultAccount: account, timezone: "UTC", ownerName: "Alex", setupDoneAt: new Date(now).toISOString(), calendars: [{account, id: account}] });
   const { events, calls, command } = fakeCalendar(offered.map(o => calendarEvent(o.holdId, o.start, o.end)));
   const path = join(home, "ledger.json");
   const read = () => readJson<Ledger>(path, { requests: [] }).requests[0]!;
@@ -1073,7 +1073,7 @@ test("travel only creates private busy children on booking, then moves, resizes 
     assert.ok(command.includes("meetlyRequest=r_one"));
     assert.ok(!command.includes("--attendees"));
   }
-  await calendarAction("r_one", { action: "offer", request: { ...f.offer, offered: [{ start: "2026-10-05T10:30:00Z", end: "2026-10-05T11:00:00Z", account }] } }, f.options);
+  await calendarAction("r_one", { action: "offer", request: { ...f.offer, travel, offered: [{ start: "2026-10-05T10:30:00Z", end: "2026-10-05T11:00:00Z", account }] } }, f.options);
   assert.deepEqual(f.read().travelEvents, children, "replacement holds keep booked travel");
   await calendarAction("r_one", { action: "book", start: "2026-10-05T10:30:00Z" }, f.options);
   assert.ok(children.every(c => f.events.get(c.holdId)!.status === "cancelled"));
@@ -1191,15 +1191,6 @@ test("travel commit failure resumes without recreating children; replacement exp
   assert.deepEqual(f.read().travelEvents, children);
   assert.equal(f.read().status, "booked");
   assert.ok(children.every(c => f.events.get(c.holdId)!.status === "confirmed"));
-});
-
-test("travel preparation rejects a missing owner base before writes", async t => {
-  const f = fixture(t);
-  const cfg = readJson<any>(join(f.home, "config.json"), {});
-  delete cfg.travelBase;
-  writeJson(join(f.home, "config.json"), cfg);
-  await assert.rejects(calendarAction("r_one", {action: "offer", request: {...f.offer, format: "in_person", travel}}, f.options), /owner.*base/i);
-  assert.equal(f.calls.length, 0);
 });
 
 test("resizing a booking records duration and a later move retains it", async t => {

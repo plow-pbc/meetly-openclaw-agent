@@ -1,4 +1,3 @@
-import { TravelBaseRequired } from "./travel.ts";
 import { fetchBusy } from "./busy.ts";
 import { offerRequest, type OfferInput } from "./calendar.ts";
 import { lookupContact } from "./contact.ts";
@@ -115,7 +114,6 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
       origin: "owner-group", chatUid: chat, askDetails: false });
     return { ...view(request, config), preferencesUnavailable };
   } catch (error) {
-    if (error instanceof TravelBaseRequired) return { error: "Provide your travel base in your private DM before offering in-person times.", code: "TRAVEL_BASE_REQUIRED" };
     return { error: "The scheduling action could not be completed. Check the request before trying again." };
   }
 }

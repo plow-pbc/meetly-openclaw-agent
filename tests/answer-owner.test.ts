@@ -248,13 +248,13 @@ for (const inGroup of [false, true]) test(`exhausted-search approval waits for h
   assert.deepEqual(f.read().requests[0]!.pendingOwner, pendingOwner);
   const cal = fakeCalendar([]);
   const constraints = { from: "2026-10-07", to: "2026-10-07", after: "10:00", before: "10:30" };
-  const search = findSlots({ ...constraints, now: Date.parse("2026-10-03T08:00:00Z"), busy: [],
+  const search = findSlots({ travel: request.travel, ...constraints, now: Date.parse("2026-10-03T08:00:00Z"), busy: [],
     config: { ...DEFAULTS, ownerName: "Patrick", defaultAccount: "owner@example.com", timezone: "UTC", calendars: [{ account: "owner@example.com", id: "primary" }] },
     coverage: { from: "2026-10-07T00:00:00Z", to: "2026-10-08T00:00:00Z" },
     durationMin: request.durationMin, exclude: pendingOwner.alternatives.previousStarts, locale: "en-US" });
   assert.equal(search.slots.length, 1);
   const offered = search.slots.map(slot => ({ start: slot.start, end: slot.end, account: "owner@example.com" }));
-  await calendarAction("mia", { action: "offer", request: { origin: request.origin, handle: request.handle,
+  await calendarAction("mia", { action: "offer", request: { travel: { beforeMin: 0, afterMin: 0 }, origin: request.origin, handle: request.handle,
     topic: request.topic, durationMin: request.durationMin, chatUid: request.chatUid, constraints, offered } },
     { command: cal.command, now: () => Date.parse("2026-10-03T08:00:00Z") });
   const result = await answerOwner(context, { ...args, text: "Wednesday at 10 AM UTC is held. Does that work?" }, send);

@@ -16,7 +16,7 @@ const HOUR = 3_600_000, T0 = Date.parse("2026-10-05T08:00:00Z");
 const iso = (time: number) => new Date(time).toISOString();
 const empty = (): Ledger => ({ requests: [] });
 const offer = { start: "2026-10-08T12:00:00Z", end: "2026-10-08T12:30:00Z", account: "owner@example.com" };
-const input = { origin: "owner" as const, handle: "+15551234567", name: "Alex", chatUid: "Chat-A", topic: "Lunch", durationMin: 30, offered: [offer] };
+const input = { travel: { beforeMin: 0, afterMin: 0 }, origin: "owner" as const, handle: "+15551234567", name: "Alex", chatUid: "Chat-A", topic: "Lunch", durationMin: 30, offered: [offer] };
 const offered = () => addRequest(empty(), input, T0, "offer");
 const request = (ledger: Ledger, id = "offer") => ledger.requests.find(r => r.id === id)!;
 test("delivery metadata preserves a scheduling snapshot while scheduling edits invalidate it", () => {
