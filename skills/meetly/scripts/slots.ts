@@ -9,10 +9,10 @@ import { travelRange, type TravelInput } from "./travel.ts";
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MEAL_DEFAULTS, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
-import { allowsOverlap, covers, uniqueEvents, type Coverage, type EventRef, type Busy } from "./busy.ts";
-import { requestEvents, intersectConstraints, meetingDuration, requireDuration, type Ledger, type Meal } from "./ledger.ts";
+import { allowsOverlap, covers, fetchBusy, uniqueEvents, type Coverage, type EventRef, type Busy } from "./busy.ts";
+import { requestEvents, intersectConstraints, meetingDuration, requireDuration, sameRequest, updateRequest, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
-import { readJson } from "./store.ts";
+import { readJson, updateJson } from "./store.ts";
 import { addDays, DAYS, localIso, nextWeek, parseStart, wallParts, zonedToUtc, type Day } from "./time.ts";
 
 export type Slot = { start: string; end: string; dayOfWeek: Day; label: string };
@@ -128,6 +128,29 @@ export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}
     result = findSlots(fallback);
   }
   return { ...result, preferencesUnavailable };
+}
+
+function unpinBusyStart(constraints: Constraints, start: string, timezone: string): Constraints {
+  const local = localIso(Date.parse(start), timezone), date = local.slice(0, 10);
+  if (constraints.startTime !== local.slice(11, 16) || (constraints.from && date < constraints.from) || (constraints.to && date > constraints.to)) return constraints;
+  const { startTime: _busy, ...rest } = constraints;
+  return rest;
+}
+
+async function nearbyAlternatives(q: SlotQuery, start: string, own: EventRef[]) {
+  const date = localIso(Date.parse(start), q.config.timezone).slice(0, 10), from = shiftDate(date, -2), to = shiftDate(date, 2);
+  const conditions = unpinBusyStart(resolveSearchConstraints(q, undefined, q.now, q.config.timezone), start, q.config.timezone);
+  const query: SlotQuery = { ...conditions, now: q.now, config: q.config, durationMin: q.durationMin, meal: q.meal,
+    format: q.format, travel: q.travel, locale: q.locale, count: q.count,
+    from: conditions.from && conditions.from > from ? conditions.from : from,
+    to: conditions.to && conditions.to < to ? conditions.to : to,
+    near: start, exclude: [...(q.exclude ?? []), start], busy: q.busy, coverage: q.coverage, unknownAfter: q.unknownAfter };
+  if (query.from! > query.to!) return { ...findSlots(query), degraded: [] };
+  const needed = searchCoverage(query);
+  const data = !covers(q.coverage, needed) || (q.unknownAfter !== undefined && Date.parse(q.unknownAfter) < Date.parse(needed.to))
+    ? await fetchBusy(q.config, needed) : { busy: q.busy, coverage: q.coverage, unknownAfter: q.unknownAfter, degraded: [] };
+  const result = findSlots({ ...query, ...data, busy: data.busy.filter(b => !own.some(ref => ref.account === b.account && ref.id === b.id)) });
+  return { ...result, slots: data.degraded.length || result.incomplete ? [] : result.slots, degraded: data.degraded };
 }
 
 export function findSlots(q: SlotQuery): SlotResult {
@@ -264,7 +287,7 @@ function date(raw: string, flag: string): string {
 }
 
 if (isMain(import.meta.url)) {
-  run(() => {
+  run(async () => {
     const { values } = parseArgs({
       options: {
         in: { type: "string" },
@@ -357,8 +380,19 @@ if (isMain(import.meta.url)) {
       if (request?.status === "booked" && request.bookedReplacement && request.replacement
         && request.offered.some(slot => Date.parse(slot.start) === Date.parse(start))) Object.assign(q, request.replacement);
       const result = checkTime({ ...q, start });
-      const next = result.reason === "unknown" ? { read: "Fetch busy.ts --fetch --from ISO --to ISO covering the meeting and all travel, then check again. Unread time is not free. Never use a calendar write to test availability." } : undefined;
-      return { ...result, degraded, ...(next ? { next } : {}) };
+      const busy = result.reason === "busy" && !degraded.length;
+      const resolvedConstraints = busy ? unpinBusyStart(resolveSearchConstraints(q, undefined, now, config.timezone), result.slot.start, config.timezone) : undefined;
+      const conditions = busy && request?.constraints ? unpinBusyStart(request.constraints, result.slot.start, config.timezone) : request?.constraints;
+      if (request && conditions !== request.constraints) updateJson<Ledger>(file("ledger.json"), { requests: [] }, latest => {
+        if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed; check its time again");
+        return updateRequest(latest, request.id, { constraints: conditions }, now);
+      });
+      const nearby = busy ? await nearbyAlternatives(q, result.slot.start,
+        request ? requestEvents(request).map(o => ({ account: o.account, id: o.holdId })) : []) : undefined;
+      const next = busy ? { reply: "Tell the owner the requested time is busy and present the returned alternatives in their ranked order in this same reply. Save resolvedConstraints on this request; do not pin the busy start or ask permission to search. If degraded or alternativesIncomplete is present, report incomplete calendar coverage instead of claiming no times exist." }
+        : result.reason === "unknown" ? { read: "Fetch busy.ts --fetch --from ISO --to ISO covering the meeting and all travel, then check again. Unread time is not free. Never use a calendar write to test availability." } : undefined;
+      return { ...result, ...(busy ? { resolvedConstraints } : {}), degraded: [...degraded, ...(nearby?.degraded ?? [])],
+        ...(nearby ? { alternatives: nearby.slots, ...(nearby.incomplete ? { alternativesIncomplete: nearby.incomplete } : {}) } : {}), ...(next ? { next } : {}) };
     }
     return { ...findSlots(q), degraded };
   });

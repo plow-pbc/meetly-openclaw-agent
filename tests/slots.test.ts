@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import type { Config } from "../skills/meetly/scripts/config.ts";
 import { checkTime, findSlots, resolveSearchConstraints, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
-import { writeJson } from "../skills/meetly/scripts/store.ts";
+import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { addRequest } from "../skills/meetly/scripts/ledger.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
@@ -25,6 +25,67 @@ const coverage = { from: "2026-09-28T00:00:00Z", to: "2026-11-10T00:00:00Z" };
 const q = (over: Partial<SlotQuery> = {}): SlotQuery => ({ travel: { beforeMin: 0, afterMin: 0 }, now: NOW, config: CONFIG, durationMin: 30, busy: [], coverage, ...over });
 const starts = (over: Partial<SlotQuery> = {}) => findSlots(q(over)).slots.map((s) => s.start);
 const labels = (over: Partial<SlotQuery> = {}) => findSlots(q(over)).slots.map((s) => s.label);
+
+test("Kelp busy exact time returns covered nearby alternatives without its saved start pin", () => {
+  const home = tmpHome(), busyFile = join(home, "busy.json"), callsFile = join(home, "reads.json"), hook = join(home, "bridge.mjs");
+  const now = Date.parse("2026-10-05T04:00:00-07:00"), start = "2026-10-29T14:00:00-07:00";
+  const config = { ...CONFIG, timezone: "America/Los_Angeles", horizonDays: 14 };
+  const busy = { start: "2026-10-29T19:45:00.000Z", end: "2026-10-29T21:30:00.000Z", id: "private-permits", account: "jean@example.com" };
+  writeJson(join(home, "config.json"), config);
+  writeJson(busyFile, { busy: [busy], coverage: { from: "2026-10-29T20:00:00Z", to: "2026-10-29T23:00:00Z" }, degraded: [] });
+  writeFileSync(hook, `
+    import { writeFileSync } from "node:fs";
+    Date.now = () => ${now};
+    globalThis.fetch = async (_url, init) => {
+      if (process.env.CALENDAR_FIXTURE_ERROR) return new Response("{}", { status: 503 });
+      const { argv } = JSON.parse(init.body).params.arguments;
+      writeFileSync(${JSON.stringify(callsFile)}, JSON.stringify(argv));
+      const listing = { events: [{ id: "private-permits", summary: "PRIVATE TITLE", start: { dateTime: ${JSON.stringify(busy.start)} }, end: { dateTime: ${JSON.stringify(busy.end)} } }] };
+      if (process.env.CALENDAR_FIXTURE_TRUNCATED) listing.truncated = { after: "2026-10-29T21:40:00Z" };
+      return Response.json({ result: { content: [{ type: "text", text: JSON.stringify({ exit_code: 0, output: JSON.stringify(listing) }) }] } });
+    };
+  `);
+  const env = { MEETLY_HOME: home, PLOW_MCP_BRIDGE_TOKEN: "fixture", NODE_OPTIONS: `--import=${hook}` };
+  const args = ["--in", busyFile, "--at", start, "--now", new Date(now).toISOString(), "--duration", "45", "--format", "meet", "--travel", '{"beforeMin":0,"afterMin":0}'];
+  const check = cli("slots.ts", args, env);
+  assert.equal(check.status, 0, check.stderr);
+  assert.equal(check.json.reason, "busy");
+  assert.deepEqual(check.json.alternatives?.map((s: { start: string }) => s.start), ["2026-10-29T14:30:00-07:00", "2026-10-29T15:00:00-07:00", "2026-10-29T15:30:00-07:00"]);
+  const reads = readJson<string[]>(callsFile, []), flag = (name: string) => reads[reads.indexOf(name) + 1]!;
+  assert.equal(reads[2], "events");
+  assert.equal(Date.parse(flag("--from")), Date.parse("2026-10-27T00:00:00-07:00"));
+  assert.equal(Date.parse(flag("--to")), Date.parse("2026-11-01T00:00:00-07:00"));
+  assert.doesNotMatch(check.stdout, /private-permits|PRIVATE TITLE|jean@example/);
+  assert.match(check.json.next.reply, /same reply/);
+
+  const input = { origin: "owner" as const, status: "asked" as const, offered: [], handle: "+15550116003", topic: "Kelp-farm permitting review", durationMin: 45,
+    format: "meet" as const, travel: { beforeMin: 0, afterMin: 0 }, constraints: { startTime: "14:00", before: "16:00" } };
+  const ledger = addRequest(addRequest({ requests: [] }, input, now, "kelp"), { ...input, handle: "+15550116004" }, now, "other");
+  writeJson(join(home, "ledger.json"), ledger);
+  const pinned = cli("slots.ts", [...args, "--request", "kelp"], env);
+  assert.equal(pinned.status, 0, pinned.stderr);
+  assert.equal(pinned.json.alternatives[0].start, "2026-10-29T14:30:00-07:00");
+  assert.ok(pinned.json.alternatives.every((s: { end: string }) => s.end.slice(11, 16) <= "16:00"));
+  assert.equal(pinned.json.resolvedConstraints.startTime, undefined);
+  assert.equal(pinned.json.resolvedConstraints.before, "16:00");
+  const saved = readJson<typeof ledger>(join(home, "ledger.json"), { requests: [] });
+  assert.deepEqual(saved.requests.find(r => r.id === "kelp")!.constraints, { before: "16:00" });
+  assert.equal(saved.requests.find(r => r.id === "other")!.constraints?.startTime, "14:00");
+  const free = cli("slots.ts", [...args.slice(0, 2), "--at", "2026-10-29T15:00:00-07:00", ...args.slice(4), "--request", "other"], env);
+  assert.equal(free.json.free, true, free.stderr);
+  assert.equal(readJson<typeof ledger>(join(home, "ledger.json"), { requests: [] }).requests.find(r => r.id === "other")!.constraints?.startTime, "14:00");
+  writeJson(join(home, "ledger.json"), { ...ledger, requests: ledger.requests.map(r => r.id === "other" ? { ...r, constraints: { startTime: "11:30" } } : r) });
+  const independent = cli("slots.ts", [...args, "--request", "other"], env);
+  assert.ok(independent.json.alternatives.length);
+  assert.ok(independent.json.alternatives.every((s: { start: string }) => s.start.slice(11, 16) === "11:30"));
+  assert.equal(independent.json.resolvedConstraints.startTime, "11:30");
+  const unavailable = cli("slots.ts", args, { ...env, CALENDAR_FIXTURE_ERROR: "1" });
+  assert.deepEqual(unavailable.json.alternatives, []);
+  assert.deepEqual(unavailable.json.degraded, ["jean@example.com"]);
+  const truncated = cli("slots.ts", args, { ...env, CALENDAR_FIXTURE_TRUNCATED: "1" });
+  assert.deepEqual(truncated.json.alternatives, []);
+  assert.equal(truncated.json.alternativesIncomplete.reason, "truncated-calendar");
+});
 
 test("no busy: spread over the first days, after the minimum notice", () => {
   const { slots, unknownAfter } = findSlots(q());
