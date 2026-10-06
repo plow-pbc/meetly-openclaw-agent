@@ -25,7 +25,7 @@ const offers = [
 ];
 const actions: [GuestAction, GuestArgs][] = [
   ["view", {}], ["pick", { start: offers[0]!.start }], ["other_times", { offer_week: false, after: "11:00" }],
-  ["format", { format: "meet" }], ["ask_owner", { question: "Which entrance?" }], ["decline", {}],
+  ["format", { format: "meet", travel: { beforeMin: 0, afterMin: 0 } }], ["ask_owner", { question: "Which entrance?" }], ["decline", {}],
 ];
 
 function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+15551234567||\nE|1|guest@example.net||", timezone = "UTC") {
@@ -47,7 +47,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     calendars: [{ account: "owner@example.com", id: "owner@example.com" }], setupDoneAt: new Date(now).toISOString() };
   writeJson(join(home, "config.json"), config);
   const ledger = addRequest({ requests: [] }, {
-    origin: "owner", handle: context.requesterSenderId, chatUid: context.nativeChannelId, name: "Guest", topic: "Lunch",
+    travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", handle: context.requesterSenderId, chatUid: context.nativeChannelId, name: "Guest", topic: "Lunch",
     durationMin: 30, constraints: { days: ["mon", "tue"], after: "10:00", before: "15:00", from: "2026-10-05", to: "2026-10-06" },
     allowOverlap: [{ account: "owner@example.com", id: "approved" }], offered: offers.map(o => ({ ...o })), format: "unknown", locale: "en-US",
   }, now, "request-one");
@@ -107,14 +107,15 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const outbound = async () => ({
     buildOutboundSessionContext: (args: object) => args,
     sendDurableMessageBatch: async (args: Record<string, any>) => {
-      assert.ok(read().requests[0]!.pendingOwner || read().requests[0]!.booked || read().requests[0]!.status === "dropped", "save the question or booking change before sending");
+      assert.ok(read().requests[0]!.pendingOwner || read().requests[0]!.booked || read().requests[0]!.status === "dropped", "save the question or scheduling change before sending");
       deliveries.push(args);
       if (delivery.fail) throw new Error("PRIVATE TRANSPORT ERROR");
       ownerLines.push(args.payloads[0].text);
       return { status: delivery.status };
     },
   });
-  const tools = new Map<string, { parameters: { properties: Record<string, { description: string }> }; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
+  const tools = new Map<string, { execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
+  // Baseline scenarios permit the full date horizon unless they explicitly keep the offer week.
   registerGuestTools({ runtime: { channel: {
     routing: { resolveAgentRoute(args: object) {
       assert.deepEqual(args, { cfg: context.config, channel: "plow", accountId: "chat", peer: { kind: "direct", id: "plow-owner" } });
@@ -246,7 +247,7 @@ test("decline requires the guest's clear refusal, never an other-times refusal",
   assert.match(descriptions.get("meetly_other_times")!, /Never repeat the guest\'s proposed terms, even in a refusal/);
   assert.doesNotMatch(descriptions.get("meetly_other_times")!, /explain which preferences/);
   assert.match(descriptions.get("meetly_other_times")!, /ask for a specific date and time if needed/);
-  assert.match(descriptions.get("meetly_ask_owner")!, /Never invent a question or turn your own uncertainty into a guest question/);
+  assert.match(descriptions.get("meetly_ask_owner")!, /never invent a question or turn your own uncertainty into a guest question/);
   assert.match(descriptions.get("meetly_ask_owner")!, /ownerAskSent is true/);
   assert.match(descriptions.get("meetly_ask_owner")!, /Do not paraphrase or add a guest-asks prefix/);
 });
@@ -255,6 +256,8 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
   const names: string[] = [];
   plugin.register({ on() {}, registerTool(factory: (ctx: object) => { name: string; parameters: { properties: object; required: string[] } }) {
     const tool = factory(context); names.push(tool.name);
+    if (["meetly_offer_owner_group", "meetly_offer_owner_dm"].includes(tool.name))
+      assert.ok(tool.parameters.required.includes("travel"), tool.name);
     if (tool.name === "meetly_ask_owner") {
       assert.deepEqual(Object.keys(tool.parameters.properties), ["question"]);
       assert.deepEqual(tool.parameters.required, ["question"]);
@@ -412,12 +415,12 @@ test("an outside-hours refusal can proceed to owner approval without dropping or
 
 test("format before and after booking updates the event and records only the backend Meet link", async t => {
   const f = fixture(t);
-  await guestAction(context, "format", { format: "in_person", location: "Library" });
+  await guestAction(context, "format", { format: "in_person", travel: { beforeMin: 15, afterMin: 15 }, location: "Library" });
   assert.equal(f.commands.length, 0); assert.equal(f.request().location, "Library");
   await guestAction(context, "pick", { start: offers[0]!.start });
   assert.equal(f.events.get("hold-one")!.location, "Library");
   f.commands.length = 0;
-  const result = await guestAction(context, "format", { format: "meet" });
+  const result = await guestAction(context, "format", { format: "meet", travel: { beforeMin: 0, afterMin: 0 } });
   assert.equal(f.request().format, "meet"); assert.equal(f.request().meetUrl, "https://meet.google.com/abc-defg-hij");
   const writes = f.commands.filter(c => c[2] === "update");
   assert.equal(writes.length, 1);
@@ -465,7 +468,7 @@ test("an unlinked replacement cannot be claimed from a closed group", async t =>
   const f = fixture(t);
   delete f.ledger.requests[0]!.chatUid;
   f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "old", status: "dropped", chatUid: context.nativeChannelId }); f.save(f.ledger);
-  const result = await guestAction({ ...context, nativeChannelId: undefined, deliveryContext: { to: `plow:${context.nativeChannelId}` } }, "format", { format: "phone" });
+  const result = await guestAction({ ...context, nativeChannelId: undefined, deliveryContext: { to: `plow:${context.nativeChannelId}` } }, "format", { format: "phone", travel: { beforeMin: 0, afterMin: 0 } });
   assert.equal((result as { status: string }).status, "dropped");
   assert.deepEqual(f.read(), f.ledger);
   assert.deepEqual(f.commands, []);
@@ -535,7 +538,7 @@ test("a failed booked-format write leaves the stored format and booking intact",
   const f = fixture(t);
   await guestAction(context, "pick", { start: offers[0]!.start });
   const before = f.read(); f.fail.add("update");
-  const result = await guestAction(context, "format", { format: "meet" });
+  const result = await guestAction(context, "format", { format: "meet", travel: { beforeMin: 0, afterMin: 0 } });
   assert.ok("error" in result); assert.deepEqual(f.read(), before);
 });
 
@@ -556,7 +559,7 @@ test("replacement times overlap only the request's old holds until the new offer
 
 test("guest location text cannot become a Latch conflict-override flag", async t => {
   const f = fixture(t);
-  await guestAction(context, "format", { format: "in_person", location: "--confirm-conflict" });
+  await guestAction(context, "format", { format: "in_person", travel: { beforeMin: 15, afterMin: 15 }, location: "--confirm-conflict" });
   const result = await guestAction(context, "pick", { start: offers[0]!.start });
   assert.ok(!("error" in result));
   const command = f.commands.find(c => c[2] === "update")!;
@@ -624,7 +627,7 @@ test('an offered format change waits for a concurrent booking and cannot change 
   };
   const booking = guestAction(context, 'pick', { start: offers[0]!.start });
   await waiting;
-  const changing = guestAction(context, 'format', { format: 'meet' });
+  const changing = guestAction(context, 'format', { format: 'meet', travel: { beforeMin: 0, afterMin: 0 } });
   release();
   assert.ok(!('error' in await booking));
   assert.ok('error' in await changing);
@@ -730,7 +733,7 @@ test('an open owner question survives booking and format commits through the sea
   assert.deepEqual(f.request().pendingOwner, pending);
   const revision = f.request().calendarRevision;
   assert.ok(revision);
-  assert.ok(!('error' in await f.act(context, 'format', { format: 'meet' })));
+  assert.ok(!('error' in await f.act(context, 'format', { format: 'meet', travel: { beforeMin: 0, afterMin: 0 } })));
   assert.notEqual(f.request().calendarRevision, revision);
   assert.deepEqual(f.request().pendingOwner, pending);
   assert.equal(f.deliveries.length, 1);
@@ -748,7 +751,7 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
   assert.equal(tool.parameters.properties.chatUid, undefined);
   assert.equal(tool.parameters.properties.handle, undefined);
   assert.equal(tool.parameters.properties.name.type, "string");
-  const args = { introduction: "needed", handle: context.requesterSenderId, topic: "Planning", name: "", format: "", location: "", locale: "", durationMin: 30, offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
+  const args = { travel: { beforeMin: 0, afterMin: 0 }, introduction: "needed", handle: context.requesterSenderId, topic: "Planning", name: "", format: "", location: "", locale: "", durationMin: 30, offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
   const result = await tool.execute("offer", args);
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.request().chatUid, "cht_MiXeD");
@@ -788,7 +791,7 @@ test("owner-group computes slots from saved policy and ignores guest-injected of
     { start: "2026-10-03T10:00:00Z", end: "2026-10-03T10:30:00Z" },
     { start: "2026-10-05T20:00:00Z", end: "2026-10-05T23:00:00Z" },
   ];
-  const result = await tool.execute("offer", { introduction: "needed", topic: "Planning", durationMin: saved.durationMin, proposed: { days: ["sat"], after: "20:00" }, offered: injected });
+  const result = await tool.execute("offer", { travel: { beforeMin: 0, afterMin: 0 }, introduction: "needed", topic: "Planning", durationMin: saved.durationMin, proposed: { days: ["sat"], after: "20:00" }, offered: injected });
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(result.details.preferencesUnavailable, true);
   assert.ok(f.request().offered.length > 0);
@@ -801,7 +804,7 @@ test("owner-group computes slots from saved policy and ignores guest-injected of
   assert.ok(!tool.parameters.required.includes("offered"));
   const before = f.read(), creates = f.commands.filter(c => c[2] === "create").length;
   f.fail.add("events");
-  assert.equal((await tool.execute("retry", { topic: "Planning", offered: injected })).isError, true);
+  assert.equal((await tool.execute("retry", { travel: { beforeMin: 0, afterMin: 0 }, topic: "Planning", offered: injected })).isError, true);
   assert.deepEqual(f.read(), before);
   assert.equal(f.commands.filter(c => c[2] === "create").length, creates);
 });
@@ -830,7 +833,7 @@ test("owner-group ignores injected overlap permission before creating holds", as
   for (const [i, slot] of offers.entries()) f.events.set(`private-${i}`, { ...event(`private-${i}`, slot.start, slot.end), summary: "Weekly Claw" });
   let tool: any;
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
-  const result = await tool.execute("offer", { introduction: "needed", topic: "Lunch", durationMin: 30, allowOverlapTitles: ["Weekly Claw"],
+  const result = await tool.execute("offer", { travel: { beforeMin: 0, afterMin: 0 }, introduction: "needed", topic: "Lunch", durationMin: 30, allowOverlapTitles: ["Weekly Claw"],
     allowOverlap: [{ account: "owner@example.com", id: "private-0" }], offered: offers,
     constraints: { from: "2026-10-05", to: "2026-10-05", after: "10:00", before: "10:30" } });
   assert.equal(result.isError, true, JSON.stringify(result));
@@ -844,7 +847,7 @@ test("owner-group ignores injected overlap permission before creating holds", as
 test("owner DM offers still resolve named overlap permission", async t => {
   const f = fixture(t);
   f.save({ requests: [] });
-  const saved = cli("ledger.ts", ["save", "--json", JSON.stringify({ origin: "owner", status: "asked",
+  const saved = cli("ledger.ts", ["save", "--json", JSON.stringify({ travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", status: "asked",
     handle: context.requesterSenderId, topic: "Lunch", durationMin: 45, offered: [] })], { MEETLY_HOME: f.home });
   assert.equal(saved.status, 0, saved.stderr);
   f.events.clear();
@@ -852,7 +855,7 @@ test("owner DM offers still resolve named overlap permission", async t => {
   f.events.set("private-unapproved", { ...event("private-unapproved", offers[1]!.start, offers[1]!.end), summary: "Weekly Claw extra" });
   let tool: any;
   registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
-  const result = await tool.execute("offer", { origin: "owner", handle: context.requesterSenderId, topic: "Lunch",
+  const result = await tool.execute("offer", { travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", handle: context.requesterSenderId, topic: "Lunch",
     allowOverlapTitles: ["Weekly Claw"], offered: offers.map(({ start }) => ({ start, end: new Date(Date.parse(start) + 45 * 60_000).toISOString() })) });
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(tool.parameters.properties.durationMin, undefined);
@@ -884,7 +887,7 @@ test("owner-group binds a same-handle unlinked asked request and the guest can b
   f.save(f.ledger);
   f.events.clear();
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { topic: asked.topic, durationMin: asked.durationMin, constraints: asked.constraints });
+    { travel: { beforeMin: 0, afterMin: 0 }, topic: asked.topic, durationMin: asked.durationMin, constraints: asked.constraints });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.read().requests.length, 1);
   assert.equal(f.request().id, asked.id);
@@ -942,7 +945,7 @@ test("a duration change's replacement topic reaches holds, booking titles and th
   f.save(f.ledger);
   const { origin, handle, name, chatUid, constraints, allowOverlap, format, locale } = f.request();
   await calendarAction("request-one", { action: "offer", request: {
-    origin, handle, name, chatUid, constraints, allowOverlap, format, locale, topic: "60-minute call", durationMin: 60,
+    travel: { beforeMin: 0, afterMin: 0 }, origin, handle, name, chatUid, constraints, allowOverlap, format, locale, topic: "60-minute call", durationMin: 60,
     offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T12:00:00Z", account: "owner@example.com" }],
   } });
   f.ledger.requests[0]!.durationMin = 60;
@@ -976,7 +979,7 @@ test("owner-group lunch uses the selected duration within the meal window", asyn
   f.save({ requests: [] });
   f.events.clear();
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { topic: "Lunch", meal: "lunch", durationMin: 60 });
+    { travel: { beforeMin: 0, afterMin: 0 }, topic: "Lunch", meal: "lunch", durationMin: 60 });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().meal, "lunch");
   assert.ok(f.request().offered.every(o => o.start.slice(11, 16) >= "11:30" && o.end.slice(11, 16) <= "13:30"));
@@ -1006,7 +1009,7 @@ for (const [display, contact, expected] of [
   f.events.clear();
   f.participants[2]!.display_name = display;
   if (contact === "unavailable") f.fail.add("-c");
-  const args = { handle: "+15557654321", topic: "Lunch", durationMin: 30, offered: offers };
+  const args = { travel: { beforeMin: 0, afterMin: 0 }, handle: "+15557654321", topic: "Lunch", durationMin: 30, offered: offers };
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, args);
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().handle, context.requesterSenderId);
@@ -1022,7 +1025,7 @@ test("owner group offers refuse missing or ambiguous guest participants before c
   f.save({ requests: [] });
   const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
   f.events.clear();
-  const args = { handle: context.requesterSenderId, name: "Alder", topic: "Lunch", durationMin: 30, offered: offers };
+  const args = { travel: { beforeMin: 0, afterMin: 0 }, handle: context.requesterSenderId, name: "Alder", topic: "Lunch", durationMin: 30, offered: offers };
   f.participants.push({ ...f.participants[2]!, provider_key: "+15550108502" });
   assert.ok("error" in await offerOwnerGroup(ctx, args));
   f.participants.pop();
@@ -1038,7 +1041,7 @@ test("owner group participant lookup failure stops before creating holds", async
   f.save({ requests: [] });
   t.mock.method(globalThis, "fetch", async () => new Response("PRIVATE API ERROR", { status: 503 }));
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { topic: "Lunch", durationMin: 30 });
+    { travel: { beforeMin: 0, afterMin: 0 }, topic: "Lunch", durationMin: 30 });
   assert.ok("error" in result);
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
   assert.deepEqual(f.read().requests, []);
@@ -1061,7 +1064,7 @@ test("owner-group records model duration and saves the owner's guest name for DM
   f.participants[2]!.display_name = "unnamed member";
   let tool: any;
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
-  const result = await tool.execute("offer", { introduction: "needed", topic: "call", name: "Bo", durationMin: 45 });
+  const result = await tool.execute("offer", { travel: { beforeMin: 0, afterMin: 0 }, introduction: "needed", topic: "call", name: "Bo", durationMin: 45 });
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.request().durationMin, 45);
   assert.equal(tool.parameters.properties.durationMin.type, "integer");
@@ -1110,7 +1113,7 @@ test(`owner-group preserves explicit ${meal} duration`, async t => {
   f.save({ requests: [] }); f.events.clear();
   let tool: any;
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
-  const result = await tool.execute("offer", { introduction: "needed", topic: meal, meal, durationMin: duration });
+  const result = await tool.execute("offer", { travel: { beforeMin: 0, afterMin: 0 }, introduction: "needed", topic: meal, meal, durationMin: duration });
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.request().durationMin, duration);
   assert.ok(f.request().offered.every(slot => Date.parse(slot.end) - Date.parse(slot.start) === duration * 60_000));
@@ -1119,10 +1122,10 @@ test(`owner-group preserves explicit ${meal} duration`, async t => {
 test("DM offers save the owner's guest name and keep it through a replacement", async t => {
   const f = fixture(t, "");
   f.save({ requests: [] }); f.events.clear();
-  const { request } = await offerRequest({ origin: "owner", handle: context.requesterSenderId, name: "Dee", topic: "coffee", meal: "coffee",
+  const { request } = await offerRequest({ travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", handle: context.requesterSenderId, name: "Dee", topic: "coffee", meal: "coffee",
     offered: offers.map(({ start, end }) => ({ start, end })) });
   assert.equal(f.request().name, "Dee");
-  const next = await offerRequest({ origin: "owner", handle: request.handle, topic: "coffee", meal: "coffee",
+  const next = await offerRequest({ travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", handle: request.handle, topic: "coffee", meal: "coffee",
     offered: [{ start: "2026-10-07T10:00:00Z", end: "2026-10-07T10:30:00Z" }] });
   assert.equal(next.request.name, "Dee");
   assert.equal(next.request.id, request.id);
@@ -1133,7 +1136,7 @@ test("owner-group busy requested times rank nearby alternatives while retaining 
   const f = fixture(t);
   f.save({ requests: [] }); f.events.clear();
   f.events.set("busy", event("busy", "2026-10-13T12:00:00Z", "2026-10-13T13:00:00Z"));
-  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { travel: { beforeMin: 0, afterMin: 0 },
     topic: "call", durationMin: 30, constraints: { days: ["tue"], from: "2026-10-06", to: "2026-10-13", after: "11:00", before: "15:00" },
     proposed: { from: "2026-10-13", to: "2026-10-13", after: "12:00", before: "12:30" },
   });
@@ -1180,7 +1183,7 @@ test("owner-group duration steering atomically replaces holds in the same chat",
   const f = fixture(t);
   f.save({ requests: [] }); f.events.clear();
   const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
-  assert.ok(!("error" in await offerOwnerGroup(ctx, { topic: "30-minute call", durationMin: 30 })));
+  assert.ok(!("error" in await offerOwnerGroup(ctx, { travel: { beforeMin: 0, afterMin: 0 }, topic: "30-minute call", durationMin: 30 })));
   const before = f.request();
   await calendarAction(before.id, { action: "duration", durationMin: 60, topic: "60-minute call",
     offered: before.offered.map(({ start }) => ({ start, end: new Date(Date.parse(start) + 60 * 60_000).toISOString() })) });
@@ -1217,7 +1220,7 @@ for (const failure of ["interval", "argument"]) test(`owner DM duration rejects 
   const before = f.read();
   let tool: any;
   registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
-  const result = await tool.execute("offer", { origin: "owner", handle: context.requesterSenderId, topic: "Call",
+  const result = await tool.execute("offer", { travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", handle: context.requesterSenderId, topic: "Call",
     offered: offers.map(({ start }) => ({ start, end: new Date(Date.parse(start) + (failure === "interval" ? 30 : 45) * 60_000).toISOString() })),
     ...(failure === "argument" ? { durationMin: 45 } : {}),
   });
@@ -1232,7 +1235,7 @@ test("owner-group requires the model to choose a duration before creating a requ
   f.save({ requests: [] }); f.events.clear();
   let tool: any;
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
-  const result = await tool.execute("offer", { introduction: "needed", topic: "Call" });
+  const result = await tool.execute("offer", { travel: { beforeMin: 0, afterMin: 0 }, introduction: "needed", topic: "Call" });
   assert.equal(result.isError, true, JSON.stringify(result));
   assert.match(result.content[0].text, /[Ss]et durationMin/);
   assert.deepEqual(f.read(), { requests: [] });
@@ -1247,7 +1250,7 @@ for (const replacement of [undefined, { days: ["wed"], from: "2026-10-07", to: "
     saved.location = "Library";
     f.save(f.ledger);
     const oldHolds = saved.offered.map(o => o.holdId!);
-    const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+    const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { travel: { beforeMin: 0, afterMin: 0 },
       topic: "Planning", durationMin: saved.durationMin, ...(replacement === undefined ? {} : { constraints: replacement }),
     });
     assert.ok(!("error" in result), JSON.stringify(result));
@@ -1300,7 +1303,7 @@ for (const caller of ["guest", "owner"] as const) test(`${caller} preserves safe
   });
   const result = caller === "guest"
     ? await f.act(context, "other_times", { offer_week: false })
-    : await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { topic: "Call", durationMin: 30 });
+    : await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { travel: { beforeMin: 0, afterMin: 0 }, topic: "Call", durationMin: 30 });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.ok(f.request().offered.length > 0);
   assert.ok(f.request().offered.every(o => Date.parse(o.end) <= Date.parse(cutoff)));
@@ -1319,7 +1322,7 @@ test("guest alternatives search the owner's saved distant date", async t => {
 for (const field of ["constraints", "proposed"] as const) test(`owner-group reads and holds explicit distant ${field}`, async t => {
   const f = fixture(t);
   f.save({ requests: [] }); f.events.clear();
-  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { travel: { beforeMin: 0, afterMin: 0 },
     topic: "Planning", durationMin: 30, format: "meet",
     [field]: { from: "2026-10-29", to: "2026-10-29" },
   });
@@ -1334,7 +1337,7 @@ test("owner-group resolves and persists next week from Sunday in the owner's zon
   const f = fixture(t, undefined, "America/Los_Angeles");
   f.save({ requests: [] }); f.events.clear();
   t.mock.method(Date, "now", () => Date.parse("2026-10-05T02:12:33Z"));
-  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { travel: { beforeMin: 0, afterMin: 0 },
     topic: "Planning", durationMin: 30, format: "meet",
     week: "next", constraints: { days: ["mon", "tue", "wed"] },
   });
@@ -1349,7 +1352,7 @@ test("guests can book an owner-selected start that crosses midnight", async t =>
   const f = fixture(t);
   f.save({ requests: [] }); f.events.clear();
   const offered = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { topic: "Late call", durationMin: 60, constraints: { days: ["mon"], startTime: "23:30" } });
+    { travel: { beforeMin: 0, afterMin: 0 }, topic: "Late call", durationMin: 60, constraints: { days: ["mon"], startTime: "23:30" } });
   assert.ok(!("error" in offered), JSON.stringify(offered));
   const slot = f.request().offered[0]!;
   assert.equal(slot.start, "2026-10-05T23:30:00+00:00");
@@ -1391,7 +1394,7 @@ for (const constraints of [undefined, {}, { days: ["wed"], after: "14:00" }]) {
     f.ledger.requests[0]!.constraints = saved;
     f.save(f.ledger);
     const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-      { topic: "Call", durationMin: 30, week: "next", ...(constraints === undefined ? {} : { constraints }) });
+      { travel: { beforeMin: 0, afterMin: 0 }, topic: "Call", durationMin: 30, week: "next", ...(constraints === undefined ? {} : { constraints }) });
     assert.ok(!("error" in result), JSON.stringify(result));
     const { from, to, ...policy } = saved;
     const expected = { ...(constraints ?? policy), from: "2026-10-05", to: "2026-10-11" };
@@ -1456,7 +1459,7 @@ for (const existing of [false, true]) test(`malformed owner locale is rejected b
   const f = fixture(t);
   if (!existing) { f.save({ requests: [] }); f.events.clear(); }
   const before = f.read();
-  await assert.rejects(offerRequest({ origin: "owner", handle: context.requesterSenderId,
+  await assert.rejects(offerRequest({ travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", handle: context.requesterSenderId,
     topic: "Call", durationMin: 30, locale: "en_US",
     offered: offers.map(({ start, end }) => ({ start, end })),
   }), /language tag/i);
@@ -1480,7 +1483,7 @@ test("owner-group re-offers respect saved excluded weekdays", async t => {
   f.ledger.requests[0]!.excludedDays = ["mon"];
   f.save(f.ledger);
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { topic: "Call", durationMin: 30 });
+    { travel: { beforeMin: 0, afterMin: 0 }, topic: "Call", durationMin: 30 });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-06")), JSON.stringify(f.request().offered));
 });
@@ -1505,7 +1508,7 @@ test("owner DM meal schema carries a new lunch through the calendar writer", asy
   let tool: any;
   registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
   assert.deepEqual(tool.parameters.properties.meal?.enum, ["lunch", "dinner", "coffee"]);
-  const result = await tool.execute("call", { origin: "owner", handle: context.requesterSenderId, topic: "Lunch", meal: "lunch",
+  const result = await tool.execute("call", { origin: "owner", handle: context.requesterSenderId, topic: "Lunch", meal: "lunch", travel: { beforeMin: 15, afterMin: 15 },
     offered: [{ start: "2026-10-05T12:00:00Z", end: "2026-10-05T13:00:00Z" }] });
   assert.equal(result.isError, false, JSON.stringify(result.details));
   assert.equal(f.request().durationMin, 60);
@@ -1710,7 +1713,7 @@ test("booking in person carries the no-more-details instruction after the opener
   const first = await f.tools.get("meetly_view_request")!.execute("view", {});
   assert.equal(JSON.parse(first.content[0]!.text).askDetails, true);
   assert.doesNotMatch(first.content.slice(1).map(c => c.text).join("\n"), /do not ask how or where/i);
-  await f.tools.get("meetly_set_format")!.execute("format", { format: "in_person" });
+  await f.tools.get("meetly_set_format")!.execute("format", { travel: { beforeMin: 0, afterMin: 0 }, format: "in_person" });
   const booked = await f.tools.get("meetly_pick_time")!.execute("pick", { start: offers[0]!.start });
   const details = JSON.parse(booked.content[0]!.text);
   assert.equal(details.askDetails, false);
@@ -1747,7 +1750,7 @@ test("owner DM overlap replacement stays on the selected booked request", async 
   let tool: any;
   registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
   const result = await tool.execute("replace", { requestId: original.id, origin: original.origin,
-    handle: original.handle, topic: original.topic,
+    travel: original.travel, handle: original.handle, topic: original.topic,
     allowOverlapTitles: ["Weekly Claw"], offered: [slot] });
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.read().requests.length, 1);
@@ -1833,7 +1836,7 @@ for (const existing of [true, false]) for (const delivery of ["sent", "unknown",
     }));
     const ask = async (id: string, name?: string) => {
       hooks.before_tool_call!({ toolName: "meetly_offer_owner_group" }, { ...turn, toolCallId: id });
-      return tool.execute(id, { introduction: "already_introduced", topic: "Coffee", durationMin: 30, name, proposed: { from: "2026-10-05", to: "2026-10-11" } });
+      return tool.execute(id, { travel: { beforeMin: 0, afterMin: 0 }, introduction: "already_introduced", topic: "Coffee", durationMin: 30, name, proposed: { from: "2026-10-05", to: "2026-10-11" } });
     };
     const [result] = await Promise.all([ask("offer"), ask("parallel-first")]);
     assert.equal(sent.length, 1);
@@ -1876,7 +1879,7 @@ test("an existing owner-group offer still respects a do-not-contact flag", async
   f.ledger.blockedHandles = [context.requesterSenderId];
   f.save(f.ledger);
   const before = f.read();
-  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { topic: "Lunch", durationMin: 30 });
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { travel: { beforeMin: 0, afterMin: 0 }, topic: "Lunch", durationMin: 30 });
   assert.equal("silent" in result && result.silent, true, JSON.stringify(result));
   assert.doesNotMatch(JSON.stringify(result), /do.?not.?contact|marked|blocked/i);
   const pending = f.request().pendingOwner;
@@ -1910,7 +1913,7 @@ test("the first email reply and CC booking carry thread delivery and details ins
   assert.ok(instructions.includes(JSON.stringify(f.ctx.nativeChannelId)));
   assert.match(instructions, /first reply.*CC/i);
   assert.match(instructions, /final.*private.*owner/i);
-  await f.emailTools.get("meetly_set_format")!.execute("format", { format: "in_person" });
+  await f.emailTools.get("meetly_set_format")!.execute("format", { format: "in_person", travel: { beforeMin: 15, afterMin: 15 } });
   const booked = await f.emailTools.get("meetly_pick_time")!.execute("pick", { start: offers[0]!.start });
   assert.equal(JSON.parse(booked.content[0]!.text).askDetails, false);
   assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /do not ask how or where to meet.*missing/i);
@@ -2013,11 +2016,94 @@ for (const action of ["view", "replace"] as const) test(`pre-email text requests
   } else {
     const request = f.ledger.requests[0]!;
     const { origin, handle, name, chatUid, topic, durationMin, constraints } = request;
-    const result = await offerRequest({ channel: "text", origin, handle, name, chatUid, topic, durationMin, constraints,
+    const result = await offerRequest({ travel: { beforeMin: 0, afterMin: 0 }, channel: "text", origin, handle, name, chatUid, topic, durationMin, constraints,
       offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z" }] });
     assert.equal(result.request.channel, "text");
     assert.equal(result.request.id, request.id);
   }
+});
+
+test("guest booking and place changes send travel only to the owner, and cannot overwrite their override", async t => {
+  const f = fixture(t);
+  const travel = { beforeMin: 25, afterMin: 20 };
+  assert.ok(!("error" in await f.act(context, "format", { format: "in_person", location: "Tartine", travel })));
+  const booked = await f.act(context, "pick", { start: offers[0]!.start });
+  assert.ok(!("error" in booked));
+  assert.match(f.ownerLines.at(-1)!, /25 min travel before and 20 min after.*Tartine/);
+  assert.doesNotMatch(JSON.stringify(booked), /beforeMin|afterMin|travelEvents|Held .*travel|owner@example/);
+  const before = f.read().requests[0]!;
+  assert.equal(before.travelEvents!.length, 2);
+  await calendarAction(before.id, { action: "travel", travel: { beforeMin: 45, afterMin: 45, override: true } });
+  const changed = await f.act(context, "format", { format: "in_person", location: "Cafe", travel: { beforeMin: 5, afterMin: 5, override: true } });
+  assert.ok(!("error" in changed));
+  assert.deepEqual(f.read().requests[0]!.travel, { beforeMin: 45, afterMin: 45, override: true });
+  assert.match(f.ownerLines.at(-1)!, /45 min travel before and 45 min after.*Cafe/);
+  assert.doesNotMatch(JSON.stringify(changed), /travel|beforeMin|afterMin|owner@example/);
+  const viewed = await f.act(context, "view");
+  assert.doesNotMatch(JSON.stringify(viewed), /travel|beforeMin|afterMin/);
+  const other = await f.act(context, "other_times", { offer_week: false, start: "2026-10-05T10:30:00Z" });
+  assert.ok(!("error" in other), JSON.stringify(other));
+  assert.equal(f.read().requests[0]!.offered[0]!.start, "2026-10-05T10:30:00+00:00");
+});
+
+test("an invalidated travel pick searches alternatives then exposes bounded exhaustion", async t => {
+  const f = fixture(t);
+  const ledger = f.read();
+  ledger.requests[0]!.travel = {beforeMin: 15, afterMin: 15};
+  f.save(ledger);
+  f.events.set("blocker", event("blocker", "2026-10-05T09:45:00Z", "2026-10-07T00:00:00Z"));
+  const picked = await guestAction(context, "pick", {start: offers[0]!.start}) as any;
+  assert.equal(picked.code, "TIME_UNAVAILABLE");
+  assert.equal(picked.recovery.action, "other_times");
+  const result = await guestAction(context, "other_times", { offer_week: false }) as any;
+  assert.equal(result.code, "NO_ALTERNATIVES");
+  assert.equal(result.conditions, undefined, "conditions remain private");
+  assert.equal(result.recovery.action, "wait");
+  assert.doesNotMatch(JSON.stringify(result), /blocker|owner@example/);
+  assert.equal(f.read().requests[0]!.status, "offered");
+});
+
+test("replacement search uses the newly estimated travel without changing its authorization snapshot", async t => {
+  const f = fixture(t);
+  const travel = {beforeMin: 40, afterMin: 25};
+  const result = await guestAction(context, "other_times", { offer_week: false, travel }) as any;
+  assert.ok(!result.error, JSON.stringify(result));
+  assert.ok(result.offered.length);
+  assert.deepEqual(f.request().travel, travel);
+});
+
+
+test("a guest pick cannot replace the owner's saved travel estimate", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.travel = { beforeMin: 20, afterMin: 20 };
+  f.ledger.requests[0]!.format = "in_person";
+  f.ledger.requests[0]!.location = "Tartine";
+  f.save(f.ledger);
+  const rejected = await f.act(context, "pick", { start: offers[0]!.start, travel: { beforeMin: 15, afterMin: 15 } });
+  assert.ok("error" in rejected);
+  assert.deepEqual(f.commands, [], "reject before calendar reads or writes");
+  const result = await f.act(context, "pick", { start: offers[0]!.start });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.deepEqual(f.request().travel, { beforeMin: 20, afterMin: 20 });
+  assert.match(f.ownerLines.at(-1)!, /20 min travel before and 20 min after/);
+  assert.doesNotMatch(JSON.stringify(result), /beforeMin|afterMin|20 min/);
+});
+
+test("owner-group can replace an exact start and explicitly clear it without losing the place", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] }); f.events.clear();
+  const ctx = { ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" };
+  const args = { travel: { beforeMin: 0, afterMin: 0 }, topic: "Call", durationMin: 30 };
+  const first = await offerOwnerGroup(ctx, { ...args, location: "Library", constraints: { startTime: "11:00" } });
+  assert.ok(!("error" in first), JSON.stringify(first));
+  const changed = await offerOwnerGroup(ctx, { ...args, constraints: { startTime: "14:00" } });
+  assert.ok(!("error" in changed), JSON.stringify(changed));
+  assert.equal(f.request().constraints?.startTime, "14:00");
+  assert.ok(f.request().offered.every(o => o.start.slice(11, 16) === "14:00"));
+  const cleared = await offerOwnerGroup(ctx, { ...args, constraints: {} });
+  assert.ok(!("error" in cleared), JSON.stringify(cleared));
+  assert.equal(f.request().constraints?.startTime, undefined);
+  assert.equal(f.request().location, "Library");
 });
 
 test("contact tools deny group and guest callers; private confirmation resumes the exact saved group request", async t => {
@@ -2025,7 +2111,7 @@ test("contact tools deny group and guest callers; private confirmation resumes t
   contactPreference({ handle: context.requesterSenderId, blocked: true });
   const owner = { ...context, senderIsOwner: true, requesterSenderId: "plow-owner", sessionKey: "agent:main:main" };
   const group = { ...owner, sessionKey: "agent:main:plow:group:chat-one" };
-  await offerOwnerGroup(group, { topic: "Coffee", durationMin: 30, constraints: { days: ["mon"], from: "2026-10-05", to: "2026-10-05" } }, async () => {});
+  await offerOwnerGroup(group, { travel: { beforeMin: 0, afterMin: 0 }, topic: "Coffee", durationMin: 30, constraints: { days: ["mon"], from: "2026-10-05", to: "2026-10-05" } }, async () => {});
   const saved = f.request();
   assert.ok(saved.pendingOwner && "contact" in saved.pendingOwner);
   const contact = saved.pendingOwner.contact;
@@ -2073,71 +2159,69 @@ test("unmarked booked offers cannot be viewed, picked or expired as replacements
   t.diagnostic(JSON.stringify({ view, pick }));
 });
 
-for (const start of ["thu", "Thursday", '{"weekday":"funday"}', { weekday: "Thursday" }])
-test(`invalid starts separate guest correction from weekday retry: ${JSON.stringify(start)}`, async t => {
+for (const booked of [false, true]) test(`decline notifies the owner for a legacy ${booked ? "booking" : "offer"} without travel`, async t => {
   const f = fixture(t);
-  f.ledger.requests[0]!.constraints = {};
-  f.save(f.ledger);
-  const before = f.request();
-  const tool = f.tools.get("meetly_other_times")!;
-  const rejected = JSON.parse((await tool.execute("invalid", { offer_week: true, start })).content[0]!.text);
-  assert.equal(rejected.code, "INVALID_START");
-  if (typeof start === "string") {
-    assert.equal(rejected.recovery.action, "reply");
-    assert.match(rejected.recovery.message, /correct.*date.*time/i);
-    assert.doesNotMatch(rejected.recovery.message, /nested weekday|retry/i);
-  } else {
-    assert.equal(rejected.recovery.action, "retry");
-    assert.match(rejected.error, /weekday.*mon, tue, wed, thu, fri, sat, sun/);
-    assert.match(rejected.error, /HH:MM/);
-    assert.match(rejected.error, /ISO/);
-  }
-  assert.deepEqual(f.request(), before);
-  assert.deepEqual(f.commands, []);
-  assert.deepEqual(f.ownerLines, []);
-  if (typeof start === "string") return;
-  const retried = JSON.parse((await tool.execute("retry", { offer_week: true, start: { weekday: "thu" } })).content[0]!.text);
-  assert.ok(retried.offered.length, JSON.stringify(retried));
-  assert.ok(retried.offered.every((slot: { start: string }) => slot.start.startsWith("2026-10-08")));
+  if (booked) await f.act(context, "pick", { start: offers[0]!.start });
+  const ledger = f.read();
+  delete (ledger.requests[0] as any).travel;
+  f.save(ledger);
+  const result = await f.act(context, "decline") as any;
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.equal(result.ownerNotified, true);
+  assert.equal(f.request().status, "dropped");
+  assert.match(f.ownerLines.at(-1)!, booked ? /cancelled/ : /declined/);
 });
 
-test("invalid-start tool guidance distinguishes dated errors from weekday arguments", () => {
-  let description = "";
-  registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
-    const tool = factory({}); if (tool.name === "meetly_other_times") description = tool.description;
-  } });
-  assert.match(description, /invalid weekday arguments/);
-  assert.match(description, /ask the guest to correct the explicit date\/time/);
-  assert.match(description, /Never substitute a weekday/);
-});
-
-test("ask-owner rejects over-length text without effects", async t => {
+for (const override of [false, true]) test(`booked replacement persists its travel estimate with owner override=${override}`, async t => {
   const f = fixture(t);
-  const before = f.request();
-  const tool = f.tools.get("meetly_ask_owner")!;
-  assert.match(tool.parameters.properties.question!.description, /verbatim/);
-  assert.match(tool.parameters.properties.question!.description, /ask the guest to shorten/i);
-  const rejected = JSON.parse((await tool.execute("long", { question: "x".repeat(501) })).content[0]!.text);
-  assert.match(rejected.error, /500 characters or fewer/);
-  assert.deepEqual(f.request(), before);
-  assert.equal(f.ownerLines.length, 0);
-  assert.equal(f.deliveries.length, 0);
-
+  const oldTravel = { beforeMin: 15, afterMin: 15, ...(override ? { override: true } : {}) };
+  assert.ok(!("error" in await f.act(context, "format", { format: "in_person", location: "Library", travel: oldTravel })));
+  if (override) await calendarAction(f.request().id, { action: "travel", travel: oldTravel });
+  assert.ok(!("error" in await f.act(context, "pick", { start: offers[0]!.start })));
+  const original = f.request();
+  const estimate = { beforeMin: 40, afterMin: 25 };
+  const result = await f.act(context, "other_times", { offer_week: false, travel: estimate }) as any;
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  const expected = override ? oldTravel : estimate;
+  assert.deepEqual(f.request().travel, original.travel);
+  assert.deepEqual(f.request().replacement?.travel, expected);
+  assert.deepEqual(f.request().booked, original.booked);
+  assert.equal(f.request().eventId, original.eventId);
+  const moved = await f.act(context, "pick", { start: result.offered[0].start }) as any;
+  assert.equal(moved.error, undefined, JSON.stringify(moved));
+  assert.equal(f.request().eventId, original.eventId);
+  const request = f.request();
+  const children = request.travelEvents!.map(ref => f.events.get(ref.holdId)!);
+  assert.deepEqual(children.map(e => (Date.parse(e.end.dateTime) - Date.parse(e.start.dateTime)) / 60_000), [expected.beforeMin, expected.afterMin]);
+  assert.doesNotMatch(JSON.stringify(moved), /beforeMin|afterMin|travelEvents/);
+  t.diagnostic(JSON.stringify({ replacement: result, moved, privateTravel: request.travel, children, ownerNotice: f.ownerLines.at(-1) }));
 });
 
-for (const [start, timezone] of [
-  ["2026-11-31T10:00", "UTC"], ["2026-02-29T10:00:00Z", "UTC"],
-  ["2026-10-05T24:00", "UTC"], ["2026-10-05T10:00:60", "UTC"],
-  ["2026-10-05T10:00:00+25:00", "UTC"], ["2026-03-08T02:30", "America/New_York"],
-]) test(`malformed exact start is rejected before effects: ${start}`, async t => {
-  const f = fixture(t, undefined, timezone);
-  const before = f.read();
-  const result = JSON.parse((await f.tools.get("meetly_other_times")!.execute("invalid", { offer_week: false, start, excludedDays: ["wed"] })).content[0]!.text);
-  assert.equal(result.code, "INVALID_START");
-  assert.equal(result.recovery.action, "reply");
-  assert.match(result.recovery.message, /correct.*date.*time/i);
-  assert.doesNotMatch(result.recovery.message, /nested weekday|retry/i);
-  assert.deepEqual(f.read(), before);
-  assert.deepEqual(f.commands, []);
-  assert.deepEqual(f.ownerLines, []);
+for (const originalFormat of ["meet", "in_person"] as const) test(`replacement from ${originalFormat} keeps the active meeting until its proposed place and travel are picked`, async t => {
+  const f = fixture(t);
+  const oldTravel = originalFormat === "meet" ? { beforeMin: 0, afterMin: 0 } : { beforeMin: 15, afterMin: 15 };
+  await f.act(context, "format", { format: originalFormat, location: originalFormat === "meet" ? "" : "Old cafe", travel: oldTravel });
+  await f.act(context, "pick", { start: offers[0]!.start });
+  const original = f.request(), event = structuredClone(f.events.get(original.eventId!)!);
+  const proposal = { format: "in_person" as const, location: "Library", travel: { beforeMin: 40, afterMin: 25 } };
+  const next = { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z" };
+  await offerRequest({ requestId: original.id, origin: original.origin, handle: original.handle, topic: original.topic,
+    ...proposal, offered: [next] });
+  assert.deepEqual(f.request().travel, original.travel);
+  assert.equal(f.request().format, original.format);
+  assert.equal(f.request().location, original.location);
+  assert.deepEqual(f.events.get(original.eventId!)!, event);
+  const moved = await f.act(context, "pick", { start: next.start }) as any;
+  assert.equal(moved.error, undefined, JSON.stringify(moved));
+  assert.equal(f.request().eventId, original.eventId);
+  assert.equal(moved.format, proposal.format);
+  assert.equal(moved.location, proposal.location);
+  assert.deepEqual(f.request().travel, proposal.travel);
+  assert.equal(f.events.get(original.eventId!)!.location, proposal.location);
+  assert.deepEqual(f.request().travelEvents!.map(ref => {
+    const child = f.events.get(ref.holdId)!;
+    return (Date.parse(child.end.dateTime) - Date.parse(child.start.dateTime)) / 60_000;
+  }), [40, 25]);
+  assert.doesNotMatch(JSON.stringify(moved), /beforeMin|afterMin|travelEvents/);
+  t.diagnostic(JSON.stringify({ original: { format: original.format, location: original.location, travel: original.travel }, proposal, moved, ownerNotice: f.ownerLines.at(-1) }));
 });

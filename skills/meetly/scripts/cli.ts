@@ -11,13 +11,13 @@ export function isMain(importMetaUrl: string): boolean {
 
 // Every CLI prints one JSON line on success, or `error: <message>` on stderr
 // with a non-zero exit code, never a partial result.
-export function run(fn: () => unknown | Promise<unknown>): void {
+export function run(fn: () => unknown | Promise<unknown>, present: (result: unknown) => unknown = result => result): void {
   const fail = (err: unknown) => {
     process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;
   };
   try {
-    Promise.resolve(fn()).then((result) => {
+    Promise.resolve(fn()).then(present).then((result) => {
       if (result !== undefined) process.stdout.write(`${JSON.stringify(result)}\n`);
     }, fail);
   } catch (err) {
