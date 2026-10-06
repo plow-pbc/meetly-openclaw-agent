@@ -85,7 +85,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     const request = read().requests.find(r => r.id === "request-one");
     if (request) {
       assert.deepEqual(request.constraints, ledger.requests[0]!.constraints);
-      assert.deepEqual(request.allowOverlap, [{ account: "owner@example.com", id: "approved" }]);
+      assert.deepEqual(request.allowOverlap, request.booked ? [] : [{ account: "owner@example.com", id: "approved" }]);
       assert.equal(request.durationMin, ledger.requests[0]!.durationMin);
     }
   });
@@ -1620,21 +1620,21 @@ test("booked guest picks require this thread's current replacement and preserve 
   assert.ok("preferencesUnavailable" in alternatives && alternatives.preferencesUnavailable);
   assert.match("message" in alternatives ? String(alternatives.message) : "", /Replacement times are held:/);
   t.diagnostic(`Replacement reply: ${"message" in alternatives && alternatives.message}`);
-  const replacement = f.request().reoffer!;
+  const replacement = f.request().offered;
   assert.ok(replacement);
-  assert.ok(replacement.offered.every(o => ["2026-10-05", "2026-10-06"].includes(o.start.slice(0, 10)) && o.start.slice(11, 16) < "15:00"));
+  assert.ok(replacement.every(o => ["2026-10-05", "2026-10-06"].includes(o.start.slice(0, 10)) && o.start.slice(11, 16) < "15:00"));
   const rejected = await f.tools.get("meetly_other_times")!.execute("call", { offer_week: false, excludedDays: ["mon", "tue"] });
   const rejectedDetails = JSON.parse(rejected.content[0]!.text);
   assert.ok(rejectedDetails.error);
   assert.equal(rejectedDetails.offered, undefined, "do not present old holds that the guest just ruled out");
-  assert.deepEqual(f.request().reoffer, replacement);
+  assert.deepEqual(f.request().offered, replacement);
   for (const ctx of [{ ...context, nativeChannelId: "another-chat" }, { ...context, requesterSenderId: "+15559999999" }]) {
-    assert.ok("error" in await f.act(ctx, "pick", { start: replacement.offered[0]!.start }));
+    assert.ok("error" in await f.act(ctx, "pick", { start: replacement[0]!.start }));
     assert.ok("error" in await f.act(ctx, "decline"));
   }
   await calendarAction("request-one", { action: "expire" }, { now: () => now + 49 * 3600_000 });
-  assert.equal(f.request().reoffer, undefined);
-  assert.ok("error" in await f.act(context, "pick", { start: replacement.offered[0]!.start }));
+  assert.deepEqual(f.request().offered, []);
+  assert.ok("error" in await f.act(context, "pick", { start: replacement[0]!.start }));
   assert.deepEqual(f.request().booked, booked);
   assert.equal(f.events.get("hold-one")!.status, "confirmed");
 });
@@ -1726,7 +1726,7 @@ test("booked-date exclusion uses the owner's local date and keeps later occurren
   f.events.set("blocked-week", event("blocked-week", "2026-10-07T00:00:00-07:00", "2026-10-12T00:00:00-07:00"));
   const result = await f.act(context, "other_times", { offer_week: false });
   assert.ok(!("error" in result), JSON.stringify(result));
-  const dates = f.request().reoffer!.offered.map(o => o.start.slice(0, 10));
+  const dates = f.request().offered.map(o => o.start.slice(0, 10));
   assert.ok(!dates.includes("2026-10-05"), JSON.stringify(dates));
   assert.ok(dates.includes("2026-10-06"), "Tuesday is eligible: the booking's UTC date must not be excluded");
   assert.ok(dates.includes("2026-10-12"), "exclude only the booked Monday, not every Monday");
@@ -1744,7 +1744,7 @@ test("no other booked dates leaves the existing event and replacement holds inta
   const result = await f.act(context, "other_times", { offer_week: false });
   assert.ok("error" in result, JSON.stringify(result));
   assert.deepEqual(f.request().booked, before.requests[0]!.booked);
-  assert.deepEqual(f.request().reoffer, before.requests[0]!.reoffer);
+  assert.deepEqual(f.request().offered, before.requests[0]!.offered);
   assert.deepEqual(f.request().constraints, before.requests[0]!.constraints);
   assert.ok(f.request().pendingOwner && "question" in f.request().pendingOwner!);
   assert.ok(f.commands.slice(commands).every(c => c[2] === "events"));

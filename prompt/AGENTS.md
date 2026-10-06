@@ -152,8 +152,9 @@ when returned, use `schedulingResult`. Do not announce the private handoff.
 - **Owner in a group:** first run `ledger.ts find --chat <runtime chat uid>`.
   If the owner answers its `pendingOwner.question`, use `meetly-confirm` and call
   `meetly_answer_owner` to clear it, even if the answer is already visible.
-  A normal reply or silence does not resolve the ledger. For other requests use
-  `meetly-group`, "Owner request", for the current chat.
+  A normal reply or silence does not resolve the ledger. For existing bookings,
+  including reschedules, use `meetly-confirm`, "Changes after booking". For new
+  scheduling requests use `meetly-group`, "Owner request", for the current chat.
   When the owner only introduces or adds the scheduling agent, give only a short introduction using your conversation name and wait.
 - **Talking about the owner:** every message to anyone but the owner is
   written by Meetly about the owner in the third person, using `ownerName`

@@ -67,9 +67,11 @@ function preferences(args: GuestArgs, timezone: string): Constraints {
   return args.next_week === undefined ? out : intersectConstraints(out, nextWeek(args.next_week, timezone));
 }
 
+const referenceTimes = (r: Request) => currentOffers(r).length ? currentOffers(r) : r.booked ? [r.booked] : [];
+
 async function check(request: Request, config: Config, requested: string | WeekdayTime) {
   if (typeof requested === "object" && requested.time === undefined) throw new Error("An exact time is required");
-  const start = typeof requested === "string" ? requested : resolveWeekday(requested, request.reoffer?.offered ?? request.offered, config.timezone);
+  const start = typeof requested === "string" ? requested : resolveWeekday(requested, referenceTimes(request), config.timezone);
   const query = { now: Date.now(), config, meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
   const { slot } = checkTime({ ...query, busy: [] });
   const busy = await busyFor(request, config, slot.start, slot.end);
@@ -102,7 +104,7 @@ async function pick(request: Request, config: Config, start: string, sendOwner?:
   if (!offer) return { error: "Choose one of the currently offered start times." };
   // Only a replacement held before this run can represent the guest's choice.
   if (request.status === "booked" && !(Number.isFinite(turnStartedAt)
-    && Date.parse(request.reoffer!.offeredAt) < turnStartedAt!)) {
+    && Date.parse(request.offeredAt!) < turnStartedAt!)) {
     return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
   }
   const checked = await check(request, config, offer.start);
@@ -134,12 +136,12 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   if (newlyExcluded.some(day => restored.includes(day))) throw new Error("a weekday cannot be both excluded and restored");
   const excludedDays = [...new Set([...(request.excludedDays ?? []).filter(day => !restored.includes(day)), ...newlyExcluded])];
   const availableDays = { days: DAYS.filter(day => !excludedDays.includes(day)) };
-  const window = args.offer_week ? offerDateWindow(currentOffers(request), config.timezone) : undefined;
+  const window = args.offer_week ? offerDateWindow(referenceTimes(request), config.timezone) : undefined;
   const bounds = intersectConstraints(intersectConstraints(request.constraints, window), availableDays);
   if (args.excludedDays !== undefined || args.restoredDays !== undefined) request = patch(request, { excludedDays });
   let start = args.start;
   if (typeof start === "object" && start.time === undefined) {
-    preferred.from = preferred.to = resolveWeekday({ weekday: start.weekday }, currentOffers(request), config.timezone);
+    preferred.from = preferred.to = resolveWeekday({ weekday: start.weekday }, referenceTimes(request), config.timezone);
     start = undefined;
   }
   const bookedDate = request.status === "booked" && request.booked
@@ -213,7 +215,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     question = args.question.replace(/\s+/g, " ").trim();
     question = question.slice(0, OWNER_QUESTION_LIMIT);
     pendingOwner = { question, askedAt, ...(purpose === "scheduling"
-      ? { alternatives: { previousStarts: request.offered.map(o => o.start) } } : {}) };
+      ? { alternatives: { previousStarts: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] } } : {}) };
   } else {
     const checked = await check(request, config, args.start!);
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) {

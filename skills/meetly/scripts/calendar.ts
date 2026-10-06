@@ -47,7 +47,7 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   if (validated.status !== "offered") throw new Error("replacement needs offered times");
   return updateRequest(l, id, {
-    reoffer: { offered: validated.offered, offeredAt: new Date(now).toISOString() },
+    offered: validated.offered, allowOverlap: [], constraints: validated.constraints ?? {},
     holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
   }, now);
 }
@@ -156,7 +156,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (input.action === "expire" || input.action === "drop" || input.action === "cancel") {
         if (request.status === "booked" && input.action === "drop") return { request, skipped: true };
         if (request.status === "booked" && input.action === "expire") {
-          patch({ reoffer: null, holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]) });
+          patch({ offered: [], holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]) });
           await cleanup();
           request = requestById(id);
           return { request, groupNotice: request.chatUid ? {
@@ -168,7 +168,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         }
         const refs: HoldCleanup[] = holds(request);
         if (input.action === "cancel" && request.eventId && request.booked) refs.push({ holdId: request.eventId, account: request.booked.account, sendUpdates: "all" });
-        patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null, reoffer: null,
+        patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null, offered: [],
           holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...refs]) }); await cleanup(); return { request: requestById(id) };
       }
       if (input.action === "format" && request.status === "offered") {
@@ -338,7 +338,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         const before = l.requests.find(r => r.id === id)!;
         next = recordBooking(l, id, parseEvent(step.output!), step.account, now()).ledger;
         if (completed.input.action === "book") next = updateRequest(next, id, {
-          reoffer: null, holdCleanup: uniqueCleanup([...(before.holdCleanup ?? []), ...holds(before)]),
+          offered: [], allowOverlap: [], holdCleanup: uniqueCleanup([...(before.holdCleanup ?? []), ...holds(before)]),
         }, now());
       }
       return { requests: next.requests.map(r => {

@@ -70,7 +70,6 @@ test("guest booking receives the host turn boundary across prompt rebuilds", asy
     async (ctx: unknown) => { received = ctx; return { status: "booked" }; });
   now += 60_000;
   guestTurns.begin(turn);
-  guestTurns.beforeTool({ toolName: "meetly_pick_time" }, { ...turn, toolCallId: "book" });
   await tools.get("meetly_pick_time").execute("book", {});
   assert.equal(received.turnStartedAt, startedAt);
 });
