@@ -7,7 +7,7 @@ import { calendarAction } from "../skills/meetly/scripts/calendar.ts";
 import { recordBooking } from "../skills/meetly/scripts/record-booking.ts";
 import { guestAction } from "../skills/meetly/scripts/guest.ts";
 import { registerOwnerTools } from "../plugin/owner-tools.js";
-import { addRequest, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
+import { addRequest, recordGuestReply, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { calendarEvent, cli, fakeCalendar, tmpHome } from "./helpers.ts";
@@ -305,6 +305,29 @@ test(`exhausted-search owner tool searches, holds and delivers without rejected 
   assert.equal(f.read().requests[0]!.durationMin, 30);
   assert.equal((await tool.execute("again", args)).isError, true);
   assert.equal(deliveries.length, 1);
+});
+
+test("a guest acknowledgement during availability lookup does not abort approved alternatives", async t => {
+  const f = alternativesFixture(t);
+  const fetch = globalThis.fetch;
+  const replyAt = Date.parse(f.request.offeredAt!) + 1_000;
+  let observed = false;
+  t.mock.method(globalThis, "fetch", async (url: any, init: RequestInit) => {
+    if (!observed && JSON.parse(String(init.body)).params.arguments.argv[2] === "events") {
+      observed = true;
+      writeJson(f.path, recordGuestReply(f.read(), "group-mia", f.request.handle, replyAt));
+    }
+    return fetch(url, init);
+  });
+  const deliveries: string[] = [];
+  const { tool } = ownerTool(async input => { deliveries.push(input.payloads[0].text); return { status: "sent" }; });
+  const result = await tool.execute("approve", { ...args, text: "Yes" });
+  assert.equal(result.isError, false, JSON.stringify(result.details));
+  assert.equal(f.read().requests[0]!.lastGuestReplyAt, new Date(replyAt).toISOString());
+  assert.ok(f.read().requests[0]!.offered.every(o => o.holdId));
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+  assert.equal(deliveries.length, 1);
+  assert.match(deliveries[0]!, /10:30|11:00/);
 });
 
 test("exhausted-search approval cannot reserve a question replaced during its calendar write", async t => {
