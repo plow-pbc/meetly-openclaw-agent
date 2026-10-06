@@ -1965,28 +1965,38 @@ for (const action of ["view", "pick", "decline"] as const) test(`unlinked email 
   assert.equal(f.commands.length, 0);
 });
 
-for (const action of ["ask_owner", "decline"] as const) for (const failed of [false, true]) test(`email ${action} awaits private delivery and silences the final: failed=${failed}`, async t => {
+for (const action of ["ask_owner", "decline", "cancel"] as const) for (const failed of [false, true]) test(`email ${action} awaits private delivery and silences the final: failed=${failed}`, async t => {
   const f = emailFixture(t);
+  if (action === "cancel") await f.act(f.ctx, "pick", { start: offers[0]!.start });
   let sends = 0, completed = false, release!: () => void, entered!: () => void;
   const delivery = new Promise<void>(resolve => { release = resolve; });
   const waiting = new Promise<void>(resolve => { entered = resolve; });
-  const work = guestAction(f.ctx, action, { question: "Should Ana bring the budget?" }, async () => {
+  const sendOwner = async () => {
     sends++;
     entered();
     await delivery;
     if (failed) throw new Error("Uncertain delivery");
-  }).then(result => { completed = true; return result; });
+  };
+  let tool: any;
+  registerGuestTools({ registerTool(factory: (ctx: GuestContext) => any) {
+    const candidate = factory(f.ctx);
+    if (candidate.name === (action === "ask_owner" ? "meetly_ask_owner" : "meetly_decline")) tool = candidate;
+  } }, (ctx, operation, args) => guestAction(ctx, operation, args, sendOwner));
+  const work = tool.execute("private-notice", { question: "Should Ana bring the budget?" })
+    .then((result: any) => { completed = true; return result; });
   await waiting;
   assert.equal(sends, 1);
   assert.equal(completed, false, "tool must await the private send");
   release();
-  const result = await work as any;
+  const reply = await work;
+  const result = reply.details;
   assert.equal(result.silent, true);
+  assert.match(reply.content.slice(1).map((c: { text: string }) => c.text).join("\n"), /Finish with NO_REPLY/);
   assert.equal(result.replyToOwner, undefined);
   assert.equal(result.ownerNotice, undefined);
   assert.equal(action === "ask_owner" ? !!result.ownerAskSent : result.ownerNotified, !failed);
   assert.equal(action === "ask_owner" ? !!f.request().pendingOwner : f.request().status === "dropped", true);
-  await f.act(f.ctx, action, { question: "Should Ana bring the budget?" });
+  await f.act(f.ctx, action === "cancel" ? "decline" : action, { question: "Should Ana bring the budget?" });
   assert.equal(f.ownerLines.length, 0, "repeat must not send another owner notification");
 });
 

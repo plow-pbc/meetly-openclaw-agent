@@ -65,8 +65,9 @@ export function registerGuestTools(api, execute = run, outbound = loadOutbound) 
       name, label: name, description: description + (context.agentAccountId === "email" ? " Email turn: include the owner's configured time zone in every offer. Relay scheduling results with plow_send_email to this thread chat uid, never in your final text. Your final reaches the owner privately. For an unanswerable guest question, use meetly_ask_owner. Owner questions and decline notices are sent privately by the tool. When silent is true, finish with NO_REPLY after any separate scheduling email; never send a duplicate owner notification. Any participant may act for the meeting; invite the request's guest, not every CC. For a Meet, the invitation contains the link; do not promise a later thread reminder." : ""), parameters,
       async execute(_id, args) {
         let result = await execute({ ...context, turnStartedAt: guestTurns.take(context.sessionKey) }, action, cleanArgs(args, parameters.required), text => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound));
+        const emailSilent = context.agentAccountId === "email" && result.silent;
         result = guestTurns.reply(context.sessionKey, action, result);
-        if (context.agentAccountId === "email" && result.schedulingResult) result.silent = true;
+        if (emailSilent || (context.agentAccountId === "email" && result.schedulingResult)) result.silent = true;
         if ("error" in result) result = { ...result, code: result.code ?? "SCHEDULING_REJECTED",
           recovery: result.recovery ?? { action: result.silent ? "silent" : "reply", retry: false, message: result.error } };
         const emailReply = context.agentAccountId === "email" && result.channel === "email" && result.chatUid
