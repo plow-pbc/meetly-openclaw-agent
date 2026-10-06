@@ -634,7 +634,8 @@ test('formatted full phone identity matches exactly and survives canonical ledge
 
 test("ask-owner sends the human question verbatim to the fixed owner DM and mirrors the owner session", async t => {
   const f = fixture(t);
-  const question = 'Could we discuss "the new project"? ' + "x".repeat(400);
+  const question = '  “Which  entrance?\n'.padEnd(497, 'x') + '”  ';
+  assert.equal(question.length, 500);
   const result = await f.tools.get("meetly_ask_owner")!.execute("ask", { question, to: "intruder", chatUid: "intruder" });
   assert.doesNotMatch(JSON.stringify(result), /error|intruder/);
   const saved = { question, askedAt: new Date(now).toISOString() };
@@ -1478,7 +1479,17 @@ test(`weekday text is rejected before effects and an enum retry succeeds: ${JSON
   assert.ok(retried.offered.every((slot: { start: string }) => slot.start.startsWith("2026-10-08")));
 });
 
-test("ask-owner rejects over-length text without sending and preserves a corrected question verbatim", async t => {
+test("invalid-start tool guidance distinguishes dated errors from weekday arguments", () => {
+  let description = "";
+  registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
+    const tool = factory({}); if (tool.name === "meetly_other_times") description = tool.description;
+  } });
+  assert.match(description, /invalid weekday arguments/);
+  assert.match(description, /ask the guest to correct the explicit date\/time/);
+  assert.match(description, /Never substitute a weekday/);
+});
+
+test("ask-owner rejects over-length text without effects", async t => {
   const f = fixture(t);
   const before = f.request();
   const tool = f.tools.get("meetly_ask_owner")!;
@@ -1489,14 +1500,7 @@ test("ask-owner rejects over-length text without sending and preserves a correct
   assert.deepEqual(f.request(), before);
   assert.equal(f.ownerLines.length, 0);
   assert.equal(f.deliveries.length, 0);
-  const question = '  “Which  entrance?\n'.padEnd(497, 'x') + '”  ';
-  assert.equal(question.length, 500);
-  const retried = JSON.parse((await tool.execute("retry", { question })).content[0]!.text);
-  assert.equal(retried.ownerAskSent, true);
-  const pending = f.request().pendingOwner;
-  assert.ok(pending && "question" in pending);
-  assert.equal(pending.question, question);
-  assert.ok(f.ownerLines[0]!.includes(JSON.stringify(question)));
+
 });
 
 for (const [start, timezone] of [
