@@ -260,6 +260,7 @@ export function findByChat(ledger: Ledger, chatUid: string, handle?: string): Re
   }
   // A chat remains a Meetly group after its request closes.
   return ledger.requests.findLast((r) => r.chatUid === chatUid && r.status === "offered")
+    ?? ledger.requests.findLast((r) => r.chatUid === chatUid && r.status === "booked")
     ?? ledger.requests.findLast((r) => r.chatUid === chatUid && r.status !== "asked");
 }
 

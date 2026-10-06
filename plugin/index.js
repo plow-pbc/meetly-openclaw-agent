@@ -105,6 +105,7 @@ export default {
     }));
     registerPipelineHooks(api);
     registerGuestTools(api);
+    api.on("before_tool_call", guestTurns.beforeTool);
     registerOwnerTools(api);
     registerOwnerGroupTool(api);
     registerOwnerDmTool(api);

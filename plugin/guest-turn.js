@@ -1,34 +1,60 @@
-// The runtime serializes runs within a session. Prompt rebuilds retain the
-// current turn's result; a new run starts a fresh scheduling reply boundary.
+// Tool factories have no run id. Bind each host tool-call id to its run so
+// prompt rebuilds and another run in the same session cannot move the boundary.
 export function createGuestTurns() {
-  const turns = new Map();
+  const runs = new Map();
+  const calls = new Map();
+  const resolve = (sessionKey, id) => {
+    const call = calls.get(id);
+    return call && call.sessionKey === sessionKey ? runs.get(call.runId) : undefined;
+  };
   return {
     begin(ctx) {
-      if (ctx.runId && ctx.sessionKey && turns.get(ctx.sessionKey)?.runId !== ctx.runId) {
-        turns.set(ctx.sessionKey, { runId: ctx.runId, startedAt: Date.now() });
+      if (ctx.runId && ctx.sessionKey && !runs.has(ctx.runId)) {
+        runs.set(ctx.runId, { runId: ctx.runId, sessionKey: ctx.sessionKey, startedAt: Date.now() });
       }
     },
-    async sendOnce(sessionKey, send) {
-      const turn = turns.get(sessionKey);
-      if (!turn) throw new Error("Owner turn context unavailable");
-      turn.attempt ??= Promise.resolve().then(send);
-      await turn.attempt;
+    beforeTool(event, ctx) {
+      if (!event.toolName?.startsWith("meetly_")) return;
+      const runId = ctx.runId ?? event.runId;
+      const run = runs.get(runId);
+      const id = ctx.toolCallId ?? event.toolCallId;
+      if (id && run?.sessionKey === ctx.sessionKey) calls.set(id, { runId, sessionKey: ctx.sessionKey });
     },
-    take(sessionKey) { return turns.get(sessionKey)?.startedAt; },
-    reply(sessionKey, action, result) {
-      const turn = turns.get(sessionKey);
-      if (["pick", "other_times", "format", "decline"].includes(action) && !result.error && result.status) {
-        if (turn) turn.schedulingResult = result;
+    async sendOnce(sessionKey, id, send) {
+      const run = resolve(sessionKey, id);
+      if (!run) throw new Error("Owner turn context unavailable");
+      run.attempt ??= Promise.resolve().then(send);
+      await run.attempt;
+    },
+    take(sessionKey, id) { return resolve(sessionKey, id)?.startedAt; },
+    execute(sessionKey, id, execute) {
+      const run = resolve(sessionKey, id);
+      if (!run) return execute();
+      const result = (run.pending ?? Promise.resolve()).then(async () => {
+        if (run.terminalReply) return run.terminalReply;
+        const result = await execute();
+        // A holding reply has already ended the conversation for this run.
+        if (result.guestReplyAttempted) run.terminalReply = result;
+        return result;
+      });
+      run.pending = result.then(() => {}, () => {});
+      return result;
+    },
+    reply(sessionKey, id, action, result) {
+      const run = resolve(sessionKey, id);
+      calls.delete(id);
+      if (["pick", "other_times", "format", "decline"].includes(action) && !result.error && result.status && !result.guestReplyAttempted) {
+        if (run) run.schedulingResult = result;
         return { ...result, silent: false };
       }
-      // Silence belongs to the question handoff, not a completed scheduling action.
-      if (action === "ask_owner" && result.silent && turn?.schedulingResult) {
-        return { ...result, silent: false, schedulingResult: turn.schedulingResult };
+      if (action === "ask_owner" && result.silent && !result.guestReplyAttempted && run?.schedulingResult) {
+        return { ...result, silent: false, schedulingResult: run.schedulingResult };
       }
       return result;
     },
     end(_event, ctx) {
-      if (turns.get(ctx.sessionKey)?.runId === ctx.runId) turns.delete(ctx.sessionKey);
+      runs.delete(ctx.runId);
+      for (const [id, call] of calls) if (call.runId === ctx.runId) calls.delete(id);
     },
   };
 }
