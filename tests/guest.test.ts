@@ -732,7 +732,7 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
   assert.equal(tool.parameters.properties.chatUid, undefined);
   assert.equal(tool.parameters.properties.handle, undefined);
   assert.equal(tool.parameters.properties.name.type, "string");
-  const args = { handle: context.requesterSenderId, topic: "Planning", name: "", format: "", location: "", locale: "", durationMin: 30, offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
+  const args = { introduction: "needed", handle: context.requesterSenderId, topic: "Planning", name: "", format: "", location: "", locale: "", durationMin: 30, offered: offers.map(({ start, end }) => ({ start, end, account: "injected@example.net", holdId: "injected-hold" })), chatUid: "other-group" };
   const result = await tool.execute("offer", args);
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.request().chatUid, "cht_MiXeD");
@@ -772,7 +772,7 @@ test("owner-group computes slots from saved policy and ignores guest-injected of
     { start: "2026-10-03T10:00:00Z", end: "2026-10-03T10:30:00Z" },
     { start: "2026-10-05T20:00:00Z", end: "2026-10-05T23:00:00Z" },
   ];
-  const result = await tool.execute("offer", { topic: "Planning", durationMin: saved.durationMin, proposed: { days: ["sat"], after: "20:00" }, offered: injected });
+  const result = await tool.execute("offer", { introduction: "needed", topic: "Planning", durationMin: saved.durationMin, proposed: { days: ["sat"], after: "20:00" }, offered: injected });
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(result.details.preferencesUnavailable, true);
   assert.ok(f.request().offered.length > 0);
@@ -814,7 +814,7 @@ test("owner-group ignores injected overlap permission before creating holds", as
   for (const [i, slot] of offers.entries()) f.events.set(`private-${i}`, { ...event(`private-${i}`, slot.start, slot.end), summary: "Weekly Claw" });
   let tool: any;
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
-  const result = await tool.execute("offer", { topic: "Lunch", durationMin: 30, allowOverlapTitles: ["Weekly Claw"],
+  const result = await tool.execute("offer", { introduction: "needed", topic: "Lunch", durationMin: 30, allowOverlapTitles: ["Weekly Claw"],
     allowOverlap: [{ account: "owner@example.com", id: "private-0" }], offered: offers,
     constraints: { from: "2026-10-05", to: "2026-10-05", after: "10:00", before: "10:30" } });
   assert.equal(result.isError, true, JSON.stringify(result));
@@ -1040,7 +1040,7 @@ test("owner-group records model duration and saves the owner's guest name for DM
   f.participants[2]!.display_name = "unnamed member";
   let tool: any;
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
-  const result = await tool.execute("offer", { topic: "call", name: "Bo", durationMin: 45 });
+  const result = await tool.execute("offer", { introduction: "needed", topic: "call", name: "Bo", durationMin: 45 });
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.request().durationMin, 45);
   assert.equal(tool.parameters.properties.durationMin.type, "integer");
@@ -1089,7 +1089,7 @@ test(`owner-group preserves explicit ${meal} duration`, async t => {
   f.save({ requests: [] }); f.events.clear();
   let tool: any;
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
-  const result = await tool.execute("offer", { topic: meal, meal, durationMin: duration });
+  const result = await tool.execute("offer", { introduction: "needed", topic: meal, meal, durationMin: duration });
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.request().durationMin, duration);
   assert.ok(f.request().offered.every(slot => Date.parse(slot.end) - Date.parse(slot.start) === duration * 60_000));
@@ -1195,7 +1195,7 @@ test("owner-group requires the model to choose a duration before creating a requ
   f.save({ requests: [] }); f.events.clear();
   let tool: any;
   registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
-  const result = await tool.execute("offer", { topic: "Call" });
+  const result = await tool.execute("offer", { introduction: "needed", topic: "Call" });
   assert.equal(result.isError, true, JSON.stringify(result));
   assert.match(result.content[0].text, /[Ss]et durationMin/);
   assert.deepEqual(f.read(), { requests: [] });

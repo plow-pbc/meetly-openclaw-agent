@@ -32,7 +32,7 @@ Shortcuts:
 ## Scenarios
 
 1. [ ] **Setup through the DM.** Text the line as the owner.
-   - Expect: Meetly introduces itself in one line, with its defaults, and
+   - Expect: the assistant introduces itself using the Plow conversation name, with its defaults, and
      asks nothing but your name and time zone, and only when Plow and the Mac
      cannot supply them; the calendars are read from the Mac without a question.
    - Expect: if your first message asked for a meeting, it is handled in the
@@ -101,7 +101,7 @@ Shortcuts:
     - In a Meetly group, the same text is refused; only this meeting is
       arranged.
 12. [ ] **Voice check.** Review every message sent in 3–11.
-    - Expect: always Meetly, in the third person, using `ownerName`.
+    - Expect: introductions and signatures use the Plow conversation name; speak in the third person using `ownerName`.
     - Expect: never "I'm free", never signed as the owner.
     - Expect: never an event name, only "an existing commitment".
 13. [ ] **Pause and resume.** "pause Meetly" → `oc cron list --all --json`

@@ -39,7 +39,7 @@ said for that one request, and runs the same group.
 Meetly always speaks as your assistant, in the third person: *"Jean is free Tue
 29/9 at 12:00"*, never *"I'm free"*. It never texts from your own Messages
 account; every conversation with the other person happens in the Plow group,
-signed as Meetly.
+signed with the Plow conversation name.
 
 ## What it will and won't do
 

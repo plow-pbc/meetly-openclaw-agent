@@ -41,6 +41,7 @@ try {
   process.env.OPENCLAW_GATEWAY_PASSWORD = randomBytes(32).toString("hex");
   process.env.PLOW_MCP_BRIDGE_TOKEN = randomBytes(32).toString("hex");
   const identity = await identityFromApi(base, process.env.PLOW_AGENT_TOKEN);
+  identity.agent = { ...identity.agent, name: identity.line.display_name?.trim() || identity.agent?.name };
   const config = withMacTimeout(renderConfig(identity, base));
   config.tools.alsoAllow.push("meetly_answer_owner", "meetly_offer_owner_group", "meetly_offer_owner_dm");
   await mkdir("/var/lib/plow/workspace", { recursive: true });
