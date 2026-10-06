@@ -102,16 +102,17 @@ const gogEvent = (id: string, start: string, end: string) =>
 
 test("fetchBusy reads each account on the Mac itself, so no calendar JSON passes through the model", async () => {
   const calls: Call[] = [];
-  const listing = JSON.stringify({ events: [{ ...gogEvent("e1", "2026-10-01T12:30:00-03:00", "2026-10-01T13:00:00-03:00"), summary: "Weekly Claw" }], nextPageTokens: [] }, null, 2);
+  const listing = (summary: string, extra = {}) => JSON.stringify({ events: [{ ...gogEvent("e1", "2026-10-01T12:30:00-03:00", "2026-10-01T13:00:00-03:00"), summary }], nextPageTokens: [], ...extra });
   const r = await fetchBusy({
     timezone: TZ,
     calendars: [{ account: "owner@example.com", id: "owner@example.com" }, { account: "owner@example.com", id: "team@group.calendar.google.com" }, { account: "work@example.com", id: "work@example.com" }],
-  }, range, { token: "tok", allowOverlapTitles: ["weekly claw"], fetch: macBridge(argv => `Note: Using direct access token (expires in ~1 hour; no auto-refresh)\n${argv.includes("work@example.com") ? listing.replace("Weekly Claw", "Unrelated meeting") : listing}\n`, calls) });
+  }, range, { token: "tok", allowOverlapTitles: ["weekly claw"], fetch: macBridge(argv => `Note: Using direct access token (expires in ~1 hour; no auto-refresh)\n${argv.includes("work@example.com") ? listing("Unrelated meeting") : listing("Weekly Claw", { degraded: ["unread@example.com"], truncated: { after: "2026-10-01T13:00:00-03:00" } })}\n`, calls) });
   assert.deepEqual(calls.map((c) => c.argv), [
     ["plow-gog", "calendar", "events", "--calendars", "owner@example.com,team@group.calendar.google.com", "--account", "owner@example.com", "--from", range.from, "--to", range.to, "--max", "100", "--json"],
     ["plow-gog", "calendar", "events", "--calendars", "work@example.com", "--account", "work@example.com", "--from", range.from, "--to", range.to, "--max", "100", "--json"],
   ]);
-  assert.deepEqual(r.degraded, []);
+  assert.deepEqual(r.degraded, ["unread@example.com"]);
+  assert.equal(r.unknownAfter, "2026-10-01T16:00:00.000Z");
   assert.deepEqual(r.allowOverlap, [{ account: "owner@example.com", id: "e1" }]);
   assert.doesNotMatch(JSON.stringify(r), /Weekly Claw|summary/);
   assert.deepEqual(r.busy.map((b) => [b.id, b.account, b.start]), [
@@ -125,7 +126,7 @@ test("fetchBusy reports an account it could not read as degraded, never as free"
     timezone: TZ,
     calendars: [{ account: "owner@example.com", id: "owner@example.com" }, { account: "work@example.com", id: "work@example.com" }],
   }, range, { token: "tok", fetch: macBridge((argv) => argv.includes("work@example.com") ? undefined : '{"events": []}') });
-  assert.deepEqual(r, { busy: [], degraded: ["work@example.com"] });
+  assert.deepEqual(r, { busy: [], degraded: ["work@example.com"], coverage: { from: new Date(range.from).toISOString(), to: new Date(range.to).toISOString() } });
   const noMac = await fetchBusy({ timezone: TZ, calendars: [{ account: "owner@example.com", id: "owner@example.com" }] }, range, { token: "" });
   assert.deepEqual(noMac.degraded, ["owner@example.com"]);
 });
@@ -136,10 +137,11 @@ test("the CLI's --fetch writes tmp/busy.json for slots.ts and prints only a shor
     ownerName: "Ana", timezone: TZ, days: ["mon"], windowStart: "09:00", windowEnd: "17:00", durationMin: 30, horizonDays: 3,
     calendars: [{ account: "owner@example.com", id: "owner@example.com" }], defaultAccount: "owner@example.com", setupDoneAt: "2026-09-26T00:00:00Z",
   });
-  const r = cli("busy.ts", ["--fetch"], { MEETLY_HOME: home, PLOW_MCP_BRIDGE_TOKEN: "" });
+  const coverage = { from: "2026-10-19T00:00:00.000Z", to: "2026-10-24T00:00:00.000Z" };
+  const r = cli("busy.ts", ["--fetch", "--from", coverage.from, "--to", coverage.to], { MEETLY_HOME: home, PLOW_MCP_BRIDGE_TOKEN: "" });
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(r.json, { file: join(home, "tmp", "busy.json"), busy: 0, degraded: ["owner@example.com"] });
-  assert.deepEqual(JSON.parse(readFileSync(join(home, "tmp", "busy.json"), "utf8")), { busy: [], degraded: ["owner@example.com"] });
+  assert.deepEqual(r.json, { file: join(home, "tmp", "busy.json"), busy: 0, degraded: ["owner@example.com"], coverage });
+  assert.deepEqual(JSON.parse(readFileSync(join(home, "tmp", "busy.json"), "utf8")), { busy: [], degraded: ["owner@example.com"], coverage });
 });
 
 test("overlap titles match Latch-wrapped summaries exactly and keep account identity", async () => {

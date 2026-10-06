@@ -83,7 +83,7 @@ Everything else starts at these defaults:
 - days: Monday to Friday,
 - hours: 09:00 to 18:00,
 - meeting length: 30 minutes; lunch and dinner default to 60, with explicit or saved lengths taking precedence,
-- offers up to 14 days ahead.
+- searches 14 days ahead by default; explicit dates can extend the search.
 
 Change any of it later in plain words ("make my window 10 to 17", "I don't
 take meetings on Fridays"), or say "pause Meetly" / "resume Meetly".
@@ -192,7 +192,7 @@ message is skipped.
   delivery is recorded without a chat and never retried automatically; Meetly
   may retry after the owner explicitly clears the recorded attempt. Meeting
   confirmations stay in the group. `meetly_ask_owner` sends meeting questions
-  to the owner's DM; `meetly_other_times(start)` sends time-approval requests.
+  to the owner's DM; `meetly_other_times(start, offer_week)` sends time-approval requests.
   `meetly_answer_owner` returns
   the owner's answer to that request's recorded group; time approvals use the
   calendar writer. The answer tool is owner-only and is not in `PLOW_GUEST_TOOLS`.

@@ -16,7 +16,10 @@ export const allowsOverlap = (event: Partial<EventRef>, refs: EventRef[] = []) =
   refs.some(ref => !!ref.account && !!ref.id && ref.account === event.account && ref.id === event.id);
 export const uniqueEvents = (refs: EventRef[]) => refs.filter((ref, i) => allowsOverlap(ref, [ref]) && !allowsOverlap(ref, refs.slice(0, i)));
 export type Busy = { start: string; end: string; id?: string; account?: string };
-export type BusyResult = { busy: Busy[]; unknownAfter?: string; degraded: string[]; allowOverlap?: EventRef[] };
+export type Coverage = { from: string; to: string };
+export const covers = (coverage: Coverage | undefined, range: Coverage) => coverage !== undefined &&
+  (Date.parse(range.from) >= Date.parse(coverage.from) && Date.parse(range.to) <= Date.parse(coverage.to));
+export type BusyResult = { busy: Busy[]; coverage?: Coverage; unknownAfter?: string; degraded: string[]; allowOverlap?: EventRef[] };
 
 type Stamp = string | { dateTime?: string; date?: string } | undefined;
 type CalEvent = {
@@ -134,6 +137,7 @@ export async function fetchBusy(
   range: { from: string; to: string },
   opts: BridgeOptions & { allowOverlapTitles?: string[] } = {},
 ): Promise<BusyResult> {
+  if (!(Date.parse(range.to) > Date.parse(range.from))) throw new Error("Calendar coverage needs valid from and to instants.");
   const titles = new Set(opts.allowOverlapTitles?.map(title => title.trim().toLowerCase()).filter(Boolean));
   const allowOverlap: EventRef[] = [];
   const byAccount = new Map<string, string[]>();
@@ -147,18 +151,19 @@ export async function fetchBusy(
       readPaths: [], timeoutMs: 60_000,
       goal: "Meetly: read your busy times so it only offers times you are free",
     }, opts).catch(() => undefined);
-    let events: CalEvent[];
+    let listing: ReturnType<typeof eventsOf>;
     try {
       if (output === undefined) throw new Error("unreadable");
-      events = eventsOf(listingOf(output)).events;
+      listing = eventsOf(listingOf(output));
     } catch {
       degraded.push(account);
       continue;
     }
-    allowOverlap.push(...events.filter(e => e.id && !skipped(e) && titles.has(eventTitle(e.summary))).map(e => ({ account, id: e.id! })));
-    results.push({ events: events.map((e) => ({ ...e, account })) });
+    allowOverlap.push(...listing.events.filter(e => e.id && !skipped(e) && titles.has(eventTitle(e.summary))).map(e => ({ account, id: e.id! })));
+    results.push({ events: listing.events.map((e) => ({ ...e, account })), degraded: listing.degraded, truncated: { after: listing.after } });
   }
   const out = toBusy(results, { tz: config.timezone, max: FETCH_MAX });
+  out.coverage = { from: new Date(range.from).toISOString(), to: new Date(range.to).toISOString() };
   out.degraded.push(...degraded);
   if (titles.size) out.allowOverlap = uniqueEvents(allowOverlap);
   return out;
@@ -167,16 +172,17 @@ export async function fetchBusy(
 if (isMain(import.meta.url)) {
   run(async () => {
     const { values } = parseArgs({
-      options: { in: { type: "string", multiple: true }, max: { type: "string", default: "100" }, fetch: { type: "boolean", default: false }, "allow-overlap-title": { type: "string", multiple: true } },
+      options: { from: { type: "string" }, to: { type: "string" }, in: { type: "string", multiple: true }, max: { type: "string", default: "100" }, fetch: { type: "boolean", default: false }, "allow-overlap-title": { type: "string", multiple: true } },
     });
     if (values.fetch) {
       const current = status();
       if (current.status !== "READY") throw new Error("Meetly is not set up yet");
-      const result = await fetchBusy(current.config, current.range, { allowOverlapTitles: values["allow-overlap-title"] });
+      if ((values.from === undefined) !== (values.to === undefined)) throw new Error("Supply both --from and --to.");
+      const range = values.from === undefined ? current.range : { from: values.from, to: values.to! };
+      const result = await fetchBusy(current.config, range, { allowOverlapTitles: values["allow-overlap-title"] });
       const out = file("tmp/busy.json");
       writeJson(out, result);
-      const summary: { file: string; busy: number; degraded: string[]; unknownAfter?: string } = { file: out, busy: result.busy.length, degraded: result.degraded };
-      if (result.unknownAfter) summary.unknownAfter = result.unknownAfter;
+      const summary = { file: out, busy: result.busy.length, degraded: result.degraded, coverage: result.coverage, unknownAfter: result.unknownAfter };
       return summary;
     }
     const max = Number(values.max);

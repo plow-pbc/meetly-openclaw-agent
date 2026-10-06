@@ -11,6 +11,7 @@ import { calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
 import { addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
+import { withinConstraints } from "../skills/meetly/scripts/slots.ts";
 import { DEFAULTS, SLOT_COUNT } from "../skills/meetly/scripts/config.ts";
 import { calendarEvent as event, fakeCalendar, cli, tmpHome } from "./helpers.ts";
 
@@ -21,11 +22,11 @@ const offers = [
   { start: "2026-10-06T10:00:00Z", end: "2026-10-06T10:30:00Z", holdId: "hold-two", account: "owner@example.com" },
 ];
 const actions: [GuestAction, GuestArgs][] = [
-  ["view", {}], ["pick", { start: offers[0]!.start }], ["other_times", { after: "11:00" }],
+  ["view", {}], ["pick", { start: offers[0]!.start }], ["other_times", { offer_week: false, after: "11:00" }],
   ["format", { format: "meet" }], ["ask_owner", { question: "Which entrance?" }], ["decline", {}],
 ];
 
-function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+15551234567||\nE|1|guest@example.net||") {
+function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+15551234567||\nE|1|guest@example.net||", timezone = "UTC") {
   const home = tmpHome();
   const previousHome = process.env.MEETLY_HOME;
   const previousToken = process.env.PLOW_MCP_BRIDGE_TOKEN;
@@ -40,7 +41,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   process.env.MEETLY_HOME = home;
   process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture";
   t.mock.method(Date, "now", () => now);
-  const config = { ...DEFAULTS, ownerName: "Alex", timezone: "UTC", defaultAccount: "owner@example.com",
+  const config = { ...DEFAULTS, ownerName: "Alex", timezone, defaultAccount: "owner@example.com",
     calendars: [{ account: "owner@example.com", id: "owner@example.com" }], setupDoneAt: new Date(now).toISOString() };
   writeJson(join(home, "config.json"), config);
   const ledger = addRequest({ requests: [] }, {
@@ -150,7 +151,7 @@ for (const [action, args] of actions) test(`${action} refuses an unlinked offer 
 });
 
 test("other-times files a free outside-window approval without replacing holds", async t => {
-  const args = { start: "2026-10-05T20:00" };
+  const args = { offer_week: false, start: "2026-10-05T20:00" };
   const f = fixture(t);
   f.ledger.requests[0]!.constraints!.before = "21:00";
   f.save(f.ledger);
@@ -172,7 +173,7 @@ test("other-times files a free outside-window approval without replacing holds",
 
 test("an exact in-window other-times request holds that time without asking the owner", async t => {
   const f = fixture(t);
-  const result = await f.act(context, "other_times", { start: "2026-10-05T11:15" });
+  const result = await f.act(context, "other_times", { offer_week: false, start: "2026-10-05T11:15" });
   assert.ok(!("error" in result));
   assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, false);
   assert.deepEqual(f.request().offered.map(o => [o.start, o.end]), [["2026-10-05T11:15:00+00:00", "2026-10-05T11:45:00+00:00"]]);
@@ -183,11 +184,52 @@ for (const reason of ["busy", "owner constraints"] as const) test(`an exact othe
   const f = fixture(t);
   if (reason === "busy") f.events.set("conflict", event("conflict", "2026-10-05T11:15:00Z", "2026-10-05T11:45:00Z"));
   else { f.ledger.requests[0]!.constraints!.after = "12:00"; f.save(f.ledger); }
-  const result = await f.act(context, "other_times", { start: "2026-10-05T11:15" });
+  const result = await f.act(context, "other_times", { offer_week: false, start: "2026-10-05T11:15" });
   assert.ok(!("error" in result));
   assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true);
   assert.ok(f.request().offered.every(o => o.start !== "2026-10-05T11:15:00+00:00"));
   assert.equal(f.ownerLines.length, 0);
+});
+
+test("guest date bounds survive fallback when the preferred clock time is unavailable", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = {};
+  f.save(f.ledger);
+  const result = await f.act(context, "other_times", { offer_week: false, from: "2026-10-05", to: "2026-10-11", after: "20:00" });
+  assert.ok(!("error" in result));
+  assert.ok(f.request().offered.every(o => o.start.slice(0, 10) >= "2026-10-05" && o.start.slice(0, 10) <= "2026-10-11"));
+  assert.equal(f.ownerLines.length, 0, "a broad preference is not an exact time approval");
+});
+
+test("other-times automatically sends a lunch-window approval even inside working hours", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = { days: ["mon", "tue"] };
+  f.ledger.requests[0]!.meal = "lunch";
+  f.ledger.requests[0]!.durationMin = 60;
+  f.save(f.ledger);
+  const result = await f.tools.get("meetly_other_times")!.execute("ask", { offer_week: false,
+    start: "2026-10-06T15:00",
+  });
+  assert.equal(JSON.parse(result.content[0]!.text).ownerAskSent, true);
+  assert.equal(f.deliveries.length, 1);
+  assert.match(f.ownerLines[0]!, /outside the meeting window/);
+  assert.doesNotMatch(f.ownerLines[0]!, /working hours/);
+  assert.deepEqual(f.request().offered, offers);
+  assert.deepEqual(f.request().pendingOwner, { start: "2026-10-06T15:00:00+00:00", end: "2026-10-06T16:00:00+00:00", askedAt: new Date(now).toISOString() });
+});
+
+for (const failure of ["calendar", "delivery"] as const) test(`outside-window approval never claims an owner ask on ${failure}`, async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = { days: ["mon", "tue"] }; f.save(f.ledger);
+  if (failure === "calendar") f.fail.add("events");
+  if (failure === "delivery") f.delivery.status = "queued";
+  const tool = f.tools.get("meetly_other_times")!;
+  const result = JSON.parse((await tool.execute("ask", { offer_week: false, start: "2026-10-05T20:00" })).content[0]!.text);
+  assert.ok(result.error);
+  assert.notEqual(result.ownerAskSent, true);
+  assert.equal(result.message, undefined);
+  assert.equal(f.deliveries.length, failure === "delivery" ? 1 : 0);
+  assert.deepEqual(f.request().offered, offers);
 });
 
 test("decline requires the guest's clear refusal, never an other-times refusal", () => {
@@ -199,6 +241,8 @@ test("decline requires the guest's clear refusal, never an other-times refusal",
   assert.match(descriptions.get("meetly_decline")!, /A refusal from meetly_other_times is not a guest decline/);
   assert.match(descriptions.get("meetly_other_times")!, /automatically asks the owner/);
   assert.match(descriptions.get("meetly_other_times")!, /ownerAskSent is true/);
+  assert.match(descriptions.get("meetly_other_times")!, /Never repeat the guest\'s proposed terms, even in a refusal/);
+  assert.doesNotMatch(descriptions.get("meetly_other_times")!, /explain which preferences/);
   assert.match(descriptions.get("meetly_other_times")!, /ask for a specific date and time if needed/);
   assert.match(descriptions.get("meetly_ask_owner")!, /Never invent a question or turn your own uncertainty into a guest question/);
   assert.match(descriptions.get("meetly_ask_owner")!, /ownerAskSent is true/);
@@ -207,8 +251,7 @@ test("decline requires the guest's clear refusal, never an other-times refusal",
 
 test("ordinary plugin tool factories retain context, have no identity arguments, and declare their contracts", () => {
   const names: string[] = [];
-  const hooks: string[] = [];
-  plugin.register({ on(name: string) { hooks.push(name); }, registerTool(factory: (ctx: object) => { name: string; parameters: { properties: object; required: string[] } }) {
+  plugin.register({ on() {}, registerTool(factory: (ctx: object) => { name: string; parameters: { properties: object; required: string[] } }) {
     const tool = factory(context); names.push(tool.name);
     if (tool.name === "meetly_ask_owner") {
       assert.deepEqual(Object.keys(tool.parameters.properties), ["question"]);
@@ -217,12 +260,44 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
     if (!["meetly_offer_owner_group", "meetly_offer_owner_dm"].includes(tool.name)) assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap", "constraints"].includes(k)));
   } });
   assert.deepEqual(names, JSON.parse(readFileSync(new URL("../plugin/openclaw.plugin.json", import.meta.url), "utf8")).contracts.tools);
-  assert.deepEqual(hooks, ["before_prompt_build"]);
+});
+
+for (const preferences of [
+  {},
+  { from: "2026-10-05", to: "2026-10-07", after: "20:00" },
+  { days: ["thu"], after: "20:00" },
+]) test(`ruled-out Tuesdays stay excluded from replacement searches: ${JSON.stringify(preferences)}`, async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-07", after: "10:00", before: "15:00" };
+  f.save(f.ledger);
+  f.events.set("monday", event("monday", "2026-10-05T00:00:00Z", "2026-10-06T00:00:00Z"));
+  const result = await f.tools.get("meetly_other_times")!.execute("call", { offer_week: false, ...preferences, excludedDays: ["tue"] });
+  const details = JSON.parse(result.content[0]!.text);
+  assert.equal(details.error, undefined, JSON.stringify(details));
+  assert.ok(details.offered.length > 0);
+  assert.ok(details.offered.every((o: { start: string }) => o.start.startsWith("2026-10-07")), JSON.stringify(details.offered));
+  assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-07")));
+  t.diagnostic(`Replacement offer: ${JSON.stringify(details.offered)}`);
+});
+
+for (const args of [
+  { excludedDays: ["funday"] },
+  { excludedDays: ["mon", "tue"] },
+  { excludedDays: ["tue"], start: offers[1]!.start },
+]) test(`excluded weekdays cannot be bypassed: ${JSON.stringify(args)}`, async t => {
+  const f = fixture(t);
+  const before = f.read();
+  const result = await f.tools.get("meetly_other_times")!.execute("call", { ...args, offer_week: false });
+  assert.ok(JSON.parse(result.content[0]!.text).error);
+  if (!args.excludedDays.includes("funday")) before.requests[0]!.excludedDays = args.excludedDays;
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.ownerLines.length, 0);
+  assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
 test("blank optional preferences through the guest tool still produce fresh held times", async t => {
   const f = fixture(t);
-  const result = await f.tools.get("meetly_other_times")!.execute("call", {
+  const result = await f.tools.get("meetly_other_times")!.execute("call", { offer_week: false,
     from: "", to: "", after: "", before: "",
   });
   const details = JSON.parse(result.content[0]!.text);
@@ -283,7 +358,7 @@ for (const allowed of [true, false]) test(`pick rechecks conflicts; owner-approv
 
 test("other times intersect guest preferences with owner conditions and replace holds with a cleanup retry record", async t => {
   const f = fixture(t); f.fail.add("hold-two");
-  const result = await guestAction(context, "other_times", { days: ["mon", "tue", "wed"], after: "09:00", before: "12:00", from: "2026-10-01", to: "2026-10-31" });
+  const result = await guestAction(context, "other_times", { offer_week: false, days: ["mon", "tue", "wed"], after: "09:00", before: "12:00", from: "2026-10-01", to: "2026-10-31" });
   assert.ok(!("error" in result), JSON.stringify(result));
   const request = f.request();
   assert.equal(request.status, "offered"); assert.equal(request.offered.length, 3);
@@ -315,10 +390,10 @@ test("an outside-hours refusal can proceed to owner approval without dropping or
   f.ledger.requests[0]!.constraints!.before = "21:00";
   f.save(f.ledger);
   for (const date of ["2026-10-05", "2026-10-06"]) f.events.set(date, event(date, `${date}T09:00:00Z`, `${date}T18:00:00Z`));
-  const refused = await guestAction(context, "other_times", { after: "20:00" });
+  const refused = await guestAction(context, "other_times", { offer_week: false, after: "20:00" });
   assert.ok("error" in refused);
   assert.deepEqual(f.read(), f.ledger);
-  const result = await f.act(context, "other_times", { start: "2026-10-05T20:00" });
+  const result = await f.act(context, "other_times", { offer_week: false, start: "2026-10-05T20:00" });
   assert.ok(!("error" in result)); assert.equal(f.request().status, "offered");
   assert.deepEqual(f.request().pendingOwner, { start: "2026-10-05T20:00:00+00:00", end: "2026-10-05T20:30:00+00:00", askedAt: new Date(now).toISOString() });
   assert.ok(f.commands.every(c => c[2] === "events"));
@@ -357,7 +432,7 @@ for (const status of ["booked", "dropped", "expired"] as const) test(`${status} 
 test("calendar failure leaks no event data and leaves the offer untouched", async t => {
   const f = fixture(t); f.fail.add("events");
   for (const action of ["pick", "other_times"] as const) {
-    const result = await guestAction(context, action, { start: offers[0]!.start });
+    const result = await guestAction(context, action, { offer_week: false, start: offers[0]!.start });
     assert.ok("error" in result); assert.doesNotMatch(JSON.stringify(result), /PRIVATE|owner@example.com/);
   }
   assert.deepEqual(f.read(), f.ledger);
@@ -395,25 +470,36 @@ test("pick cannot bypass the current offer", async t => {
   assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
-test("a rejected Thursday counterproposal returns fresh times within the owner's conditions", async t => {
+for (const { name, ownerConstraints, guestArgs, busy, expectedDates } of [
+  { name: "weekday without date bounds", ownerConstraints: { days: ["mon", "tue"], from: "2026-10-05", to: "2026-10-06", after: "10:00", before: "15:00" },
+    guestArgs: { days: ["thu"], after: "16:00", before: "18:00" }, expectedDates: ["2026-10-05", "2026-10-06"] },
+  { name: "Thursday outside owner date bounds", ownerConstraints: { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-07", after: "10:00", before: "15:00" },
+    guestArgs: { days: ["thu"], from: "2026-10-08", to: "2026-10-08", after: "16:00", before: "18:00" }, expectedDates: ["2026-10-05", "2026-10-06", "2026-10-07"] },
+  { name: "unavailable guest week", ownerConstraints: { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-14", after: "10:00", before: "15:00" },
+    guestArgs: { from: "2026-10-05", to: "2026-10-11" }, busy: { start: "2026-10-05T00:00:00Z", end: "2026-10-12T00:00:00Z" }, expectedDates: ["2026-10-12", "2026-10-13", "2026-10-14"] },
+]) test(`owner-condition fallback: ${name}`, async t => {
   const f = fixture(t);
-  const result = await guestAction(context, "other_times", { days: ["thu"], from: "2026-10-08", to: "2026-10-08", after: "16:00", before: "18:00" });
+  f.ledger.requests[0]!.constraints = ownerConstraints; f.save(f.ledger);
+  if (busy) f.events.set("busy", event("busy", busy.start, busy.end));
+  const result = await f.act(context, "other_times", { ...guestArgs, offer_week: false });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal("preferencesUnavailable" in result && result.preferencesUnavailable, true);
-  assert.deepEqual(f.request().constraints, f.ledger.requests[0]!.constraints);
+  assert.deepEqual(f.request().constraints, ownerConstraints);
+  assert.equal(f.request().status, "offered");
   assert.ok(f.request().offered.length > 0);
   for (const offer of f.request().offered) {
-    assert.ok(["2026-10-05", "2026-10-06"].includes(offer.start.slice(0, 10)));
+    assert.ok(expectedDates.includes(offer.start.slice(0, 10)));
     assert.ok(offer.start.slice(11, 16) >= "10:00" && offer.end.slice(11, 16) <= "15:00");
     assert.ok(!offers.some(old => Date.parse(old.start) === Date.parse(offer.start)));
   }
   assert.ok(offers.every(old => f.events.get(old.holdId)!.status === "cancelled"));
+  assert.equal(f.ownerLines.length, 0);
 });
 
 test("no fallback availability leaves the existing offer and holds intact", async t => {
   const f = fixture(t);
   f.events.set("busy", event("busy", "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z"));
-  const result = await guestAction(context, "other_times", { days: ["wed"] });
+  const result = await guestAction(context, "other_times", { offer_week: false, days: ["wed"] });
   assert.ok("error" in result); assert.deepEqual(f.read(), f.ledger);
   assert.ok(f.commands.every(c => c[2] === "events"));
 });
@@ -450,7 +536,7 @@ test("replacement times overlap only the request's old holds until the new offer
   f.ledger.requests[0]!.offered = offers.map(o => ({ ...o, end: o.end.replace("10:30", "11:00") }));
   for (const e of f.events.values()) e.end.dateTime = e.end.dateTime.replace("10:30", "11:00");
   f.save(f.ledger);
-  const result = await guestAction(context, "other_times", { after: "10:30", before: "11:30" });
+  const result = await guestAction(context, "other_times", { offer_week: false, after: "10:30", before: "11:30" });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().offered.length, 2);
   assert.ok(f.request().offered.every(o => o.start.slice(11, 16) === "10:30"));
@@ -477,7 +563,7 @@ test('canonical email equality is case insensitive but never suffix based', asyn
 
 test('a failed replacement through the writer preserves the original offer and live holds', async t => {
   const f = fixture(t); f.fail.add('create');
-  const result = await guestAction(context, 'other_times', { after: '11:00' });
+  const result = await guestAction(context, 'other_times', { offer_week: false, after: '11:00' });
   assert.ok('error' in result);
   assert.deepEqual(f.request().offered, offers);
   assert.equal(f.events.get('hold-one')!.status, 'confirmed');
@@ -487,7 +573,7 @@ test('a failed replacement through the writer preserves the original offer and l
 
 for (const action of ['pick', 'other_times'] as const) test(`guest ${action} reconciles a lost write response through the writer`, async t => {
   const f = fixture(t); f.lost.add(action === 'pick' ? 'update' : 'create');
-  const result = await guestAction(context, action, action === 'pick' ? { start: offers[0]!.start } : { after: '11:00' });
+  const result = await guestAction(context, action, action === 'pick' ? { start: offers[0]!.start } : { offer_week: false, after: '11:00' });
   assert.ok(!('error' in result), JSON.stringify(result));
   assert.ok(f.request().calendarRevision);
   if (action === 'pick') {
@@ -572,11 +658,11 @@ test("questions and time approvals share one slot, including concurrent asks", a
   f.save(f.ledger);
   const ask = f.tools.get("meetly_ask_owner")!;
   const times = f.tools.get("meetly_other_times")!;
-  const results = await Promise.all([times.execute("one", { start: "2026-10-05T20:00" }), ask.execute("two", { question: "Which project?" })]);
+  const results = await Promise.all([times.execute("one", { offer_week: false, start: "2026-10-05T20:00" }), ask.execute("two", { question: "Which project?" })]);
   assert.equal(results.filter(r => /error/.test(r.content[0]!.text)).length, 1);
   assert.equal(f.deliveries.length, 1);
   const pending = f.request().pendingOwner;
-  const result = await times.execute("three", { start: "2026-10-06T20:00" });
+  const result = await times.execute("three", { offer_week: false, start: "2026-10-06T20:00" });
   assert.match(result.content[0]!.text, /already open/);
   assert.deepEqual(f.request().pendingOwner, pending);
 });
@@ -662,7 +748,9 @@ test("the owner tool records the runtime chat uid and refuses another group's cl
   assert.ok(tool.parameters.required.includes("durationMin"));
   assert.deepEqual(tool.parameters.properties.constraints.properties.days.items.enum, ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
   assert.equal(tool.parameters.properties.constraints.properties.after.description, "Earliest time, HH:MM.");
-  assert.equal(tool.parameters.properties.proposed, tool.parameters.properties.constraints);
+  assert.equal(tool.parameters.properties.proposed.properties, tool.parameters.properties.constraints.properties);
+  assert.equal(f.request().constraints, undefined);
+  assert.equal(f.request().proposed, undefined);
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "other-group" }, "view"));
   assert.ok("error" in await guestAction({ ...context, nativeChannelId: "cht_mixed" }, "view"));
   assert.ok(!("error" in await guestAction({ ...context, nativeChannelId: "cht_MiXeD" }, "view")));
@@ -801,10 +889,69 @@ for (const [askDetails, format, location, expected] of [
   assert.equal(!!f.request().detailsAskedAt, expected);
   const reloaded = await import(new URL(`../skills/meetly/scripts/guest.ts?details=${askDetails}-${format}-${location}`, import.meta.url).href);
   assert.equal((await reloaded.guestAction(context, "view")).askDetails, false);
-  assert.ok(!("error" in await guestAction(context, "other_times", { after: "11:00" })));
+  assert.ok(!("error" in await guestAction(context, "other_times", { offer_week: false, after: "11:00" })));
   assert.equal((await guestAction(context, "view") as { askDetails: boolean }).askDetails, false);
   assert.ok(!("error" in await guestAction(context, "pick", { start: f.request().offered[0]!.start })));
   assert.equal((await guestAction(context, "view") as { askDetails: boolean }).askDetails, false);
+});
+
+test("guests can re-offer and book dinner but cannot widen its meal window", async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.meal = "dinner";
+  request.durationMin = 60;
+  request.constraints = { days: ["mon", "tue"], from: "2026-10-05", to: "2026-10-06" };
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { offer_week: false, after: "17:00", before: "23:00" });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  const offered = f.request().offered;
+  assert.equal(offered.length, 3);
+  assert.ok(offered.every(o => o.start.slice(11, 16) >= "18:00" && o.end.slice(11, 16) <= "21:00"));
+  const booked = await guestAction(context, "pick", { start: offered[0]!.start });
+  assert.ok(!("error" in booked), JSON.stringify(booked));
+  assert.equal(f.request().status, "booked");
+});
+
+
+
+test("an owner duration change keeps an unanswered opener question suppressed on guest re-offers", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.detailsAskedAt = new Date(now).toISOString();
+  f.ledger.requests[0]!.durationMin = 60;
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", { offer_week: false, days: ["tue"] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal("askDetails" in result && result.askDetails, false);
+  assert.equal(f.request().detailsAskedAt, new Date(now).toISOString());
+  assert.equal(f.request().format, "unknown");
+  assert.equal(f.request().durationMin, 60);
+});
+
+
+
+
+test("owner-group lunch uses the selected duration within the meal window", async t => {
+  const f = fixture(t);
+  f.save({ requests: [] });
+  f.events.clear();
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Lunch", meal: "lunch", durationMin: 60 });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().meal, "lunch");
+  assert.ok(f.request().offered.every(o => o.start.slice(11, 16) >= "11:30" && o.end.slice(11, 16) <= "13:30"));
+  assert.equal(f.request().durationMin, 60);
+  assert.equal(f.request().offered[0]!.account, "owner@example.com");
+});
+
+
+test("guest next_week uses the source timestamp and owner timezone before filtering weekdays", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints!.to = "2026-10-16";
+  f.save(f.ledger);
+  const result = await f.act(context, "other_times", { offer_week: false, next_week: "2026-10-05T23:30:00Z", days: ["tue"] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.ok(f.request().offered.length > 0);
+  assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-13")), JSON.stringify(f.request().offered));
 });
 
 
@@ -885,6 +1032,62 @@ test("owner-group records model duration and saves the owner's guest name for DM
   assert.equal(found.json.request.chatUid, "chat-one");
 });
 
+
+for (const start of [{ weekday: "thu" }, { weekday: "thu", time: "09:00" }] as const)
+test(`a Thursday preference outside Monday-Wednesday returns a refusal with offer-week alternatives: ${JSON.stringify(start)}`, async t => {
+  const f = fixture(t, undefined, "America/Los_Angeles");
+  const request = f.ledger.requests[0]!;
+  request.constraints = { days: ["mon", "tue", "wed"], from: "2026-10-12", to: "2026-10-14" };
+  request.offered = [12, 13].map(day => ({ start: `2026-10-${day}T09:00:00-07:00`, end: `2026-10-${day}T09:30:00-07:00`, holdId: `offer-${day}`, account: "owner@example.com" }));
+  f.save(f.ledger); f.events.clear();
+  const result = await f.tools.get("meetly_other_times")!.execute("weekday", { offer_week: true, start });
+  const details = JSON.parse(result.content[0]!.text);
+  assert.equal(details.preferencesUnavailable, true, JSON.stringify(details));
+  assert.ok(details.offered.length);
+  assert.ok(details.offered.every((o: { start: string }) => o.start >= "2026-10-12" && o.start < "2026-10-15"));
+  assert.equal(f.ownerLines.length, 0);
+  t.diagnostic(JSON.stringify(details));
+});
+
+test("a bare Thursday preference resolves to the offer week without inventing a clock time", async t => {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.constraints = {};
+  request.offered = [{ start: "2026-10-12T10:00:00Z", end: "2026-10-12T10:30:00Z", holdId: "offer", account: "owner@example.com" }];
+  f.save(f.ledger); f.events.clear();
+  const result = await f.tools.get("meetly_other_times")!.execute("weekday", { offer_week: true, start: { weekday: "thu" } });
+  const details = JSON.parse(result.content[0]!.text);
+  assert.equal(details.preferencesUnavailable, false, JSON.stringify(details));
+  assert.ok(details.offered.length);
+  assert.ok(details.offered.every((o: { start: string }) => o.start.startsWith("2026-10-15")));
+  assert.equal(f.ownerLines.length, 0);
+});
+
+for (const [meal, duration] of [["lunch", 60], ["dinner", 60], ["coffee", 30]] as const)
+test(`owner-group preserves explicit ${meal} duration`, async t => {
+  const f = fixture(t);
+  f.save({ requests: [] }); f.events.clear();
+  let tool: any;
+  registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
+  const result = await tool.execute("offer", { topic: meal, meal, durationMin: duration });
+  assert.equal(result.isError, false, JSON.stringify(result));
+  assert.equal(f.request().durationMin, duration);
+  assert.ok(f.request().offered.every(slot => Date.parse(slot.end) - Date.parse(slot.start) === duration * 60_000));
+});
+
+test("DM offers save the owner's guest name and keep it through a replacement", async t => {
+  const f = fixture(t, "");
+  f.save({ requests: [] }); f.events.clear();
+  const { request } = await offerRequest({ origin: "owner", handle: context.requesterSenderId, name: "Dee", topic: "coffee", meal: "coffee",
+    offered: offers.map(({ start, end }) => ({ start, end })) });
+  assert.equal(f.request().name, "Dee");
+  const next = await offerRequest({ origin: "owner", handle: request.handle, topic: "coffee", meal: "coffee",
+    offered: [{ start: "2026-10-07T10:00:00Z", end: "2026-10-07T10:30:00Z" }] });
+  assert.equal(next.request.name, "Dee");
+  assert.equal(next.request.id, request.id);
+  assert.ok(f.commands.filter(c => c[2] === "create").every(c => c[c.indexOf("--summary") + 1] === "Hold: coffee with Dee"));
+});
+
 test("owner-group busy requested times rank nearby alternatives while retaining hard bounds", async t => {
   const f = fixture(t);
   f.save({ requests: [] }); f.events.clear();
@@ -908,12 +1111,12 @@ for (const constraints of [
   f.ledger.requests[0]!.constraints = constraints;
   f.save(f.ledger);
   const before = f.read();
-  const result = await f.act(context, "other_times", { start: "2026-10-08T20:00:00Z" });
-  assert.match(JSON.stringify(result), /time.*outside.*owner.*conditions/i);
-  assert.deepEqual(f.read(), before);
+  const result = await f.act(context, "other_times", { offer_week: false, start: "2026-10-08T20:00:00Z" });
+  assert.notEqual("ownerAskSent" in result && result.ownerAskSent, true);
+  assert.ok(f.request().offered.every(o => withinConstraints(Date.parse(o.start), Date.parse(o.end), "UTC", constraints)) || "error" in result);
+  if ("error" in result) assert.deepEqual(f.read(), before);
   assert.equal(f.ownerLines.length, 0);
   assert.equal(f.deliveries.length, 0);
-  assert.ok(f.commands.every(c => c[2] === "events"));
 });
 
 test("owner-group duration steering atomically replaces holds in the same chat", async t => {
@@ -1003,48 +1206,83 @@ for (const replacement of [undefined, { days: ["wed"], from: "2026-10-07", to: "
   });
 }
 
-test("guests can re-offer and book dinner but cannot widen its meal window", async t => {
+for (const preference of [{ days: ["mon"] }, { start: "2026-10-12T10:00:00Z" }])
+for (const offer_week of [false, true]) test(`explicit offer_week=${offer_week} controls search ${JSON.stringify(preference)}`, async t => {
   const f = fixture(t);
-  const request = f.ledger.requests[0]!;
-  request.meal = "dinner";
-  request.durationMin = 60;
-  request.constraints = { days: ["mon", "tue"], from: "2026-10-05", to: "2026-10-06" };
+  f.ledger.requests[0]!.constraints = { from: "2026-10-05", to: "2026-10-16" };
   f.save(f.ledger);
-  const result = await guestAction(context, "other_times", { after: "17:00", before: "23:00" });
-  assert.ok(!("error" in result), JSON.stringify(result));
-  const offered = f.request().offered;
-  assert.equal(offered.length, 3);
-  assert.ok(offered.every(o => o.start.slice(11, 16) >= "18:00" && o.end.slice(11, 16) <= "21:00"));
-  const booked = await guestAction(context, "pick", { start: offered[0]!.start });
-  assert.ok(!("error" in booked), JSON.stringify(booked));
-  assert.equal(f.request().status, "booked");
+  f.events.set("busy", event("busy", "2026-10-05T00:00:00Z", "2026-10-12T00:00:00Z"));
+  const result = await f.act(context, "other_times", { offer_week, ...preference });
+  if (offer_week) {
+    assert.ok("error" in result, JSON.stringify(result));
+    assert.deepEqual(f.read(), f.ledger);
+  } else {
+    assert.ok(!("error" in result), JSON.stringify(result));
+    assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-12")));
+  }
 });
 
-test("an owner duration change keeps an unanswered opener question suppressed on guest re-offers", async t => {
-  const f = fixture(t);
-  f.ledger.requests[0]!.detailsAskedAt = new Date(now).toISOString();
-  f.ledger.requests[0]!.durationMin = 60;
-  f.save(f.ledger);
-  const result = await guestAction(context, "other_times", { days: ["tue"] });
+for (const caller of ["guest", "owner"] as const) test(`${caller} preserves safe slots before truncated calendar coverage`, async t => {
+  const f = fixture(t), fetch = globalThis.fetch;
+  const cutoff = "2026-10-05T11:00:00Z";
+  t.mock.method(globalThis, "fetch", async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const response = await fetch(url, init);
+    if (String(url).startsWith("https://api.plow.test/")) return response;
+    const argv: string[] = JSON.parse(String(init?.body)).params.arguments.argv;
+    if (argv[2] !== "events" || Date.parse(argv[argv.indexOf("--to") + 1]!) <= Date.parse(cutoff)) return response;
+    const envelope = await response.json();
+    const content = envelope.result.content[0];
+    const command = JSON.parse(content.text);
+    command.output = JSON.stringify({ ...JSON.parse(command.output), truncated: { after: cutoff } });
+    content.text = JSON.stringify(command);
+    return Response.json(envelope);
+  });
+  const result = caller === "guest"
+    ? await f.act(context, "other_times", { offer_week: false })
+    : await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { topic: "Call", durationMin: 30 });
   assert.ok(!("error" in result), JSON.stringify(result));
-  assert.equal("askDetails" in result && result.askDetails, false);
-  assert.equal(f.request().detailsAskedAt, new Date(now).toISOString());
-  assert.equal(f.request().format, "unknown");
-  assert.equal(f.request().durationMin, 60);
+  assert.ok(f.request().offered.length > 0);
+  assert.ok(f.request().offered.every(o => Date.parse(o.end) <= Date.parse(cutoff)));
+  assert.ok(f.commands.some(c => c[2] === "create"));
 });
 
-test("owner-group lunch uses the selected duration within the meal window", async t => {
+test("guest alternatives search the owner's saved distant date", async t => {
   const f = fixture(t);
-  f.save({ requests: [] });
-  f.events.clear();
-  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { topic: "Lunch", meal: "lunch", durationMin: 60 });
+  f.ledger.requests[0]!.constraints = { from: "2026-10-29", to: "2026-10-29" };
+  f.save(f.ledger);
+  const result = await f.act(context, "other_times", { offer_week: false });
   assert.ok(!("error" in result), JSON.stringify(result));
-  assert.equal(f.request().meal, "lunch");
-  assert.ok(f.request().offered.every(o => o.start.slice(11, 16) >= "11:30" && o.end.slice(11, 16) <= "13:30"));
-  assert.equal(f.request().durationMin, 60);
-  assert.equal(f.request().offered[0]!.account, "owner@example.com");
+  assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-29")));
 });
+
+for (const field of ["constraints", "proposed"] as const) test(`owner-group reads and holds explicit distant ${field}`, async t => {
+  const f = fixture(t);
+  f.save({ requests: [] }); f.events.clear();
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+    topic: "Planning", durationMin: 30, format: "meet",
+    [field]: { from: "2026-10-29", to: "2026-10-29" },
+  });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.ok(f.read().requests[0]!.offered.every(o => o.start.startsWith("2026-10-29")));
+  assert.equal((result as any).preferencesUnavailable, false);
+  const read = f.commands.find(a => a[2] === "events")!;
+  assert.ok(read.some(a => a.includes("2026-10-30")), JSON.stringify(read));
+});
+
+test("owner-group resolves and persists next week from Sunday in the owner's zone", async t => {
+  const f = fixture(t, undefined, "America/Los_Angeles");
+  f.save({ requests: [] }); f.events.clear();
+  t.mock.method(Date, "now", () => Date.parse("2026-10-05T02:12:33Z"));
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, {
+    topic: "Planning", durationMin: 30, format: "meet",
+    week: "next", constraints: { days: ["mon", "tue", "wed"] },
+  });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  const request = f.read().requests[0]!;
+  assert.deepEqual(request.constraints, { days: ["mon", "tue", "wed"], from: "2026-10-05", to: "2026-10-11" });
+  assert.deepEqual(request.offered.map(o => o.start.slice(0, 10)), ["2026-10-05", "2026-10-06", "2026-10-07"]);
+});
+
 
 test("guests can book an owner-selected start that crosses midnight", async t => {
   const f = fixture(t);
@@ -1066,20 +1304,75 @@ test("guest exclusions persist until explicitly restored", async t => {
   f.ledger.requests[0]!.constraints = { from: "2026-10-05", to: "2026-10-09" };
   f.save(f.ledger);
   for (const args of [{ excludedDays: ["tue"] }, {}]) {
-    const result = await guestAction(context, "other_times", args);
+    const result = await f.act(context, "other_times", { ...args, offer_week: false });
     assert.ok(!("error" in result), JSON.stringify(result));
     assert.deepEqual(f.request().excludedDays, ["tue"]);
     assert.ok(f.request().offered.every(o => !o.start.startsWith("2026-10-06")));
   }
-  const restored = await guestAction(context, "other_times", { restoredDays: ["tue"], days: ["tue"] });
+  const restored = await f.act(context, "other_times", { offer_week: false, restoredDays: ["tue"], days: ["tue"] });
   assert.ok(!("error" in restored), JSON.stringify(restored));
   assert.deepEqual(f.request().excludedDays, []);
   assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-06")));
 });
 
+test("guest search requires an explicit date scope before creating holds", async t => {
+  const f = fixture(t);
+  const result = await guestAction(context, "other_times", {});
+  assert.equal("code" in result && result.code, "DATE_SCOPE_REQUIRED");
+  assert.deepEqual(f.read(), f.ledger);
+  assert.deepEqual(f.commands, []);
+});
+
+for (const constraints of [undefined, {}, { days: ["wed"], after: "14:00" }]) {
+  test(`owner next week replaces dates while respecting supplied policy: ${JSON.stringify(constraints)}`, async t => {
+    const f = fixture(t);
+    const saved = { days: ["tue", "thu"], after: "13:00", before: "15:00", startTime: "13:15", from: "2026-10-12", to: "2026-10-18" };
+    f.ledger.requests[0]!.constraints = saved;
+    f.save(f.ledger);
+    const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+      { topic: "Call", durationMin: 30, week: "next", ...(constraints === undefined ? {} : { constraints }) });
+    assert.ok(!("error" in result), JSON.stringify(result));
+    const { from, to, ...policy } = saved;
+    const expected = { ...(constraints ?? policy), from: "2026-10-05", to: "2026-10-11" };
+    assert.deepEqual(f.request().constraints, expected);
+    if (constraints === undefined) assert.ok(f.request().offered.every(o =>
+      ["2026-10-06", "2026-10-08"].includes(o.start.slice(0, 10)) && o.start.slice(11, 16) === "13:15"));
+    f.ledger.requests[0]!.constraints = expected;
+  });
+}
+
+for (const to of ["2026-11-30", "2026-12-01"]) test(`guest calendar-day cap across fall-back DST through ${to}`, async t => {
+  const f = fixture(t, undefined, "America/Los_Angeles");
+  f.ledger.requests[0]!.constraints = { from: "2026-10-02", to };
+  f.save(f.ledger);
+  const result = await f.act(context, "other_times", { offer_week: false });
+  if (to === "2026-11-30") {
+    assert.ok(!("error" in result), JSON.stringify(result));
+    assert.ok(f.request().offered.length > 0);
+    assert.ok(f.commands.some(c => c[2] === "events"));
+  } else {
+    assert.equal("code" in result && result.code, "SEARCH_RANGE_TOO_LARGE");
+    assert.deepEqual(f.commands, []);
+    assert.deepEqual(f.read(), f.ledger);
+  }
+});
+
+test("oversized guest coverage is rejected before calendar reads or hold changes", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = {};
+  f.save(f.ledger);
+  const result = await guestAction(context, "other_times", {
+    offer_week: false, from: "2026-10-05", to: "2027-12-31", excludedDays: ["tue"],
+  });
+  assert.match(JSON.stringify(result), /60 days/);
+  assert.deepEqual(f.commands, []);
+  assert.deepEqual(f.request().offered, f.ledger.requests[0]!.offered);
+  assert.deepEqual(f.request().excludedDays, ["tue"]);
+});
+
 test("excluded weekdays block stale picks when replacement search has no slots", async t => {
   const f = fixture(t);
-  const result = await f.act(context, "other_times", { excludedDays: ["mon", "tue"] });
+  const result = await f.act(context, "other_times", { offer_week: false, excludedDays: ["mon", "tue"] });
   assert.ok("error" in result);
   const before = f.commands.length;
   const picked = await guestAction(context, "pick", { start: offers[0]!.start });
