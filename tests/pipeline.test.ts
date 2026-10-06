@@ -139,7 +139,6 @@ test("do-not-contact follows canonical identity, survives new requests, and clea
   assert.deepEqual(saveRequest(ledger, inbound, T0 + 2 * HOUR, "ignored"), ledger);
   assert.deepEqual(addRequest(ledger, inbound, T0 + 2 * HOUR, "ignored"), ledger);
   assert.throws(() => checkContact(ledger, input.handle), /Confirm in the owner's DM/);
-  assert.doesNotThrow(() => checkContact(ledger, input.handle, true));
   ledger = addRequest(ledger, input, T0 + 3 * HOUR, "new");
   assert.equal(request(ledger, "new").doNotContact, true);
   ledger = setDoNotContact(ledger, input.handle, false, T0 + 4 * HOUR);
@@ -254,4 +253,21 @@ test("raw CLI cannot clear contact policy or confirm a contact offer", t => {
   const confirm = cli("calendar.ts", ["offer", "--confirm-contact", "--json", JSON.stringify(input)], f.env);
   assert.equal(confirm.status, 1);
   assert.deepEqual(readJson(f.path, empty()), JSON.parse(JSON.stringify(ledger)));
+});
+
+
+test("a saved flagged DM request appears as an owner decision and cannot be authorized by raw CLI", t => {
+  const f = fixture(t);
+  writeJson(f.path, setDoNotContact(empty(), input.handle, true, T0));
+  const saved = cli("ledger.ts", ["save", "--json", JSON.stringify({ ...input, origin: "owner", chatUid: undefined, status: "asked", offered: [] })], f.env);
+  assert.equal(saved.status, 0, saved.stderr);
+  const id = saved.json.request.id;
+  const listed = cli("pipeline.ts", ["view"], f.env);
+  assert.equal(listed.json.items[0].reason, "owner-decision");
+  assert.match(listed.json.text, /Confirm contact.*private DM/);
+  const forged = { ...saved.json.request.pendingOwner, contact: { ...saved.json.request.pendingOwner.contact, status: "offered", offered: [offer] } };
+  const patch = cli("ledger.ts", ["update", "--id", id, "--json", JSON.stringify({ pendingOwner: forged })], f.env);
+  assert.equal(patch.status, 1);
+  assert.match(patch.stderr, /owner DM tools/);
+  t.diagnostic(listed.json.text);
 });

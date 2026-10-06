@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { confirmContactOffer } from "../skills/meetly/scripts/contact-policy.ts";
 import { approveTime, calendarAction, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
-import { setDoNotContact, addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
+import { doNotContact, setDoNotContact, addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { macOutcome, type MacCommand, type MacOutcome } from "../skills/meetly/scripts/mac.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
@@ -813,7 +813,8 @@ test("a flagged owner offer requires explicit confirmation and retains the conta
   await assert.rejects(offerRequest(f.offer, f.options), /Confirm in the owner's DM/);
   assert.deepEqual(f.calls, [], "no calendar operation before confirmation");
   const result = await confirmContactOffer({ requestId: "r_one", offered: f.offer.offered }, f.options);
-  assert.equal(result.request.doNotContact, true);
+  assert.equal(result.request.doNotContact, false);
+  assert.equal(doNotContact(readJson<Ledger>(path, { requests: [] }), f.input.handle), true);
   assert.ok(f.calls.some(c => c[2] === "create"));
   await calendarAction("r_one", { action: "book", start }, f.options);
   assert.equal(f.read().status, "booked");
@@ -882,6 +883,40 @@ test("failed contact confirmation cannot authorize the previous offer", async t 
     command: async command => command.argv[2] === "create" ? { error: "failed" } : f.command(command),
   }));
   await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /Confirm in the owner's DM/);
-  assert.notEqual(f.read().contactConfirmed, true);
+  assert.equal(f.read().doNotContact, true);
+  assert.ok(f.read().pendingOwner && "contact" in f.read().pendingOwner!);
   assert.equal(f.read().status, "offered");
+  await confirmContactOffer({ requestId: "r_one", offered: proposed }, f.options);
+  assert.equal(f.read().pendingOwner, undefined);
+  await calendarAction("r_one", { action: "book", start: proposed[0]!.start }, f.options);
+  assert.equal(f.read().status, "booked");
+});
+
+for (const revokeAt of ["unresolved", "availability", "last-create"] as const) test(`contact revocation wins at ${revokeAt} and cleans the replacement`, async t => {
+  const f = fixture(t, "chat-one");
+  const path = join(f.home, "ledger.json");
+  const revoke = () => writeJson(path, setDoNotContact(readJson<Ledger>(path, { requests: [] }), f.input.handle, true, now + 1));
+  revoke();
+  const proposed = [{ start: "2026-10-07T10:00:00Z", end: "2026-10-07T10:30:00Z" }];
+  let revoked = false;
+  const command: CalendarOptions["command"] = async cmd => {
+    if (revokeAt === "availability" && cmd.argv[2] === "events" && !revoked) { revoke(); revoked = true; }
+    const result = await f.command(cmd);
+    if (cmd.argv[2] === "create") {
+      if (revokeAt === "last-create") revoke();
+      if (revokeAt === "unresolved") return undefined;
+    }
+    if (revokeAt === "unresolved" && cmd.argv.includes("--private-prop-filter")) return { output: '{"events":[]}' };
+    return result;
+  };
+  await assert.rejects(confirmContactOffer({ requestId: "r_one", offered: proposed }, { ...f.options, command }));
+  if (revokeAt === "unresolved") {
+    revoke();
+    await assert.rejects(calendarAction("r_one", { action: "resume" }, f.options), /Confirm in the owner's DM/);
+  }
+  assert.deepEqual(pendingCalendarWrites(), []);
+  assert.deepEqual(f.read().offered, f.input.offered);
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /Confirm in the owner's DM/);
+  assert.ok([...f.events.values()].filter(e => e.id.startsWith("new-")).every(e => e.status === "cancelled"));
+  if (revokeAt === "availability") assert.equal(f.calls.filter(c => c[2] === "create").length, 0);
 });

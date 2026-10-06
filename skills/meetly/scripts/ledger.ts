@@ -3,7 +3,7 @@
 // operation markers for creates whose event ids were never received.
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig, MEAL_DEFAULTS, reminderLeadMin, type Meal } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
@@ -26,9 +26,9 @@ export const uniqueCleanup = (refs: HoldCleanup[]) =>
   [...refs.filter(ref => ref.sendUpdates === "all"), ...refs.filter(ref => ref.sendUpdates !== "all")]
     .filter((ref, i, all) => all.findIndex(other => sameCleanup(ref, other)) === i);
 export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
-// One question or out-of-hours time waiting for the owner's answer.
+// One contact decision, question or out-of-hours time waiting for the owner.
 export const OWNER_QUESTION_LIMIT = 500;
-export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ start: string; end: string } | { question: string; alternatives?: { previousStarts: string[] } });
+export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ contact: NewRequest } | { start: string; end: string } | { question: string; alternatives?: { previousStarts: string[] } });
 export function intersectConstraints(owner: Constraints = {}, guest: Constraints = {}): Constraints {
   return {
     ...(owner.startTime || guest.startTime ? { startTime: owner.startTime ?? guest.startTime } : {}),
@@ -62,8 +62,6 @@ export type Request = {
   doNotContact?: boolean;
   lastGuestReplyAt?: string;
   lastNudge?: { fingerprint: string; at: string };
-  contactConfirmed?: boolean;
-  pendingContact?: NewRequest;
   topic: string;
   location?: string;
   durationMin: number;
@@ -105,7 +103,7 @@ export const requestEvents = (request: Request): HoldRef[] => [
 export type Ledger = { requests: Request[] };
 
 export type NewRequest = Omit<Request,
-  "id" | "doNotContact" | "lastGuestReplyAt" | "lastNudge" | "contactConfirmed" | "pendingContact" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
+  "id" | "doNotContact" | "lastGuestReplyAt" | "lastNudge" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
   | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
@@ -178,23 +176,34 @@ export class ContactConfirmationRequired extends Error {
   constructor() { super("This person is marked do not contact. Confirm in the owner's DM before scheduling."); }
 }
 
-export function checkContact(ledger: Ledger, handle: string, confirmed = false): void {
-  if (doNotContact(ledger, handle) && !confirmed) throw new ContactConfirmationRequired();
+export function checkContact(ledger: Ledger, handle: string, request?: Request, offer?: NewRequest): void {
+  const pending = request?.pendingOwner;
+  const decision = pending && "contact" in pending ? pending.contact : undefined;
+  if (doNotContact(ledger, handle) && !(request?.doNotContact === false && !decision)
+    && !(decision?.offered.length && isDeepStrictEqual(decision, offer))) throw new ContactConfirmationRequired();
+}
+
+export function contactRequest(request: Request): NewRequest {
+  const { origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails } = request;
+  return { origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails, offered: [] };
 }
 
 export const nudgeFingerprint = (reason: string, since: string): string => JSON.stringify([reason, since]);
 
 export function setDoNotContact(ledger: Ledger, handle: string, blocked: boolean, now: number, name?: string): Ledger {
   handle = normalizeHandle(handle);
-  if (!ledger.requests.some(r => sameHandle(r.handle, handle))) {
-    if (!blocked) return ledger;
+  if (blocked && !ledger.requests.some(r => sameHandle(r.handle, handle) && ["dropped", "expired"].includes(r.status))) {
     // A closed preference record keeps a new contact's flag in the same ledger.
     const id = requestId();
-    ledger = addRequest(ledger, { origin: "owner", handle, name, status: "asked", topic: "Scheduling preference", durationMin: 30, offered: [] }, now, id);
-    ledger = { requests: ledger.requests.map(r => r.id === id ? { ...r, status: "dropped" } : r) };
+    const preference = addRequest({ requests: [] }, { origin: "owner", handle, name, status: "asked", topic: "Scheduling preference", durationMin: 30, offered: [] }, now, id).requests[0]!;
+    ledger = { requests: [...ledger.requests, { ...preference, status: "dropped" }] };
   }
+  // Closed records retain the contact-wide preference. An active record may
+  // become unblocked only when its own pending decision commits successfully.
   return { requests: ledger.requests.map(r => sameHandle(r.handle, handle)
-    ? { ...r, doNotContact: blocked, contactConfirmed: false, updatedAt: new Date(now).toISOString() } : r) };
+    ? { ...r, doNotContact: blocked, ...(blocked && ["asked", "offered", "booked"].includes(r.status) ? {
+      pendingOwner: { askedAt: new Date(now).toISOString(), contact: { ...(r.pendingOwner && "contact" in r.pendingOwner ? r.pendingOwner.contact : contactRequest(r)), offered: [] } },
+    } : !blocked && r.pendingOwner && "contact" in r.pendingOwner ? { pendingOwner: undefined } : {}), updatedAt: new Date(now).toISOString() } : r) };
 }
 
 // Monitoring and question-delivery metadata do not invalidate a scheduling action's snapshot.
@@ -263,7 +272,7 @@ export function requireDuration(value: number | undefined): number {
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
   input = { ...input, handle: normalizeHandle(input.handle) };
   if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return ledger;
-  for (const key of ["doNotContact", "lastGuestReplyAt", "lastNudge", "contactConfirmed", "pendingContact"]) {
+  for (const key of ["doNotContact", "lastGuestReplyAt", "lastNudge", "pendingOwner"]) {
     if (key in input) throw new Error(`${key} is managed by pipeline.ts`);
   }
   for (const key of ["calendarRevision"]) {
@@ -294,7 +303,10 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   const request: Request = status === "asked"
     ? { ...fields, offered: [], format, id, status, createdAt: at, updatedAt: at }
     : { ...fields, format, id, status, offeredAt: at, createdAt: at, updatedAt: at };
-  if (doNotContact(ledger, input.handle)) request.doNotContact = true;
+  if (doNotContact(ledger, input.handle)) {
+    request.doNotContact = true;
+    request.pendingOwner = { askedAt: at, contact: contactRequest(request) };
+  }
   return { requests: [...ledger.requests, request] };
 }
 
@@ -353,10 +365,14 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
     if ("question" in pending && pending.alternatives !== undefined
       && (!Array.isArray(pending.alternatives?.previousStarts) || !pending.alternatives.previousStarts.length
         || pending.alternatives.previousStarts.some(start => !isDate(start)))) throw new Error("alternatives need the previous offered starts");
-    if (!isDate(pending.askedAt) || ("question" in pending
+    if ("contact" in pending) {
+      addRequest(EMPTY, { ...pending.contact, chatUid: undefined, status: "asked", offered: [] }, now, id);
+      checkOffers(pending.contact.offered, true);
+    }
+    if (!isDate(pending.askedAt) || ("contact" in pending ? "question" in pending || "start" in pending || "end" in pending : "question" in pending
       ? typeof pending.question !== "string" || !pending.question.trim() || pending.question.length > OWNER_QUESTION_LIMIT || "start" in pending || "end" in pending
       : !isDate(pending.start) || !isDate(pending.end))) {
-      throw new Error("pendingOwner needs askedAt and either a short question or valid start and end");
+      throw new Error("pendingOwner needs askedAt and a contact request, short question or valid start and end");
     }
   }
   if (patch.format !== undefined) checkFormat(patch.format);
@@ -398,7 +414,7 @@ export function recordDelivery(ledger: Ledger, id: string, kind: string, action:
   if (!request) throw new Error(`no request ${id}`);
   if (kind === "answer") {
     const pending = request.pendingOwner;
-    if (!request.chatUid || !["offered", "booked"].includes(request.status) || !pending || action === "complete") {
+    if (!request.chatUid || !["offered", "booked"].includes(request.status) || !pending || "contact" in pending || action === "complete") {
       throw new Error("answer delivery needs a pending question or time approval and begin or clear");
     }
     if (action === "begin" && pending.answerAttemptedAt) throw new Error("answer delivery already attempted; only the owner can authorize clearing it");
@@ -436,10 +452,10 @@ export function askedList(ledger: Ledger): Request[] {
   return ledger.requests.filter((r) => r.status === "asked");
 }
 
-// Requests waiting for a question's answer or an out-of-hours approval.
+// Requests waiting for a contact decision, question's answer or time approval.
 export function pendingOwnerList(ledger: Ledger): Request[] {
   return ledger.requests.filter((r) => r.pendingOwner !== undefined
-    && (r.status === "offered" || r.status === "booked"));
+    && (r.status === "offered" || r.status === "booked" || (r.status === "asked" && "contact" in r.pendingOwner)));
 }
 
 // Booked Meets whose link is due in the group: from `leadMin` before the
@@ -528,6 +544,7 @@ if (isMain(import.meta.url)) {
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
         const patch = jsonArg(values);
+        if (patch.pendingOwner && "contact" in patch.pendingOwner) throw new Error("Contact decisions require the owner DM tools.");
         for (const key of ["status", "eventId", "offered", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location", "durationMin", "allowOverlap"]) {
           if (key in patch) throw new Error(`${key} is managed by calendar.ts or reminder-check.ts`);
         }
