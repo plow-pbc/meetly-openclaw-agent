@@ -49,8 +49,8 @@ exits non-zero: report that line; never guess a result. State lives in
 Notes:
 - `status` remains the lifecycle. Waiting states come from pending questions,
   unanswered `asked` requests and offer timestamps. `dropped` also means passed.
-- `doNotContact`, `lastGuestReplyAt` and `lastNudge` live on requests.
-  The contact tool, pipeline commands and inbound reply hook own them;
+- The ledger stores `blockedHandles`; requests store `contactApproved`, `lastGuestReplyAt` and `lastNudge`.
+  The contact tools, calendar writer, pipeline commands and inbound reply hook own them;
   do not write them with `ledger.ts update` or supply them on a new request.
 - An inbound `asked` save for a flagged handle returns `skipped: "do-not-contact"`
   without adding a request. Release its cursor hold and send nothing.
@@ -71,8 +71,8 @@ Notes:
   attempt markers as group starts and must not retry an unknown send.
 - A booked request may have replacement `offered` times and `offeredAt`. Expiry releases only
   those replacement holds; the original event remains until a move or cancellation.
-- `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
-  `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-confirm`.
+- `pendingOwner` holds one `{contact, askedAt}`, `{question, askedAt}` or `{start, end, askedAt}`.
+  `ledger.ts pending` lists them: route contact decisions to `meetly-pipeline`; questions and time approvals go to "Owner confirms" in `meetly-confirm`.
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.
   `meetUrl` only ever holds `https://meet.google.com/xxx-xxxx-xxx`, only on
   a `meet`; the ledger refuses anything else.
