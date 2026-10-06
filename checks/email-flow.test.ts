@@ -86,7 +86,7 @@ for (const mode of ["sent", "unknown", "failed", "transport-unknown"]) test(`ema
           const id = argv[2] === "create" ? `event-${++nextEvent}` : argv[4]!;
           const event = { ...events.get(id), id, status: "confirmed", summary: flag("--summary"), start: { dateTime: flag("--from") }, end: { dateTime: flag("--to") },
             extendedProperties: { private: { meetlyOperation: flag("--private-prop").split("=")[1] } },
-            ...(argv.includes("--attendees") ? { attendees: flag("--attendees").split(",").map(email => ({ email })) } : {}),
+            ...(argv.includes("--attendees") || argv.includes("--add-attendee") ? { attendees: flag(argv.includes("--add-attendee") ? "--add-attendee" : "--attendees").split(",").map(email => ({ email })) } : {}),
             ...(argv.includes("--with-meet") ? { hangoutLink: "https://meet.google.com/abc-defg-hij" } : {}) };
           events.set(id, event); output = { event }; break;
         }
@@ -217,12 +217,12 @@ for (const mode of ["sent", "unknown", "failed", "transport-unknown"]) test(`ema
   assert.equal(request().status, "booked");
   const booked = events.get(request().eventId!);
   assert.deepEqual(booked.attendees, [{ email: ana.provider_key }]);
-  const invitation = commands.find(argv => argv.includes("--attendees"))!;
+  const invitation = commands.find(argv => argv.includes("--attendees") || argv.includes("--add-attendee"))!;
   assert.equal(invitation[invitation.indexOf("--send-updates") + 1], "all");
   assert.equal([...events.values()].filter(e => e.status !== "cancelled").length, 1);
   const beforeQuestion = posts.length;
   await receive("Should Ana bring the budget?", async (dispatch, available) => {
-    const result = (await available.get("meetly_ask_owner").execute("question", { question: "Should Ana bring the budget?" })).details;
+    const result = (await available.get("meetly_ask_owner").execute("question", { question: "Should Ana bring the budget?", replyMode: "question_only" })).details;
     assert.equal(result.ownerAskSent, true, JSON.stringify(result));
     assert.equal(result.silent, true);
     await dispatch.delivery.deliver({ text: "NO_REPLY" });
