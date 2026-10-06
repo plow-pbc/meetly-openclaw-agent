@@ -41,7 +41,7 @@ test("AGENTS.md renders the conversation identity and keeps the base's tool and 
   const base = flat(readFileSync(join(ROOT, "tests", "fixtures", "base-AGENTS.md"), "utf8"));
   for (const rule of BASE_CONTRACT) assert.ok(base.includes(rule), `the base no longer says: ${rule}`);
   assert.ok(prompt.includes("Meetly poll."));
-  assert.ok(flat(prompt).includes("Guest scheduling tools support Plow chat only; they are unavailable to email guests."));
+  assert.ok(flat(prompt).includes("Email participants may act on that thread's scheduling request with guest tools;"));
 });
 
 test("the seven Meetly skills exist", () => {
