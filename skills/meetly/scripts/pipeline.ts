@@ -68,9 +68,14 @@ export function renderPipeline(items: PipelineItem[], nudge = false): string | n
     `- Name: ${JSON.stringify(item.name)}; Topic: ${JSON.stringify(item.topic)}. ${item.detail} Since ${item.sinceLabel}.${item.doNotContact ? " Marked do not contact." : ""}`).join("\n")}`;
 }
 
-export function reserveNudges(ledger: Ledger, now: number, unresolved: readonly string[] = [], display: Display = { timezone: "UTC" }) {
-  const items = pipeline(ledger, now, unresolved, display).filter(item => item.nudge
+// What the next nudge would hold, without reserving it.
+export function pendingNudges(ledger: Ledger, now: number, unresolved: readonly string[] = [], display: Display = { timezone: "UTC" }): PipelineItem[] {
+  return pipeline(ledger, now, unresolved, display).filter(item => item.nudge
     && ledger.requests.find(r => r.id === item.id)!.lastNudge?.fingerprint !== item.fingerprint);
+}
+
+export function reserveNudges(ledger: Ledger, now: number, unresolved: readonly string[] = [], display: Display = { timezone: "UTC" }) {
+  const items = pendingNudges(ledger, now, unresolved, display);
   const byId = new Map(items.map(item => [item.id, item]));
   return {
     ledger: { ...ledger, requests: ledger.requests.map(request => {

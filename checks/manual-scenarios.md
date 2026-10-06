@@ -42,7 +42,11 @@ Shortcuts:
    - Check: `m/setup-status.ts` prints `READY`.
 2. [ ] **The poll job is registered.** `oc cron list --all --json`
    - Expect: exactly one `meetly-poll`, enabled, every 5 min, isolated,
-     timeout 600, with no model override.
+     payload kind `command`, argv `["node", "/opt/plow/skills/meetly/scripts/poll.ts"]`,
+     timeout 120 seconds, with no model override.
+   - Upgrade check: restart a setup-complete install with an existing `agentTurn`
+     poll. After gateway readiness, the same job id has the command payload;
+     a paused install stays disabled. No second poll job appears.
    - Expect: running `m/register-crons.ts` again prints `"actions":[]`.
 3. [ ] **Inbound request.** From the second phone, iMessage the owner: "want
    to grab coffee next week?".
