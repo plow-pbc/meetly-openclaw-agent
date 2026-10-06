@@ -21,7 +21,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   const request = ledger.requests.find(r => r.id === args.requestId);
   let pending = request?.pendingOwner;
   if (!request?.chatUid || !pending || "contact" in pending || pending.askedAt !== args.askedAt
-    || !["offered", "booked"].includes(request.status)) return { error: "No matching pending meeting question. Read the pending requests again." };
+    || (!["offered", "booked"].includes(request.status) && !(request.status === "asked" && "question" in pending && pending.overlap))) return { error: "No matching pending meeting question. Read the pending requests again." };
   const inGroup = chat === request.chatUid && ctx.agentAccountId === (request.channel === "email" ? "email" : "chat");
   if (!(ctx.agentAccountId === "chat" && ctx.sessionKey === "agent:main:main") && !inGroup) {
     return { error: "Answer from the owner's main DM or this request's group." };

@@ -437,7 +437,8 @@ export function recordDelivery(ledger: Ledger, id: string, kind: string, action:
   if (!request) throw new Error(`no request ${id}`);
   if (kind === "answer") {
     const pending = request.pendingOwner;
-    if (!request.chatUid || !["offered", "booked"].includes(request.status) || !pending || "contact" in pending || action === "complete") {
+    if (!request.chatUid || !pending || "contact" in pending || action === "complete"
+      || (!["offered", "booked"].includes(request.status) && !(request.status === "asked" && "question" in pending && pending.overlap))) {
       throw new Error("answer delivery needs a pending question or time approval and begin or clear");
     }
     if (action === "begin" && pending.answerAttemptedAt) throw new Error("answer delivery already attempted; only the owner can authorize clearing it");
@@ -478,7 +479,7 @@ export function askedList(ledger: Ledger): Request[] {
 // Requests waiting for a contact decision, question's answer or time approval.
 export function pendingOwnerList(ledger: Ledger): Request[] {
   return ledger.requests.filter((r) => r.pendingOwner !== undefined
-    && (r.status === "offered" || r.status === "booked" || (r.status === "asked" && "contact" in r.pendingOwner)));
+    && (r.status === "offered" || r.status === "booked" || (r.status === "asked" && ("contact" in r.pendingOwner || ("question" in r.pendingOwner && r.pendingOwner.overlap)))));
 }
 
 // Booked text-thread Meets whose link is due in the group: from `leadMin` before the

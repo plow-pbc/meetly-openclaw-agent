@@ -5,7 +5,7 @@ import { rmSync } from "node:fs";
 import { movableAction } from "../skills/meetly/scripts/movable.ts";
 import { calendarAction } from "../skills/meetly/scripts/calendar.ts";
 import { answerOwner } from "../skills/meetly/scripts/answer-owner.ts";
-import { addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
+import { addRequest, pendingOwnerList, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { calendarEvent, fakeCalendar, tmpHome } from "./helpers.ts";
@@ -14,16 +14,16 @@ const now = Date.parse("2026-10-03T08:00:00Z"), account = "owner@example.com";
 const slot = { start: "2026-10-05T12:00:00Z", end: "2026-10-05T12:30:00Z" };
 const owner = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "+15550001111", nativeChannelId: "owner-dm", sessionKey: "agent:main:main" };
 
-for (const scenario of ["allow", "refuse", "same-title", "other-account", "revoked", "email", "prior-grant", "booked", "travel"] as const) test(`fresh overlap answer binds exact inspected event: ${scenario}`, async t => {
+for (const scenario of ["allow", "refuse", "same-title", "other-account", "revoked", "email", "prior-grant", "booked", "travel", "asked"] as const) test(`fresh overlap answer binds exact inspected event: ${scenario}`, async t => {
   const home = tmpHome(), old = process.env.MEETLY_HOME;
   process.env.MEETLY_HOME = home;
   t.mock.method(Date, "now", () => now);
   t.after(() => { if (old === undefined) delete process.env.MEETLY_HOME; else process.env.MEETLY_HOME = old; rmSync(home, { recursive: true, force: true }); });
   const config = { ...DEFAULTS, ownerName: "Alex", timezone: "UTC", defaultAccount: account, calendars: [{ account, id: account }], setupDoneAt: new Date(now).toISOString() };
   writeJson(join(home, "config.json"), config);
-  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, { origin: "owner", handle: scenario === "email" ? "guest@example.net" : "+15550002222", channel: scenario === "email" ? "email" : "text",
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, { origin: scenario === "asked" ? "owner-group" : "owner", status: scenario === "asked" ? "asked" : "offered", handle: scenario === "email" ? "guest@example.net" : "+15550002222", channel: scenario === "email" ? "email" : "text",
     chatUid: "guest-chat", topic: "Lunch", durationMin: 30, format: scenario === "travel" ? "in_person" : "meet", travel: { beforeMin: scenario === "travel" ? 15 : 0, afterMin: 0 },
-    offered: [{ start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z", account }] }, now, "request"));
+    offered: scenario === "asked" ? [] : [{ start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z", account }] }, now, "request"));
   const read = () => readJson<Ledger>(join(home, "ledger.json"), { requests: [] }).requests[0]!;
   if (scenario === "booked") writeJson(join(home, "ledger.json"), { requests: [{ ...read(), status: "booked", eventId: "existing-meeting", booked: read().offered[0] }] });
   const event = { ...calendarEvent("inspected", scenario === "travel" ? "2026-10-05T11:45:00Z" : slot.start, scenario === "travel" ? slot.start : slot.end), summary: "Private focus block" };
@@ -37,6 +37,7 @@ for (const scenario of ["allow", "refuse", "same-title", "other-account", "revok
   const inspected = await movableAction(owner, { action: "inspect", requestId: "request", candidates: [slot] }, bridge);
   assert.ok(inspected.askedAt, JSON.stringify(inspected));
   const pending = read().pendingOwner!;
+  assert.equal(pendingOwnerList({ requests: [read()] }).length, 1);
   assert.ok("question" in pending && pending.overlap);
   assert.deepEqual(pending.overlap.choices[0]!.event, { account, id: "inspected" });
   const sent: string[] = [], send = async (_to: string, text: string) => { sent.push(text); };
@@ -73,10 +74,10 @@ for (const scenario of ["allow", "refuse", "same-title", "other-account", "revok
       assert.equal(calendar.calls.filter(c => c[2] === "create").length, writes);
     } else assert.equal(result.answered, true, JSON.stringify(result));
     assert.equal(read().pendingOwner, undefined);
-    assert.equal(read().status, before.status, "overlap permission never books or moves");
+    assert.equal(read().status, before.status === "asked" ? "offered" : before.status, "overlap permission never books or moves");
     assert.deepEqual(read().booked, before.booked);
     assert.deepEqual(read().allowOverlap ?? [], scenario === "refuse" ? [] : [{ account, id: "inspected" }]);
-    assert.equal(sent.length, ["allow", "booked", "travel"].includes(scenario) ? 1 : 0);
+    assert.equal(sent.length, ["allow", "booked", "travel", "asked"].includes(scenario) ? 1 : 0);
     assert.doesNotMatch(JSON.stringify(sent), /Private|inspected|example.com/);
     assert.equal(readJson<any>(join(home, "overlap-decisions.json"), {})["private focus block"].allowed, scenario !== "refuse");
   }
