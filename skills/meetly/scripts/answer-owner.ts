@@ -38,8 +38,9 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     try {
       const config = loadConfig(), now = Date.now();
       if (config.paused || !["offered", "booked"].includes(request.status)) throw new Error("Scheduling is paused or this offer is no longer open.");
+      const meeting = { ...request, ...request.replacement };
       const constraints = { ...request.constraints, ...args.constraints };
-      const query = { ...constraints, now, config, busy: [], travel: request.travel, format: request.format, meal: request.meal, durationMin: request.durationMin,
+      const query = { ...constraints, now, config, busy: [], travel: meeting.travel, format: meeting.format, meal: request.meal, durationMin: request.durationMin,
         locale: request.locale, allowOverlap: request.status === "booked" ? [] : request.allowOverlap, exclude: alternatives.previousStarts,
         days: (constraints.days ?? DAYS).filter(day => !request.excludedDays?.includes(day)) };
       const busy = await fetchBusy(config, searchCoverage(query));
@@ -48,7 +49,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
       const { slots } = findSlots({ ...query, ...busy });
       if (!slots.length) throw new Error("No new times are available in the checked calendar range. The alternative-search decision remains pending.");
       const before = request;
-      const { origin, handle, name, sourceRowid, chatUid, channel, topic, location, travel, meal, durationMin, proposed, allowOverlap, format, locale } = request;
+      const { origin, handle, name, sourceRowid, chatUid, channel, topic, location, travel, meal, durationMin, proposed, allowOverlap, format, locale } = meeting;
       request = (await calendarAction(request.id, { action: "offer", request: {
         origin, handle, name, sourceRowid, chatUid, channel, topic, location, travel, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
         offered: slots.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),

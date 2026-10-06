@@ -452,3 +452,65 @@ for (const inGroup of [false, true]) test(`booked exhausted-search approval hold
   assert.match(deliveries[0]!, /10:30/);
   assert.ok(f.cal.calls.every(c => c[2] !== "update" && !(c[2] === "delete" && c[4] === "booked")));
 });
+
+for (const changedDuringSearch of [false, true]) test(`approved exhausted search preserves replacement meeting details and original snapshot: concurrent change=${changedDuringSearch}`, async t => {
+  const f = alternativesFixture(t);
+  const booked = { start: "2026-10-05T10:00:00Z", end: "2026-10-05T10:30:00Z", account: "owner@example.com" };
+  const proposal = { format: "in_person" as const, location: "Library", travel: { beforeMin: 30, afterMin: 30 } };
+  const offered = [{ start: "2026-10-05T11:00:00Z", end: "2026-10-05T11:30:00Z", account: booked.account, holdId: "old" }];
+  const pendingOwner = { ...f.pendingOwner, alternatives: { previousStarts: [booked.start, offered[0]!.start] } };
+  writeJson(f.path, updateRequest(f.read(), "mia", { status: "booked", booked, eventId: "booked", format: "meet", location: "",
+    travel: { beforeMin: 0, afterMin: 0 }, bookedReplacement: true, replacement: proposal, offered,
+    constraints: { ...f.request.constraints, before: "12:00" }, pendingOwner }, Date.now()));
+  const original = f.read().requests[0]!;
+  f.cal.events.set("booked", { ...calendarEvent("booked", booked.start, booked.end), attendees: [{ email: "mia@example.com" }] });
+  f.cal.events.set("old", calendarEvent("old", offered[0]!.start, offered[0]!.end));
+  f.cal.events.set("busy", calendarEvent("busy", "2026-10-05T09:30:00Z", "2026-10-05T10:30:00Z"));
+  if (changedDuringSearch) {
+    const fetch = globalThis.fetch;
+    let changed = false;
+    t.mock.method(globalThis, "fetch", async (url: any, init: RequestInit) => {
+      if (!changed && JSON.parse(String(init.body)).params.arguments.argv[2] === "events") {
+        changed = true;
+        writeJson(f.path, updateRequest(f.read(), "mia", { replacement: { ...proposal, location: "Cafe" } }, Date.now()));
+      }
+      return fetch(url, init);
+    });
+  }
+  const deliveries: string[] = [];
+  const result = await answerOwner(ctx, { ...args, outcome: "calendar_change", text: "Yes" }, async (_to, text) => { deliveries.push(text); });
+  const saved = f.read().requests[0]!;
+  assert.equal(saved.format, original.format);
+  assert.equal(saved.location, original.location);
+  assert.deepEqual(saved.travel, original.travel);
+  assert.deepEqual(saved.booked, original.booked);
+  if (changedDuringSearch) {
+    assert.match("error" in result ? String(result.error) : "", /Request changed/);
+    assert.deepEqual(saved.replacement, { ...proposal, location: "Cafe" });
+    assert.deepEqual(saved.offered, offered);
+    assert.deepEqual(deliveries, []);
+    assert.ok(f.cal.calls.every(c => c[2] === "events"));
+    return;
+  }
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.deepEqual(saved.replacement, proposal);
+  assert.deepEqual(saved.offered.map(o => o.start), ["2026-10-05T11:30:00+00:00"], "availability includes the proposal's travel");
+  assert.equal(saved.pendingOwner, undefined);
+  assert.equal(deliveries.length, 1);
+  const ownerLines: string[] = [];
+  const picked = await guestAction({ messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "group-mia",
+    requesterSenderId: "mia@example.com", turnStartedAt: Date.now() + 1 }, "pick", { start: saved.offered[0]!.start }, async text => { ownerLines.push(text); });
+  assert.ok(!("error" in picked), JSON.stringify(picked));
+  const moved = f.read().requests[0]!;
+  assert.equal(moved.eventId, "booked");
+  assert.equal(moved.format, proposal.format);
+  assert.equal(moved.location, proposal.location);
+  assert.deepEqual(moved.travel, proposal.travel);
+  assert.equal(f.cal.events.get("booked")!.location, proposal.location);
+  assert.deepEqual(moved.travelEvents!.map(ref => {
+    const child = f.cal.events.get(ref.holdId)!;
+    return (Date.parse(child.end.dateTime) - Date.parse(child.start.dateTime)) / 60_000;
+  }), [30, 30]);
+  assert.doesNotMatch(JSON.stringify(picked), /beforeMin|afterMin|travelEvents/);
+  assert.match(ownerLines[0]!, /30 min travel before and 30 min after.*Library/);
+});
