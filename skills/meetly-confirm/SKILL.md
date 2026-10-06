@@ -30,7 +30,7 @@ tell the owner; do not resend. Only if the owner explicitly authorizes a retry, 
 `ledger.ts delivery --id <id> --kind answer --action clear` first.
 
 - **Question (`pendingOwner.question`):** if the owner's answer changes location, format or time,
-  apply it first: use `calendar.ts format` with `meetly-travel` for place/format, or
+  apply it first: use `calendar.ts format` for place/format, or
   "Book the event" / "Changes after booking" for time changes. Wait until the
   calendar writer succeeds before calling `meetly_answer_owner` or acknowledging.
   On a failed or unresolved write, leave the question pending; resume unresolved
