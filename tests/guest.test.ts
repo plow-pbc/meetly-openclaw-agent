@@ -65,6 +65,12 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
       assert.equal((init.headers as Record<string, string>).Authorization, "Bearer fixture");
       return Response.json({ uid: decodeURIComponent(String(_url).split("/").at(-1)!), status: "active", participants });
     }
+    if (String(_url) === "https://api.plow.test/v1/agents/me") {
+      return Response.json({ line: { uid: "self" }, chats: [{ uid: "owner-dm", status: "active", participants: [
+        { type: "agent", relationship: "self", line: { uid: "self" } },
+        { type: "member", role: "owner", provider_key: "+16505550100" },
+      ] }] });
+    }
     const call = JSON.parse(String(init.body));
     assert.equal(call.params.name, "plow_run_command");
     const argv: string[] = call.params.arguments.argv;
@@ -345,18 +351,22 @@ test("pick books the chosen hold with fixed arguments, records the event, and de
   assert.deepEqual(f.commands.filter(c => c[2] === "delete"), [["plow-gog", "calendar", "delete", "primary", "hold-two", "--send-updates", "none", "--force", "--account", "owner@example.com"]]);
 });
 
-test("pick never invites a contact whose local number only shares the guest's suffix", async t => {
-  // With the Mac's region known (#51), a full national number is the guest's own;
-  // a card holding only the trailing digits still never gets the invite.
-  const f = fixture(t, "L|en_US\nS|0\nR|1|Other|Person|\nP|1|123-4567||\nE|1|wrong@example.net||");
+const invitationCases = [
+  ["123-4567", "Other|Person", "wrong@example.net", false],
+  ["+445551234567", "Other|Person", "wrong@example.net", false],
+  ["(555) 123-4567", "Guest|", "guest@example.net", true],
+] as const;
+for (const [phone, name, email, invited] of invitationCases) test(`pick invitation eligibility: ${phone}`, async t => {
+  const f = fixture(t, `S|0\nR|1|${name}|\nP|1|${phone}||\nE|1|${email}||`);
   const result = await guestAction(context, "pick", { start: offers[0]!.start });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().status, "booked");
-  assert.equal("invitationSent" in result && result.invitationSent, false);
+  assert.equal("invitationSent" in result && result.invitationSent, invited);
   const update = f.commands.find(c => c[2] === "update")!;
   assert.ok(update);
-  assert.ok(!update.includes("--attendees"));
-  assert.doesNotMatch(JSON.stringify(f.commands), /wrong@example.net/);
+  assert.equal(update.includes("--attendees"), invited);
+  if (invited) assert.equal(update[update.indexOf("--attendees") + 1], email);
+  else assert.ok(!JSON.stringify(f.commands).includes(email));
 });
 
 for (const allowed of [true, false]) test(`pick rechecks conflicts; owner-approved=${allowed}`, async t => {
