@@ -196,7 +196,7 @@ test("an applied calendar change is delivered in the group before its question c
 test("an answer needs an explicit outcome before clearing or sending", async t => {
   const f = fixture(t);
   let sends = 0;
-  for (const outcome of [undefined, "guess"]) {
+  for (const outcome of [undefined, "guess", "decline_alternatives"]) {
     const result = await answerOwner(ctx, { ...args, outcome } as any, async () => { sends++; });
     assert.equal(sends, 0);
     assert.ok("error" in result);
@@ -234,4 +234,18 @@ for (const inGroup of [false, true]) test(`exhausted-search approval waits for h
   assert.equal(f.read().requests[0]!.pendingOwner, undefined);
   assert.equal(cal.calls.filter(c => c[2] === "create").length, 1);
   t.diagnostic(JSON.stringify({ early, held: f.read().requests[0]!.offered, delivered: sends }));
+});
+
+for (const inGroup of [false, true]) test(`decline alternatives is an exclusive owner outcome: inGroup=${inGroup}`, async t => {
+  const f = fixture(t);
+  const context = inGroup ? { ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" } : ctx;
+  const pendingOwner = { question: "May I search again?", askedAt: args.askedAt, alternatives: { previousStarts: f.ledger.requests[0]!.offered.map(o => o.start) } };
+  writeJson(f.path, updateRequest(f.ledger, "mia", { pendingOwner }, Date.now()));
+  const sends: string[] = [];
+  const result = await answerOwner(context, { ...args, outcome: "decline_alternatives", text: "Keep the current times." },
+    async (_to, text) => { sends.push(text); });
+  assert.equal("error" in result, false, JSON.stringify(result));
+  assert.equal(sends.length, inGroup ? 0 : 1);
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+  assert.deepEqual(f.read().requests[0]!.offered, f.ledger.requests[0]!.offered);
 });
