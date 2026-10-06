@@ -156,11 +156,6 @@ test("offers re-key to the resolved phone and group starts require a ledger atte
   assert.ok(offer.includes("--kind start --action clear"));
 });
 
-
-
-
-
-
 test("calendar mutations are owned by the writer, never assembled in skills", () => {
   for (const { path } of skillFiles) {
     assert.doesNotMatch(flat(readFileSync(path, "utf8")), /(?:plow-gog )?calendar (?:create|update|delete)\b/);
@@ -353,8 +348,6 @@ test("trust changes remain an explicit owner action and failed group opening is 
   assert.ok(group.includes("If `plow_start_thread` definitely fails, tell the owner what it said and stop"));
   assert.doesNotMatch(group, /guest turns are reply-only|full guest tools are needed|on a guest's turn|## Outside the owner's hours/);
 });
-
-
 
 test("owner approval re-check uses the saved meeting duration and meal", () => {
   const group = confirmSkill();

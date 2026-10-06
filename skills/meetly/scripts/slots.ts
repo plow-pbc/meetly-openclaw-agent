@@ -13,7 +13,7 @@ import { allowsOverlap, covers, uniqueEvents, type Coverage, type EventRef, type
 import { requestEvents, intersectConstraints, meetingDuration, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
-import { addDays, DAYS, localIso, nextWeek, wallParts, zonedToUtc, type Day } from "./time.ts";
+import { addDays, DAYS, localIso, nextWeek, parseStart, wallParts, zonedToUtc, type Day } from "./time.ts";
 
 export type Slot = { start: string; end: string; dayOfWeek: Day; label: string };
 
@@ -233,12 +233,7 @@ export function checkTime(q: TravelInput & {
   locale?: string;
 }): TimeCheck {
   const tz = q.config.timezone;
-  // A wall time with no offset (2026-10-03T10:00) is the owner's clock.
-  const wall = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(q.start);
-  const start = wall
-    ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz) + Number(wall[6] ?? 0) * 1000
-    : Date.parse(q.start);
-  if (Number.isNaN(start)) throw new Error(`not a time: ${q.start}`);
+  const start = parseStart(q.start, tz);
   const end = start + meetingDuration(q.durationMin, q.meal, q.config.durationMin) * 60_000;
   const s = wallParts(start, tz);
   const e = wallParts(end, tz);
@@ -358,7 +353,10 @@ if (isMain(import.meta.url)) {
       for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "start-time", "week", "asap"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
-      const result = checkTime({ ...q, start: values.at });
+      const start = checkTime({ ...q, travel: { beforeMin: 0, afterMin: 0 }, start: values.at }).slot.start;
+      if (request?.status === "booked" && request.bookedReplacement && request.replacement
+        && request.offered.some(slot => Date.parse(slot.start) === Date.parse(start))) Object.assign(q, request.replacement);
+      const result = checkTime({ ...q, start });
       const next = result.reason === "unknown" ? { read: "Fetch busy.ts --fetch --from ISO --to ISO covering the meeting and all travel, then check again. Unread time is not free. Never use a calendar write to test availability." } : undefined;
       return { ...result, degraded, ...(next ? { next } : {}) };
     }
