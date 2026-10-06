@@ -50,7 +50,14 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     name = args.name?.trim() || name;
     const ledger = readJson<Ledger>(file("ledger.json"), { requests: [] });
     if (args.requestId === undefined && ledger.requests.some(r => r.status === "booked" && r.chatUid === chat)) {
-      const ownerAskSent = await notifyOwner(`You asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Guest: ${JSON.stringify(name ?? handle)}.`
+      const id = requestId(), now = Date.now();
+      updateJson<Ledger>(file("ledger.json"), { requests: [] }, current => addRequest(current, {
+        origin: "owner-group", handle, name, topic: args.topic, durationMin: args.durationMin, travel: args.travel,
+        meal: args.meal, format: args.format, location: args.location, locale: args.locale, proposed: args.proposed,
+        constraints: resolveSearchConstraints(args.constraints ?? {}, args.week, now, loadConfig().timezone),
+        askDetails: false, status: "asked", offered: [],
+      }, now, id));
+      const ownerAskSent = await notifyOwner(`Request ${id}: you asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Guest: ${JSON.stringify(name ?? handle)}.`
             + ` Conditions: ${JSON.stringify(args.constraints ?? {})}. Preferences: ${JSON.stringify(args.proposed ?? {})}.`
             + (args.week ? ` Week: ${args.week}.` : "") + (args.asap ? " As soon as possible." : "")
             + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")

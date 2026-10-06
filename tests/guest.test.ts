@@ -2408,10 +2408,33 @@ test("direct pick restores only guest-explicit weekdays before booking",async t=
  assert.equal(result.status,"booked",JSON.stringify(result)); assert.deepEqual(f.request().excludedDays,["tue"]);
 });
 
-test("separate meeting in a booked group coordinates privately before calendar access",async t=>{
- const f=fixture(t); const before={...f.request(),allowOverlap:[],status:"booked" as const,eventId:"booked",booked:{start:offers[0]!.start,end:offers[0]!.end,account:"owner@example.com"},offered:[]}; f.save({requests:[before]});
- const notices:string[]=[]; const result=await offerOwnerGroup({...context,senderIsOwner:true,sessionKey:"agent:main:plow:group:chat-one"},{topic:"Another call",durationMin:30,travel:{beforeMin:0,afterMin:0}},async text=>{notices.push(text);}) as any;
- assert.equal(result.code,"SEPARATE_MEETING_REQUIRED"); assert.equal(result.silent,true); assert.equal(notices.length,1); assert.deepEqual(f.commands,[]); assert.deepEqual(f.read().requests,[before]);
+for (const failed of [false, true]) test(`separate meeting is saved before private notification: failed=${failed}`, async t => {
+  const f = fixture(t);
+  const before = { ...f.request(), allowOverlap: [], status: "booked" as const, eventId: "booked",
+    booked: { start: offers[0]!.start, end: offers[0]!.end, account: "owner@example.com" }, offered: [] };
+  f.save({ requests: [before] });
+  const args = { topic: "Another call", durationMin: 30, travel: { beforeMin: 0, afterMin: 0 },
+    week: "next" as const, constraints: { days: ["wed"], after: "11:00" }, proposed: { after: "12:00" },
+    format: "phone" as const, locale: "en-US" };
+  const notices: string[] = []; let duringSend: Request | undefined;
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, args, async text => {
+    duringSend = f.read().requests.find(r => r.status === "asked"); notices.push(text);
+    if (failed) throw new Error("private delivery failed");
+  }) as any;
+  assert.equal(result.code, "SEPARATE_MEETING_REQUIRED"); assert.equal(result.silent, true);
+  assert.equal(result.ownerAskSent, !failed); assert.equal(notices.length, 1);
+  assert.ok(duringSend, "save the separate request before attempting delivery");
+  const saved = f.read().requests[1]!;
+  assert.deepEqual(saved, duringSend); assert.notEqual(saved.id, before.id);
+  assert.equal(saved.status, "asked"); assert.equal(saved.chatUid, undefined); assert.deepEqual(saved.offered, []);
+  assert.equal(saved.origin, "owner-group"); assert.equal(saved.handle, before.handle); assert.equal(saved.name, "Guest");
+  assert.equal(saved.topic, args.topic); assert.equal(saved.durationMin, args.durationMin); assert.deepEqual(saved.travel, args.travel);
+  assert.deepEqual(saved.constraints, { ...args.constraints, from: "2026-10-05", to: "2026-10-11" });
+  assert.deepEqual(saved.proposed, args.proposed); assert.equal(saved.format, args.format); assert.equal(saved.locale, args.locale);
+  assert.ok(notices[0]!.includes(`Request ${saved.id}:`));
+  const pending = pipeline(f.read(), now).find(r => r.id === saved.id);
+  assert.equal(pending?.state, "waiting_on_owner"); assert.equal(pending?.reason, "owner-decision");
+  assert.deepEqual(f.request(), before); assert.deepEqual(f.commands, []); assert.equal(f.read().requests.length, 2);
 });
 for (const blocked of [false, true]) for (const durationMin of [30, 60]) test(`selected booked group: blocked=${blocked}, duration=${durationMin}`, async t => {
   const f = fixture(t);
