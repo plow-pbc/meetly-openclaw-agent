@@ -9,7 +9,7 @@ import { registerOwnerGroupTool, registerOwnerDmTool } from "../plugin/owner-too
 import plugin from "../plugin/index.js";
 import { calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
-import { addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
+import { addRequest, expiredRequests, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { withinConstraints } from "../skills/meetly/scripts/slots.ts";
 import { DEFAULTS, SLOT_COUNT } from "../skills/meetly/scripts/config.ts";
@@ -1771,4 +1771,21 @@ for (const selected of [
   assert.equal(result.isError, true);
   assert.deepEqual(f.read(), before);
   assert.deepEqual(f.commands, []);
+});
+
+test("unmarked booked offers cannot be viewed, picked or expired as replacements", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  const request = { ...f.request(), offered: offers };
+  delete request.bookedReplacement;
+  f.save({ requests: [request] });
+  const before = f.read(), commands = f.commands.length;
+  const view = JSON.parse((await f.tools.get("meetly_view_request")!.execute("view", {})).content[0]!.text);
+  assert.deepEqual(view.offered, []);
+  const pick = await f.act(context, "pick", { start: offers[1]!.start });
+  assert.match(JSON.stringify(pick), /Choose one of/);
+  assert.deepEqual(expiredRequests(f.read(), 48, now + 49 * 3600_000), []);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.commands.length, commands);
+  t.diagnostic(JSON.stringify({ view, pick }));
 });
