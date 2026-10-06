@@ -360,15 +360,19 @@ const invitationCases = [
 ] as const;
 for (const [phone, name, email, invited] of invitationCases) test(`pick invitation eligibility: ${phone}`, async t => {
   const f = fixture(t, `S|0\nR|1|${name}|\nP|1|${phone}||\nE|1|${email}||`);
+  const existing = { email: "existing@example.net" };
+  f.events.get(offers[0]!.holdId!)!.attendees = [existing];
   const result = await guestAction(context, "pick", { start: offers[0]!.start });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().status, "booked");
   assert.equal("invitationSent" in result && result.invitationSent, invited);
   const update = f.commands.find(c => c[2] === "update")!;
   assert.ok(update);
-  assert.equal(update.includes("--attendees"), invited);
-  if (invited) assert.equal(update[update.indexOf("--attendees") + 1], email);
+  assert.ok(!update.includes("--attendees"));
+  assert.equal(update.includes("--add-attendee"), invited);
+  if (invited) assert.equal(update[update.indexOf("--add-attendee") + 1], email);
   else assert.ok(!JSON.stringify(f.commands).includes(email));
+  assert.deepEqual(f.events.get(f.request().eventId!)!.attendees, [existing, ...(invited ? [{ email }] : [])]);
 });
 
 for (const allowed of [true, false]) test(`pick rechecks conflicts; owner-approved=${allowed}`, async t => {
