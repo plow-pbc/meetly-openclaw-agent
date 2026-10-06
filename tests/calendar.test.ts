@@ -3,6 +3,8 @@ import { test, type TestContext } from "node:test";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
+import { registerOwnerChangeTools } from "../plugin/owner-change.js";
+import { calendarOutput } from "../skills/meetly/scripts/calendar-output.ts";
 import { confirmContactOffer } from "../skills/meetly/scripts/contact-policy.ts";
 import { approveTime, calendarAction, calendarCommand, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
 import { doNotContact, setDoNotContact, addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
@@ -1637,7 +1639,7 @@ for (const status of ["offered", "booked"] as const) test(`a later raw ${status}
   assert.equal(current.unchanged, true, JSON.stringify(current)); assert.equal(current.error, undefined); assert.equal(sends, 1);
 });
 
-for (const failed of [false, true]) test(`poll recovery delivers the saved format confirmation once: failed=${failed}`, async t => {
+for (const { failed, journalCleared } of [{ failed: false, journalCleared: false }, { failed: true, journalCleared: false }, { failed: false, journalCleared: true }]) test(`poll recovery delivers the saved format confirmation once: failed=${failed}, journalCleared=${journalCleared}`, async t => {
   const { changeOwnerMeeting } = await import("../skills/meetly/scripts/owner-change.ts");
   const f = fixture(t, "chat"); await calendarAction("r_one", { action: "book", start }, f.options);
   const ctx = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "plow-owner", sessionKey: "agent:main:main", nativeChannelId: "dm" };
@@ -1650,6 +1652,10 @@ for (const failed of [false, true]) test(`poll recovery delivers the saved forma
     }, poll: async () => undefined,
   });
   assert.ok(changed.error); assert.equal(sends, 0);
+  if (journalCleared) {
+    await calendarAction("r_one", { action: "resume" }, { ...f.options, poll: async () => output });
+    assert.deepEqual(pendingCalendarWrites(), []);
+  }
   const result = await resumePending({ ...f.options, poll: async () => output, sendGuest: async (to: string, text: string) => {
     sends++; assert.equal(to, "chat"); assert.equal(text, "Alex will call you."); assert.equal(f.read().format, "phone");
     assert.ok(f.read().formatConfirmation?.attemptedAt);
@@ -1660,21 +1666,7 @@ for (const failed of [false, true]) test(`poll recovery delivers the saved forma
   assert.equal(!!result.results[0].error, failed);
   await resumePending({ ...f.options, sendGuest: async () => { sends++; } });
   assert.equal(sends, 1); assert.deepEqual(pendingCalendarWrites(), []);
-});
-
-test("poll delivers an unattempted format confirmation even after its journal was cleared", async t => {
-  const { changeOwnerMeeting } = await import("../skills/meetly/scripts/owner-change.ts");
-  const f = fixture(t, "chat"); await calendarAction("r_one", { action: "book", start }, f.options);
-  const ctx = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "plow-owner", sessionKey: "agent:main:main", nativeChannelId: "dm" };
-  let output: MacOutcome | undefined;
-  await changeOwnerMeeting(ctx, { requestId: "r_one", action: "format", format: "phone", travel: { beforeMin: 0, afterMin: 0 }, confirmation: "Alex will call you." }, async () => {}, async () => {}, {
-    ...f.options, command: async cmd => { const result = await f.command(cmd); if (cmd.argv[2] === "update") { output = result; return { handle: "pending" }; } return result; }, poll: async () => undefined,
-  });
-  await calendarAction("r_one", { action: "resume" }, { ...f.options, poll: async () => output });
-  assert.deepEqual(pendingCalendarWrites(), []);
-  let sends = 0;
-  await resumePending({ ...f.options, sendGuest: async (_to: string, text: string) => { sends++; assert.equal(text, "Alex will call you."); } });
-  assert.equal(sends, 1); assert.equal(f.read().formatConfirmation?.delivered, true);
+  assert.equal(f.read().formatConfirmation?.delivered, failed ? undefined : true);
 });
 
 for (const status of ["offered", "booked"] as const) for (const kind of ["alternatives", "time", "contact"] as const) test(`a format edit preserves an unrelated pending ${kind} decision on ${status}`, async t => {
@@ -1711,4 +1703,60 @@ for (const pending of [false, true]) test(`confirmed email format receipt comple
   assert.equal(f.calls.length, writes);
   const repeated = await changeOwnerMeeting(ctx, args, send, async () => {}, f.options);
   assert.equal(repeated.unchanged, true); assert.equal(repeated.silent, true); assert.equal(repeated.error, undefined);
+});
+
+for (const action of ["cancel", "drop", "expire"] as const) test(`closing a request discards an undelivered format confirmation: ${action}`, async t => {
+  const f = fixture(t, "chat");
+  if (action === "cancel") await calendarAction("r_one", { action: "book", start }, f.options);
+  let output: MacOutcome | undefined;
+  const change = { action: "format" as const, format: "phone" as const, travel: { beforeMin: 0, afterMin: 0 }, confirmation: "Alex will call you." };
+  if (action === "cancel") {
+    await assert.rejects(calendarAction("r_one", change, { ...f.options, command: async cmd => {
+      const result = await f.command(cmd); if (cmd.argv[2] === "update") { output = result; return { handle: "pending-format" }; } return result;
+    }, poll: async () => undefined }), /unresolved/);
+    await calendarAction("r_one", { action: "resume" }, { ...f.options, poll: async () => output });
+  } else await calendarAction("r_one", change, f.options);
+  assert.ok(f.read().formatConfirmation); assert.deepEqual(pendingCalendarWrites(), []);
+  await calendarAction("r_one", { action }, { ...f.options, now: () => now + 49 * 60 * 60_000 });
+  let sends = 0;
+  await resumePending({ ...f.options, sendGuest: async () => { sends++; } });
+  assert.equal(sends, 0); assert.equal(f.read().formatConfirmation, undefined);
+  assert.equal(f.read().status, action === "expire" ? "expired" : "dropped");
+});
+
+test("poll recovery mirrors the saved guest confirmation and private owner note through canonical routes", async t => {
+  const f = fixture(t, "chat"); await calendarAction("r_one", { action: "book", start }, f.options);
+  let output: MacOutcome | undefined;
+  await assert.rejects(calendarAction("r_one", { action: "format", format: "in_person", location: "Library", travel: { beforeMin: 15, afterMin: 15 }, confirmation: "Alex will meet you at the Library." }, {
+    ...f.options, command: async cmd => { const result = await f.command(cmd); if (cmd.argv[2] === "update") { output = result; return { handle: "pending-format" }; } return result; }, poll: async () => undefined,
+  }), /unresolved/);
+  const tools = new Map<string, any>(), deliveries: any[] = [], routes: any[] = [];
+  const context = { sessionKey: "agent:main:meetly-poll-fixture", config: {} };
+  registerOwnerChangeTools({ registerTool(factory: any) { const tool = factory(context); tools.set(tool.name, tool); }, runtime: { channel: {
+    routing: { resolveAgentRoute: ({ peer }: any) => ({ agentId: "main", sessionKey: peer.kind === "group" ? `agent:main:plow:chat:group:${peer.id}` : "agent:main:main" }) },
+    session: { resolveStorePath: () => "/sessions", updateLastRoute: async (args: any) => { routes.push(args); } },
+  } } }, async (_ctx: any, args: any, sendGuest: any, sendOwner: any) => {
+    assert.equal(args.action, "resume");
+    return calendarOutput(await resumePending({ ...f.options, poll: async () => output, sendGuest }), sendOwner);
+  }, async () => ({ buildOutboundSessionContext: (args: any) => args, sendDurableMessageBatch: async (args: any) => { deliveries.push(args); return { status: "sent" }; } }));
+  const tool = tools.get("meetly_resume_pending"); assert.ok(tool, "poll recovery must use a plugin tool");
+  const result = await tool.execute("resume", {});
+  assert.equal(result.details.results[0].guestConfirmation.delivered, true);
+  assert.deepEqual(deliveries.map(d => ({ to: d.to, mirror: d.mirror.sessionKey })), [
+    { to: "chat", mirror: "agent:main:plow:chat:group:chat" }, { to: "plow-owner", mirror: "agent:main:main" },
+  ]);
+  assert.equal(deliveries[0].payloads[0].text, "Alex will meet you at the Library.");
+  assert.doesNotMatch(deliveries[0].payloads[0].text, /travel|15/);
+  assert.equal(routes.length, 2); assert.equal(f.read().formatConfirmation?.delivered, true);
+  await tool.execute("repeat", {}); assert.equal(deliveries.length, 2);
+});
+
+test("calendar recovery tool refuses non-poll sessions before executing or sending", async () => {
+  let calls = 0;
+  for (const context of [{}, { sessionKey: "agent:main:main" }, { sessionKey: "agent:main:plow:chat:group:chat" }, { sessionKey: "agent:main:plow:email:direct:chat" }]) {
+    let tool: any;
+    registerOwnerChangeTools({ registerTool(factory: any) { const candidate = factory(context); if (candidate.name === "meetly_resume_pending") tool = candidate; } }, async () => { calls++; return {}; });
+    assert.ok(tool); assert.equal((await tool.execute("denied", {})).isError, true);
+  }
+  assert.equal(calls, 0);
 });

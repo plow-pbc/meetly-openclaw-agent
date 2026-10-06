@@ -11,10 +11,6 @@ export function withoutPrivateTravel(value: unknown): unknown {
 
 export async function sendOwnerTravel(text: string, options: ApiOptions = {}): Promise<void> {
   const { chatUid } = await ownerChat(options);
-  await sendChatMessage(chatUid, text, options);
-}
-
-export async function sendChatMessage(chatUid: string, text: string, options: ApiOptions = {}): Promise<void> {
   const api = plowApi(options);
   const response = await api.fetch(`${api.base}/v1/chats/${encodeURIComponent(chatUid)}/messages`, {
     method: "POST", headers: { ...api.headers, "Content-Type": "application/json" },
@@ -22,7 +18,7 @@ export async function sendChatMessage(chatUid: string, text: string, options: Ap
   });
   const uid = response.ok ? (await response.json() as { uid?: unknown }).uid : undefined;
   if (typeof uid !== "string" || !uid.trim()) {
-    throw new Error("Message delivery is unconfirmed.");
+    throw new Error("Owner notification is unconfirmed.");
   }
 }
 

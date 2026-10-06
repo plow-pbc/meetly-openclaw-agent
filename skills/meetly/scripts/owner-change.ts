@@ -1,10 +1,10 @@
 import { answerOwner } from "./answer-owner.ts";
 import { calendarAction, type CalendarOptions } from "./calendar.ts";
-import { calendarOutput, sendOwnerTravel, sendChatMessage } from "./calendar-output.ts";
+import { calendarOutput, sendOwnerTravel } from "./calendar-output.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 import { checkTravel, type Travel } from "./travel.ts";
 import { file } from "./paths.ts";
-import { readJson, updateJson } from "./store.ts";
+import { updateJson } from "./store.ts";
 import type { Ledger, Request } from "./ledger.ts";
 
 type Args = { requestId: string; action: "format" | "travel"; travel: Travel; format?: Request["format"]; location?: string; confirmation?: string; emailSent?: boolean; confirmationAttemptedAt?: string };
@@ -60,7 +60,7 @@ export async function changeOwnerMeeting(ctx: OwnerContext, args: Args,
 }
 
 
-export async function deliverFormatConfirmation(request: Request, sendGuest = sendChatMessage): Promise<Record<string, unknown>> {
+export async function deliverFormatConfirmation(request: Request, sendGuest: (to: string, text: string) => Promise<void>): Promise<Record<string, unknown>> {
   try {
     const confirmation = request.formatConfirmation;
     if (!confirmation || confirmation.delivered) return { unchanged: true };

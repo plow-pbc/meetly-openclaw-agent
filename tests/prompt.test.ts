@@ -167,7 +167,7 @@ test("calendar mutations are owned by the writer, never assembled in skills", ()
   for (const { path } of skillFiles) {
     assert.doesNotMatch(flat(readFileSync(path, "utf8")), /(?:plow-gog )?calendar (?:create|update|delete)\b/);
   }
-  assert.ok(pollSkill().includes("calendar.ts resume-pending"));
+  assert.ok(pollSkill().includes("meetly_resume_pending"));
   assert.ok(pollSkill().includes("calendar.ts expire --id <id>"));
   assert.ok(pollSkill().includes("calendar.ts cleanup --id <id>"));
 });

@@ -229,7 +229,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           refs.push(...(request.travelEvents ?? []));
           if (request.eventId && request.booked) refs.push({ holdId: request.eventId, account: request.booked.account, sendUpdates: "all" });
         }
-        patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null, offered: [], bookedReplacement: false, replacement: null,
+        patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null, formatConfirmation: null, offered: [], bookedReplacement: false, replacement: null,
           holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...refs]) }); await cleanup(); return { request: requestById(id) };
       }
       if (input.action === "offer") travelFor(input.request);
@@ -578,7 +578,7 @@ export async function resumePending(options: CalendarOptions = {}) {
     try {
       const result = await calendarAction(id, { action: "resume" }, options);
       const { deliverFormatConfirmation } = await import("./owner-change.ts");
-      results.push({ id, ...result, ...(result.request.channel !== "email" && result.request.formatConfirmation
+      results.push({ id, ...result, ...(options.sendGuest && result.request.channel !== "email" && result.request.formatConfirmation
         ? await deliverFormatConfirmation(result.request, options.sendGuest) : {}) });
     }
     catch (error) { results.push({ id, error: error instanceof Error ? error.message : String(error) }); }

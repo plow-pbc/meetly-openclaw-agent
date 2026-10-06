@@ -2,7 +2,7 @@
   "id": "meetly",
   "name": "Meetly",
   "description": "Guest scheduling tools and the owner DM setup check.",
-  "contracts": { "tools": ["meetly_view_request", "meetly_pick_time", "meetly_other_times", "meetly_set_format", "meetly_ask_owner", "meetly_decline", "meetly_answer_owner", "meetly_offer_owner_group", "meetly_offer_owner_dm", "meetly_contact_preference", "meetly_confirm_contact", "meetly_edit_attendee", "meetly_change_format", "meetly_change_travel"] },
+  "contracts": { "tools": ["meetly_view_request", "meetly_pick_time", "meetly_other_times", "meetly_set_format", "meetly_ask_owner", "meetly_decline", "meetly_answer_owner", "meetly_offer_owner_group", "meetly_offer_owner_dm", "meetly_contact_preference", "meetly_confirm_contact", "meetly_edit_attendee", "meetly_resume_pending", "meetly_change_format", "meetly_change_travel"] },
   "activation": { "onStartup": true },
   "configSchema": { "type": "object", "additionalProperties": false }
 }

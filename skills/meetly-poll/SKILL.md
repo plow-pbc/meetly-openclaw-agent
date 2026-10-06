@@ -91,9 +91,10 @@ they do not appear in the scheduled reminder list.
       step 5.
 4. If `upto` is set, run `cursor.ts set <upto>`.
 5. Maintenance:
-   - Run `calendar.ts resume-pending` before expiry or cleanup. It resumes every
+   - Call `meetly_resume_pending` before expiry or cleanup. It resumes every
      pending write and delivers recovered text-group format confirmations, including
-     unattempted confirmations whose calendar journal was already cleared. When
+     unattempted confirmations whose calendar journal was already cleared. Guest
+     confirmations are mirrored into their group history. When
      `guestConfirmation.delivered` is true, do not send another group confirmation.
      For results with an `error`, skip
      that request's other mutations and report it to the owner.
