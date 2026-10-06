@@ -466,8 +466,11 @@ for (const collision of [false, true]) test(`overlap approval applies only to it
   writeJson(configFile, config);
   const command = async (cmd: MacCommand) => cmd.argv[2] === "events"
     ? { output: JSON.stringify({ events: [calendarEvent("same-id", start, end)] }) } : f.command(cmd);
-  const action = offerRequest({ ...f.offer, offered: f.offer.offered.slice(0, 1),
-    allowOverlap: [{ account, id: "same-id" }] }, { ...f.options, command });
+  const pending = { askedAt: new Date(now).toISOString(), question: "May I overlap?", overlap: { travel: f.input.travel,
+    choices: [{ start, end, title: "Focus", event: { account, id: "same-id" } }] } };
+  writeJson(f.path, { requests: [{ ...f.read(), pendingOwner: pending }] });
+  const action = offerRequest({ ...f.offer, offered: f.offer.offered.slice(0, 1) },
+    { ...f.options, command, overlapApproval: { pending, choice: 0 } });
   if (collision) {
     await assert.rejects(action);
     assert.equal(f.calls.filter(c => c[2] === "create").length, 0);
@@ -481,7 +484,7 @@ for (const key of ["allowOverlap", "allowOverlapTitles"]) test(`raw offer reject
   const f = fixture(t), before = f.read();
   const result = cli("calendar.ts", ["offer", "--json", JSON.stringify({ ...f.offer, [key]: [] })], { MEETLY_HOME: f.home });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /owner.*DM/i);
+  assert.match(result.stderr, /meetly_answer_owner/);
   assert.deepEqual(f.read(), before);
 });
 
@@ -538,7 +541,7 @@ test("raw ledger mutations cannot bypass DM overlap authorization", t => {
     const result = cli("ledger.ts", [action, "--id", "r_one", "--json",
       JSON.stringify({ ...args, allowOverlap: [{ account, id: "busy" }] })], { MEETLY_HOME: f.home });
     assert.equal(result.status, 1, action);
-    assert.match(result.stderr, /owner DM|managed by calendar/);
+    assert.match(result.stderr, /meetly_answer_owner|managed by calendar/);
     assert.deepEqual(f.read(), before);
   }
 });
@@ -595,7 +598,7 @@ for (const approval of [false, true]) test(`pending approval does not change exp
   const f = fixture(t);
   const ledger = readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] });
   ledger.requests[0]!.pendingOwner = { askedAt: new Date(now).toISOString(), start, end };
-  ledger.requests[0]!.allowOverlap = [{ account, id: "conflict" }];
+  ledger.requests[0]!.allowOverlap = [{ account, id: "conflict", start, end }];
   writeJson(join(f.home, "ledger.json"), ledger);
   f.events.set("conflict", calendarEvent("conflict", start, end));
   if (approval) {
@@ -616,7 +619,7 @@ for (const busy of [false, true]) test(`time approval without a pending ask ${bu
   const f = fixture(t);
   const approvedStart = "2026-10-05T20:00:00Z", approvedEnd = "2026-10-05T20:30:00Z";
   const ledger = readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] });
-  ledger.requests[0]!.allowOverlap = [{ account, id: "conflict" }];
+  ledger.requests[0]!.allowOverlap = [{ account, id: "conflict", start, end }];
   writeJson(join(f.home, "ledger.json"), ledger);
   if (busy) f.events.set("conflict", calendarEvent("conflict", approvedStart, approvedEnd));
   const result = await approveTime("r_one", { start: approvedStart }, f.options);
@@ -660,7 +663,7 @@ test("a time approval never sends a conflict override even across its own hold",
   assert.equal(writes.some(c => c.includes("--confirm-conflict")), false);
 });
 
-for (const allowOverlap of [[], [{ account, id: "private-conflict" }]]) test(`booked replacement holds preserve the event, expire independently and clean up after a move: grant=${!!allowOverlap.length}`, async t => {
+for (const allowOverlap of [[], [{ account, id: "private-conflict", start, end }]]) test(`booked replacement holds preserve the event, expire independently and clean up after a move: grant=${!!allowOverlap.length}`, async t => {
   const f = fixture(t, "chat-one");
   await calendarAction("r_one", { action: "book", start }, f.options);
   const booked = f.read().booked;
@@ -668,9 +671,9 @@ for (const allowOverlap of [[], [{ account, id: "private-conflict" }]]) test(`bo
     { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account },
     { start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z", account },
   ] };
-  await calendarAction("r_one", { action: "offer", request: replacement }, { ...f.options, overlapApproved: !!allowOverlap.length });
+  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
   assert.equal(f.read().status, "booked");
-  assert.deepEqual(f.read().allowOverlap, allowOverlap);
+  assert.deepEqual(f.read().allowOverlap, [], "replacement grants require a fresh pending approval");
   assert.equal(f.read().bookedReplacement, true);
   assert.deepEqual(f.read().booked, booked);
   assert.equal(f.events.get("hold-one")!.start.dateTime, start);
@@ -698,7 +701,7 @@ for (const allowOverlap of [[], [{ account, id: "private-conflict" }]]) test(`bo
   assert.ok("skipped" in again);
   assert.equal(again.skipped, true);
   assert.equal("groupNotice" in again ? again.groupNotice : undefined, undefined);
-  await calendarAction("r_one", { action: "offer", request: replacement }, { ...f.options, overlapApproved: !!allowOverlap.length });
+  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
   await calendarAction("r_one", { action: "book", start: replacement.offered[0]!.start }, f.options);
   assert.equal(f.read().eventId, "hold-one");
   assert.equal(f.read().booked!.start, replacement.offered[0]!.start);
@@ -844,8 +847,11 @@ for (const collision of [false, true]) test(`overlap approval applies only to it
   writeJson(configFile, config);
   const command = async (cmd: MacCommand) => cmd.argv[2] === "events"
     ? { output: JSON.stringify({ events: [calendarEvent("same-id", start, end)] }) } : f.command(cmd);
-  const action = offerRequest({ ...f.offer, offered: f.offer.offered.slice(0, 1),
-    allowOverlap: [{ account, id: "same-id" }] }, { ...f.options, command });
+  const pending = { askedAt: new Date(now).toISOString(), question: "May I overlap?", overlap: { travel: f.input.travel,
+    choices: [{ start, end, title: "Focus", event: { account, id: "same-id" } }] } };
+  writeJson(f.path, { requests: [{ ...f.read(), pendingOwner: pending }] });
+  const action = offerRequest({ ...f.offer, offered: f.offer.offered.slice(0, 1) },
+    { ...f.options, command, overlapApproval: { pending, choice: 0 } });
   if (collision) {
     await assert.rejects(action);
     assert.equal(f.calls.filter(c => c[2] === "create").length, 0);
@@ -873,7 +879,7 @@ test("a flagged owner offer requires explicit confirmation and retains the conta
 test("booking consumes overlap permission before any later move", async t => {
   const f = fixture(t, "chat-one");
   f.events.set("private", calendarEvent("private", start, "2026-10-05T12:00:00Z"));
-  writeJson(join(f.home, "ledger.json"), { requests: [{ ...f.read(), allowOverlap: [{ account, id: "private" }] }] });
+  writeJson(join(f.home, "ledger.json"), { requests: [{ ...f.read(), allowOverlap: [{ account, id: "private", start, end }] }] });
   await calendarAction("r_one", { action: "book", start }, f.options);
   assert.deepEqual(f.read().allowOverlap, []);
   await assert.rejects(calendarAction("r_one", { action: "book", start: "2026-10-05T11:00:00Z", end: "2026-10-05T11:30:00Z" }, f.options));
@@ -883,7 +889,7 @@ test("booking consumes overlap permission before any later move", async t => {
 test("a booked replacement cannot reuse a legacy overlap grant", async t => {
   const f = fixture(t, "chat-one");
   await calendarAction("r_one", { action: "book", start }, f.options);
-  const allowOverlap = [{ account, id: "private" }];
+  const allowOverlap = [{ account, id: "private", start, end }];
   writeJson(join(f.home, "ledger.json"), { requests: [{ ...f.read(), allowOverlap }] });
   const replacement = { start: "2026-10-07T10:00:00Z", end: "2026-10-07T10:30:00Z", account };
   f.events.set("private", calendarEvent("private", replacement.start, replacement.end));
@@ -1359,6 +1365,18 @@ test("saved exact starts cannot be omitted on reoffer or bypassed at booking", a
   assert.equal(f.read().constraints?.startTime, "11:30");
 });
 
+
+test("remembered permission alone never allows an offer over the owner's event", async t => {
+  const f = fixture(t);
+  writeJson(join(f.home, "overlap-decisions.json"), { "focus block": { allowed: true, at: new Date(now).toISOString() } });
+  const focus = { ...calendarEvent("focus", start, end), summary: "Focus block" };
+  f.events.set(focus.id, focus);
+  await assert.rejects(offerRequest({ ...f.offer, offered: [{ start, end }], format: "in_person", travel }, f.options), /previous offer retained/);
+  assert.equal(f.calls.filter(c => ["create", "update"].includes(c[2]!)).length, 0);
+  assert.equal(f.read().allowOverlap, undefined);
+  assert.equal(f.events.get("focus")!.status, "confirmed");
+});
+
 for (const change of ["start", "end"] as const) test(`travel correction rejects a live booking with changed ${change} before writes`, async t => {
   const f = fixture(t);
   await calendarAction("r_one", { action: "format", format: "in_person", location: "Library", travel }, f.options);
@@ -1373,4 +1391,28 @@ for (const change of ["start", "end"] as const) test(`travel correction rejects 
   assert.deepEqual([...f.events], events);
   assert.ok(f.calls.every(argv => !["create", "update", "delete"].includes(argv[2]!)));
   assert.deepEqual(pendingCalendarWrites(), []);
+});
+
+for (const override of [false, true]) test(`offered overlap permission survives travel that does not grow: override=${override}`, async t => {
+  const f = fixture(t);
+  const travel = { beforeMin: 30, afterMin: 30, ...(override ? { override: true } : {}) };
+  const allowOverlap = [{ account, id: "approved", start, end }];
+  writeJson(f.path, { requests: [{ ...f.read(), format: "in_person", travel, allowOverlap }] });
+  await calendarAction("r_one", { action: "format", format: "in_person", travel: { beforeMin: override ? 120 : 15, afterMin: override ? 120 : 15 } }, f.options);
+  assert.deepEqual(f.read().allowOverlap, allowOverlap);
+  assert.deepEqual(f.read().travel, override ? travel : { beforeMin: 15, afterMin: 15 });
+  assert.deepEqual(f.calls, []);
+});
+
+test("booked replacement expiry clears its overlap grant", async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const booked = f.read().booked;
+  const allowOverlap = [{ account, id: "private-conflict" }];
+  await calendarAction("r_one", { action: "offer", request: f.offer }, f.options);
+  writeJson(f.path, { ...readJson<Ledger>(f.path, { requests: [] }), requests: [{ ...f.read(), allowOverlap }] });
+  assert.deepEqual(f.read().allowOverlap, allowOverlap);
+  await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
+  assert.deepEqual(f.read().allowOverlap, []);
+  assert.deepEqual(f.read().booked, booked);
 });

@@ -40,7 +40,7 @@ export function finish(register: () => unknown, now: number = Date.now()): { don
     return done;
   });
   // config.json stays written if registration fails; --done can be re-run.
-  return { done: true, config, crons: register() };
+  return { done: true, config: config, crons: register() };
 }
 
 if (isMain(import.meta.url)) {

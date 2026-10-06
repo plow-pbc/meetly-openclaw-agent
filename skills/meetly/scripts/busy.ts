@@ -5,13 +5,17 @@
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, type Config } from "./config.ts";
-import { runOnMac, type BridgeOptions } from "./mac.ts";
+import type { BridgeOptions } from "./mac.ts";
+import { calendarListings } from "./calendar-read.ts";
 import { file } from "./paths.ts";
 import { status } from "./setup-status.ts";
 import { writeJson } from "./store.ts";
 import { zonedToUtc } from "./time.ts";
 
 export type EventRef = { account: string; id: string };
+export type OverlapGrant = EventRef & { start: string; end: string };
+export const overlapFor = (grants: OverlapGrant[] = [], start: string, end: string) =>
+  grants.filter(grant => Date.parse(grant.start) === Date.parse(start) && Date.parse(grant.end) === Date.parse(end));
 export const allowsOverlap = (event: Partial<EventRef>, refs: EventRef[] = []) =>
   refs.some(ref => !!ref.account && !!ref.id && ref.account === event.account && ref.id === event.id);
 export const uniqueEvents = (refs: EventRef[]) => refs.filter((ref, i) => allowsOverlap(ref, [ref]) && !allowsOverlap(ref, refs.slice(0, i)));
@@ -112,20 +116,6 @@ export function toBusy(results: unknown[], opts: { tz: string; max: number }): B
   return out;
 }
 
-// The listing after any notice plow-gog prints ahead of it ("Note: Using
-// direct access token ..."): from the first line that opens the JSON.
-function listingOf(output: string): unknown {
-  const start = output.search(/^[[{]/m);
-  if (start < 0) throw new Error("no JSON in the calendar listing");
-  return JSON.parse(output.slice(start));
-}
-
-// Latch wraps fetched text as data. Remove only a complete, matching envelope.
-function eventTitle(summary = ""): string {
-  const wrapped = summary.match(/^<<<EXTERNAL_UNTRUSTED_CONTENT id="([^"\r\n]+)">>>\r?\nSource: google_api\r?\n---\r?\n([\s\S]*)\r?\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="\1">>>$/);
-  return (wrapped?.[2] ?? summary).trim().toLowerCase();
-}
-
 const FETCH_MAX = 100;
 
 // Reads every configured account on the Mac directly (mac.ts), one
@@ -135,51 +125,32 @@ const FETCH_MAX = 100;
 export async function fetchBusy(
   config: Pick<Config, "timezone" | "calendars">,
   range: { from: string; to: string },
-  opts: BridgeOptions & { allowOverlapTitles?: string[] } = {},
+  opts: BridgeOptions = {},
 ): Promise<BusyResult> {
   if (!(Date.parse(range.to) > Date.parse(range.from))) throw new Error("Calendar coverage needs valid from and to instants.");
-  const titles = new Set(opts.allowOverlapTitles?.map(title => title.trim().toLowerCase()).filter(Boolean));
-  const allowOverlap: EventRef[] = [];
-  const byAccount = new Map<string, string[]>();
-  for (const c of config.calendars) byAccount.set(c.account, [...(byAccount.get(c.account) ?? []), c.id]);
   const results: unknown[] = [];
   const degraded: string[] = [];
-  for (const [account, ids] of byAccount) {
-    const output = await runOnMac({
-      argv: ["plow-gog", "calendar", "events", "--calendars", ids.join(","), "--account", account,
-        "--from", range.from, "--to", range.to, "--max", String(FETCH_MAX), "--json"],
-      readPaths: [], timeoutMs: 60_000,
-      goal: "Meetly: read your busy times so it only offers times you are free",
-    }, opts).catch(() => undefined);
-    let listing: ReturnType<typeof eventsOf>;
-    try {
-      if (output === undefined) throw new Error("unreadable");
-      listing = eventsOf(listingOf(output));
-    } catch {
-      degraded.push(account);
-      continue;
-    }
-    allowOverlap.push(...listing.events.filter(e => e.id && !skipped(e) && titles.has(eventTitle(e.summary))).map(e => ({ account, id: e.id! })));
-    results.push({ events: listing.events.map((e) => ({ ...e, account })), degraded: listing.degraded, truncated: { after: listing.after } });
+  for (const { account, listing } of await calendarListings(config, range, opts)) {
+    if (!listing || listing.errors?.length || listing.nextPageToken || listing.nextPageTokens?.length) degraded.push(account);
+    else results.push(listing);
   }
   const out = toBusy(results, { tz: config.timezone, max: FETCH_MAX });
   out.coverage = { from: new Date(range.from).toISOString(), to: new Date(range.to).toISOString() };
   out.degraded.push(...degraded);
-  if (titles.size) out.allowOverlap = uniqueEvents(allowOverlap);
   return out;
 }
 
 if (isMain(import.meta.url)) {
   run(async () => {
     const { values } = parseArgs({
-      options: { from: { type: "string" }, to: { type: "string" }, in: { type: "string", multiple: true }, max: { type: "string", default: "100" }, fetch: { type: "boolean", default: false }, "allow-overlap-title": { type: "string", multiple: true } },
+      options: { from: { type: "string" }, to: { type: "string" }, in: { type: "string", multiple: true }, max: { type: "string", default: "100" }, fetch: { type: "boolean", default: false } },
     });
     if (values.fetch) {
       const current = status();
       if (current.status !== "READY") throw new Error("Meetly is not set up yet");
       if ((values.from === undefined) !== (values.to === undefined)) throw new Error("Supply both --from and --to.");
       const range = values.from === undefined ? current.range : { from: values.from, to: values.to! };
-      const result = await fetchBusy(current.config, range, { allowOverlapTitles: values["allow-overlap-title"] });
+      const result = await fetchBusy(current.config, range);
       const out = file("tmp/busy.json");
       writeJson(out, result);
       const summary = { file: out, busy: result.busy.length, degraded: result.degraded, coverage: result.coverage, unknownAfter: result.unknownAfter };

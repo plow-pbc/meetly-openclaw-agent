@@ -1,3 +1,4 @@
+import { eventTitle } from "../skills/meetly/scripts/calendar-read.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -106,14 +107,14 @@ test("fetchBusy reads each account on the Mac itself, so no calendar JSON passes
   const r = await fetchBusy({
     timezone: TZ,
     calendars: [{ account: "owner@example.com", id: "owner@example.com" }, { account: "owner@example.com", id: "team@group.calendar.google.com" }, { account: "work@example.com", id: "work@example.com" }],
-  }, range, { token: "tok", allowOverlapTitles: ["weekly claw"], fetch: macBridge(argv => `Note: Using direct access token (expires in ~1 hour; no auto-refresh)\n${argv.includes("work@example.com") ? listing("Unrelated meeting") : listing("Weekly Claw", { degraded: ["unread@example.com"], truncated: { after: "2026-10-01T13:00:00-03:00" } })}\n`, calls) });
+  }, range, { token: "tok", fetch: macBridge(argv => `Note: Using direct access token (expires in ~1 hour; no auto-refresh)\n${argv.includes("work@example.com") ? listing("Unrelated meeting") : listing("Weekly Claw", { degraded: ["unread@example.com"], truncated: { after: "2026-10-01T13:00:00-03:00" } })}\n`, calls) });
   assert.deepEqual(calls.map((c) => c.argv), [
     ["plow-gog", "calendar", "events", "--calendars", "owner@example.com,team@group.calendar.google.com", "--account", "owner@example.com", "--from", range.from, "--to", range.to, "--max", "100", "--json"],
     ["plow-gog", "calendar", "events", "--calendars", "work@example.com", "--account", "work@example.com", "--from", range.from, "--to", range.to, "--max", "100", "--json"],
   ]);
   assert.deepEqual(r.degraded, ["unread@example.com"]);
   assert.equal(r.unknownAfter, "2026-10-01T16:00:00.000Z");
-  assert.deepEqual(r.allowOverlap, [{ account: "owner@example.com", id: "e1" }]);
+  assert.equal(r.allowOverlap, undefined);
   assert.doesNotMatch(JSON.stringify(r), /Weekly Claw|summary/);
   assert.deepEqual(r.busy.map((b) => [b.id, b.account, b.start]), [
     ["e1", "owner@example.com", "2026-10-01T15:30:00.000Z"],
@@ -144,7 +145,7 @@ test("the CLI's --fetch writes tmp/busy.json for slots.ts and prints only a shor
   assert.deepEqual(JSON.parse(readFileSync(join(home, "tmp", "busy.json"), "utf8")), { busy: [], degraded: ["owner@example.com"], coverage });
 });
 
-test("overlap titles match Latch-wrapped summaries exactly and keep account identity", async () => {
+test("private titles unwrap matching envelopes without becoming busy authorization", async () => {
   const wrapped = (title: string, endId = "023275dd5cf61fcd") =>
     `<<<EXTERNAL_UNTRUSTED_CONTENT id="023275dd5cf61fcd">>>\nSource: google_api\n---\n${title}\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="${endId}">>>`;
   const events = [
@@ -154,7 +155,9 @@ test("overlap titles match Latch-wrapped summaries exactly and keep account iden
     ["plain", " QA conflict block "],
   ].map(([id, summary]) => ({ ...gogEvent(id!, range.from, range.to), summary }));
   const result = await fetchBusy({ timezone: TZ, calendars: [{ account: "owner@example.com", id: "primary" }] }, range,
-    { token: "tok", allowOverlapTitles: ["qa conflict block"], fetch: macBridge(() => JSON.stringify({ events })) });
-  assert.deepEqual(result.allowOverlap, ["approved", "plain"].map(id => ({ account: "owner@example.com", id })));
+    { token: "tok", fetch: macBridge(() => JSON.stringify({ events })) });
+  assert.equal(result.allowOverlap, undefined);
+  assert.equal(eventTitle(wrapped("QA conflict block")), "QA conflict block");
+  assert.equal(eventTitle(wrapped("QA conflict block", "different")), wrapped("QA conflict block", "different"));
   assert.equal(result.busy.length, 4);
 });

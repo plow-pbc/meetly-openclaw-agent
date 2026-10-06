@@ -388,7 +388,7 @@ test("owner overlap permission re-offers and never implies a booking choice", ()
   assert.ok(group.includes("Overlap permission alone is not a time selection"));
   assert.ok(group.includes('"Noon is fine, it can overlap my other event" grants permission to offer noon, not to book it'));
   assert.ok(flat(prompt).includes("Never book on overlap permission"));
-  assert.ok(group.includes("re-offer and hold times, then let the guest choose"));
+  assert.ok(group.includes("The tool holds that time and delivers the offer, then the guest chooses"));
   assert.ok(confirmSkill().includes("On an owner turn, run `calendar.ts book` only when the owner explicitly selects a time"));
   assert.ok(group.includes("Never write `allowOverlap` with the ledger CLI"));
   assert.ok(group.includes("`slots.ts --near <owner-authorized start> --request <id>`"));

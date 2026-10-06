@@ -49,7 +49,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const ledger = addRequest({ requests: [] }, {
     travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", handle: context.requesterSenderId, chatUid: context.nativeChannelId, name: "Guest", topic: "Lunch",
     durationMin: 30, constraints: { days: ["mon", "tue"], after: "10:00", before: "15:00", from: "2026-10-05", to: "2026-10-06" },
-    allowOverlap: [{ account: "owner@example.com", id: "approved" }], offered: offers.map(o => ({ ...o })), format: "unknown", locale: "en-US",
+    allowOverlap: [{ account: "owner@example.com", id: "approved", start: offers[0]!.start, end: offers[0]!.end }], offered: offers.map(o => ({ ...o })), format: "unknown", locale: "en-US",
   }, now, "request-one");
   const save = (value: Ledger) => writeJson(join(home, "ledger.json"), value);
   save(ledger);
@@ -87,7 +87,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     const request = read().requests.find(r => r.id === "request-one");
     if (request) {
       assert.deepEqual(request.constraints, ledger.requests[0]!.constraints);
-      assert.deepEqual(request.allowOverlap, request.booked ? [] : [{ account: "owner@example.com", id: "approved" }]);
+      assert.deepEqual(request.allowOverlap, request.booked || request.offered.some(slot => !offers.some(original => slot.holdId === original.holdId)) ? [] : ledger.requests[0]!.allowOverlap);
       assert.equal(request.durationMin, ledger.requests[0]!.durationMin);
     }
   });
@@ -246,7 +246,7 @@ test("decline requires the guest's clear refusal, never an other-times refusal",
   assert.match(descriptions.get("meetly_other_times")!, /Never repeat the guest\'s proposed terms, even in a refusal/);
   assert.doesNotMatch(descriptions.get("meetly_other_times")!, /explain which preferences/);
   assert.match(descriptions.get("meetly_other_times")!, /ask for a specific date and time if needed/);
-  assert.match(descriptions.get("meetly_ask_owner")!, /never invent a question or turn your own uncertainty into a guest question/);
+  assert.match(descriptions.get("meetly_ask_owner")!, /never invent a question or turn your own uncertainty into a guest question/i);
   assert.match(descriptions.get("meetly_ask_owner")!, /ownerAskSent is true/);
   assert.match(descriptions.get("meetly_ask_owner")!, /Do not paraphrase or add a guest-asks prefix/);
 });
@@ -846,35 +846,15 @@ test("owner-group ignores injected overlap permission before creating holds", as
   assert.doesNotMatch(JSON.stringify(result), /private-|Weekly Claw|allowOverlap|owner@example.com/);
 });
 
-test("owner DM offers still resolve named overlap permission", async t => {
-  const f = fixture(t);
-  f.save({ requests: [] });
-  const saved = cli("ledger.ts", ["save", "--json", JSON.stringify({ travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", status: "asked",
-    handle: context.requesterSenderId, topic: "Lunch", durationMin: 45, offered: [] })], { MEETLY_HOME: f.home });
-  assert.equal(saved.status, 0, saved.stderr);
-  f.events.clear();
-  for (const [i, slot] of offers.entries()) f.events.set(`private-approved-${i}`, { ...event(`private-approved-${i}`, slot.start, slot.end), summary: "Weekly Claw" });
-  f.events.set("private-unapproved", { ...event("private-unapproved", offers[1]!.start, offers[1]!.end), summary: "Weekly Claw extra" });
+test("owner DM offers reject title-wide overlap permission without effects", async t => {
+  const f = fixture(t), before = f.read();
   let tool: any;
   registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
-  const result = await tool.execute("offer", { travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", handle: context.requesterSenderId, topic: "Lunch",
-    allowOverlapTitles: ["Weekly Claw"], offered: offers.map(({ start }) => ({ start, end: new Date(Date.parse(start) + 45 * 60_000).toISOString() })) });
-  assert.equal(result.isError, false, JSON.stringify(result));
-  assert.equal(tool.parameters.properties.durationMin, undefined);
-  const { request } = result.details as { request: Request };
-  assert.equal(request.durationMin, 45);
-  assert.deepEqual(request.allowOverlap, ["private-approved-0", "private-approved-1"].map(id => ({ account: "owner@example.com", id })));
-  assert.deepEqual(request.offered.map(o => o.start), [offers[0]!.start]);
-  const creates = f.commands.filter(c => c[2] === "create");
-  assert.equal(creates.length, 1);
-  assert.ok(creates[0]!.includes("--confirm-conflict"));
-  assert.equal(f.request().status, "offered");
-  assert.equal(f.request().booked, undefined);
-  assert.ok(creates[0]![creates[0]!.indexOf("--summary") + 1]!.startsWith("Hold:"));
-  assert.equal(cli("ledger.ts", ["update", "--id", request.id, "--json", JSON.stringify({ chatUid: context.nativeChannelId })], { MEETLY_HOME: f.home }).status, 0);
-  const chosen = await f.act(context, "pick", { start: request.offered[0]!.start });
-  assert.equal("status" in chosen && chosen.status, "booked");
-  assert.equal("overlappedWithOwnerApproval" in chosen && chosen.overlappedWithOwnerApproval, true);
+  const result = await tool.execute("offer", { origin: "owner", handle: context.requesterSenderId, topic: "Lunch", allowOverlapTitles: ["Weekly Claw"], offered: offers });
+  assert.equal(result.isError, true);
+  assert.equal(tool.parameters.properties.allowOverlapTitles, undefined);
+  assert.deepEqual(f.read(), before);
+  assert.deepEqual(f.commands, []);
 });
 
 test("owner-group binds a same-handle unlinked asked request and the guest can book", async t => {
@@ -1495,7 +1475,6 @@ test("owner DM rejects four offered times before calendar or ledger effects", as
   let tool: any;
   registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
   const result = await tool.execute("call", { origin: "owner", handle: context.requesterSenderId, topic: "Call",
-    allowOverlapTitles: ["Approved overlap"],
     offered: Array.from({ length: 4 }, (_, i) => ({ start: `2026-10-0${5 + i}T10:00:00Z`, end: `2026-10-0${5 + i}T10:30:00Z` })) });
   assert.equal(result.isError, true);
   assert.match(result.details.error, /at most 3/i);
@@ -1743,17 +1722,16 @@ for (const fail of [false, true]) test(`an unbooked decline notifies the owner o
 });
 
 
-test("owner DM overlap replacement stays on the selected booked request", async t => {
+test("owner DM replacement stays on the selected booked request", async t => {
   const f = fixture(t);
   await f.act(context, "pick", { start: offers[0]!.start });
   const original = f.request();
   const slot = { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z" };
-  f.events.set("private-overlap", { ...event("private-overlap", slot.start, slot.end), summary: "Weekly Claw" });
   let tool: any;
   registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
   const result = await tool.execute("replace", { requestId: original.id, origin: original.origin,
     travel: original.travel, handle: original.handle, topic: original.topic,
-    allowOverlapTitles: ["Weekly Claw"], offered: [slot] });
+    offered: [slot] });
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.read().requests.length, 1);
   assert.deepEqual(f.request().booked, original.booked);
@@ -2236,6 +2214,26 @@ for (const originalFormat of ["meet", "in_person"] as const) test(`replacement f
   }), [40, 25]);
   assert.doesNotMatch(JSON.stringify(moved), /beforeMin|afterMin|travelEvents/);
   t.diagnostic(JSON.stringify({ original: { format: original.format, location: original.location, travel: original.travel }, proposal, moved, ownerNotice: f.ownerLines.at(-1) }));
+});
+
+test("owner-group replacement search skips an approved blocker and offers later free times", async t => {
+  const f = fixture(t), saved = f.ledger.requests[0]!;
+  saved.constraints = { from: "2026-10-05", to: "2026-10-05", after: "12:00", before: "17:00" };
+  saved.offered[0] = { ...saved.offered[0]!, start: "2026-10-05T12:00:00Z", end: "2026-10-05T12:30:00Z" };
+  saved.allowOverlap = [{ account: "owner@example.com", id: "approved", start: saved.offered[0].start, end: saved.offered[0].end }];
+  f.save(f.ledger);
+  f.events.set("hold-one", event("hold-one", saved.offered[0].start, saved.offered[0].end));
+  f.events.set("approved", event("approved", "2026-10-05T12:00:00Z", "2026-10-05T15:00:00Z"));
+  let tool: any;
+  registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
+  const result = await tool.execute("replacement", { introduction: "already_introduced", topic: saved.topic, durationMin: 30, format: "meet", travel: { beforeMin: 0, afterMin: 0 } });
+  assert.equal(result.isError, false, JSON.stringify(result));
+  const offered: { start: string }[] = JSON.parse(result.content[0].text).offered;
+  assert.equal(offered.length, SLOT_COUNT);
+  assert.ok(offered.every(slot => Date.parse(slot.start) >= Date.parse("2026-10-05T15:00:00Z")));
+  assert.deepEqual(f.request().allowOverlap, []);
+  assert.equal(f.events.get("approved")!.status, "confirmed");
+  t.diagnostic(JSON.stringify({ offered, grant: f.request().allowOverlap }));
 });
 
 for (const start of ["thu", "Thursday", '{"weekday":"funday"}', { weekday: "Thursday" }])

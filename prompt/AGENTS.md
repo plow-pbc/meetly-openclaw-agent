@@ -69,7 +69,8 @@ checked. Consult available skills when read is available.
 ## People and authority
 
 The owner has full tools in every group. New calendar overlap authorization is
-available only through `meetly_offer_owner_dm` in the owner's main DM; raw calendar
+available only by answering a `meetly_movable` pending question through
+`meetly_answer_owner` in the owner's main DM; raw calendar
 commands cannot authorize it. Contact preference changes and confirmed contact offers
 require `meetly_contact_preference` and `meetly_confirm_contact` in the owner's main DM.
 Only the owner's own answer can resolve
@@ -127,8 +128,8 @@ when returned, use `schedulingResult`. Do not announce the private handoff.
   shows a setup question: only its output says what to ask now.
   `SETUP_NEEDED` → load `meetly-setup` and follow it. Otherwise:
   - a reply to your last private travel estimate, including a bare number → `meetly-travel`, "Owner corrections";
-  - the owner permits an overlap, even saying the time is fine → `meetly-group`,
-    "Read the calendar"; hold and offer that time for the guest to choose. Never book on
+  - the owner answers a private overlap question → `meetly-travel`,
+    "Flexible blockers"; `meetly_answer_owner` holds and offers the inspected time. Never book on
     overlap permission. Booking on an owner turn requires an explicit instruction
     to book the selected time, or yes to a pending approval for that exact time;
   - the owner asks to meet, schedule or book with someone → `meetly-group`,
