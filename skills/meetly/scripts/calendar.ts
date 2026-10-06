@@ -2,7 +2,7 @@
 // lost Latch response or a failed ledger write; uncertain creates are never replayed.
 import { checkTime, withinConstraints } from "./slots.ts";
 import { calendarOutput } from "./calendar-output.ts";
-import { checkTravel, checkTravelBase, travelFor, travelRange, travelNote, type Travel } from "./travel.ts";
+import { checkTravel, travelFor, travelRange, travelNote, type Travel } from "./travel.ts";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -59,6 +59,7 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   if (validated.status !== "offered") throw new Error("replacement needs offered times");
   return updateRequest(l, id, {
+    travel: request.travel?.override ? request.travel : validated.travel,
     offered: validated.offered, bookedReplacement: true, allowOverlap: validated.allowOverlap ?? [], constraints: validated.constraints ?? {},
     holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
   }, now);
@@ -201,12 +202,12 @@ export async function calendarAction(id: string, action: CalendarAction, options
         patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null, offered: [], bookedReplacement: false,
           holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...refs]) }); await cleanup(); return { request: requestById(id) };
       }
-      if (input.action === "offer") checkTravelBase(input.request, loadConfig().travelBase);
+      if (input.action === "offer") travelFor(input.request);
       if (input.action === "format" || input.action === "travel") {
         if (input.travel === undefined) throw new Error("Supply an explicit travel estimate");
         const format = input.action === "format" ? input.format : request.format;
         input.travel = request.travel?.override && !input.travel.override && format !== "meet" && format !== "phone" ? request.travel : input.travel;
-        checkTravelBase({ format, travel: input.travel }, loadConfig().travelBase);
+        travelFor({ format, travel: input.travel });
       }
       if ((input.action === "format" || input.action === "travel") && request.status === "offered") {
         patch({ ...(input.action === "format" ? { format: input.format, location: input.location ?? "" } : {}),
@@ -249,12 +250,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
         if (request.status === "booked" && !options.overlapApproved) delete input.request.allowOverlap;
         const validated = saveOffer(before, input.request, now(), id);
         const saved = validated.requests.find(r => r.id === id)!;
-        input.request.allowOverlap = saved.allowOverlap;
-        input.request.name = saved.name;
-        input.request.travel = saved.travel;
-        input.request.format = saved.format;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
-        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, input.request));
+        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${saved.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, saved));
       } else if (input.action === "attendee") {
         if (!["add", "remove"].includes(input.operation) || typeof input.email !== "string" || !/^[^\s,;@]+@[^\s,;@]+\.[^\s,;@]+$/.test(input.email.trim())) {
           throw new Error("Supply operation add or remove and one attendee email.");
@@ -283,7 +280,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           args: [input.operation === "add" ? "--add-attendee" : "--attendees", input.operation === "add" ? input.email : emails.join(","), "--send-updates", "all"], token: randomUUID() });
       } else {
         const config = loadConfig();
-        if (input.action === "format") updateRequest(ledger(), id, { format: input.format, location: input.location }, now());
+        if (input.action === "format") updateRequest(ledger(), id, { format: input.format, location: input.location, travel: input.travel }, now());
         const start = input.action === "book" ? input.start : undefined;
         const slot: Offer = input.action === "format" || input.action === "travel"
           ? { start: request.booked!.start, end: request.booked!.end, account: request.booked!.account, holdId: request.eventId }
@@ -306,7 +303,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         }
         const effective = { ...request, ...(input.action === "format" ? { format: input.format, location: input.location ?? "" } : {}),
           travel: request.travel?.override && !input.travel?.override && (input.action !== "format" || !["meet", "phone"].includes(input.format ?? "")) ? request.travel : input.travel ?? request.travel };
-        checkTravelBase(effective, config.travelBase);
+        travelFor(effective);
         input.travel = effective.travel;
         const range = travelRange(slot.start, slot.end, effective);
         const minutes = travelFor(effective);
@@ -450,7 +447,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       } else if (completed.input.action === "attendee") {
         next = l;
       } else {
-        if (completed.input.action === "format") l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location ?? "" }, now());
+        if (completed.input.action === "format") l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location ?? "", travel: completed.input.travel }, now());
         const step = completed.steps.find(s => !s.travel);
         const before = l.requests.find(r => r.id === id)!;
         next = step ? recordBooking(l, id, parseEvent(step.output!), step.account, now()).ledger : l;
@@ -512,7 +509,7 @@ export async function offerRequest({ requestId: selectedId, allowOverlapTitles, 
   if (args.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
   const config = loadConfig();
   if (config.paused) throw new Error("Scheduling is paused.");
-  checkTravelBase(args, config.travelBase);
+  travelFor(args);
   const current = ledger();
   const saved = selectedId === undefined ? findOpenByHandle(current, args.handle) ?? current.requests.find(r => args.origin === "inbound" &&
     args.sourceRowid !== undefined && r.sourceRowid === args.sourceRowid && ["asked", "offered"].includes(r.status))

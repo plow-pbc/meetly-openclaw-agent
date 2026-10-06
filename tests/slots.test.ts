@@ -348,7 +348,7 @@ test("CLI next week replaces saved date bounds and retains non-date policy", () 
   writeJson(join(home, "config.json"), { ...CONFIG, timezone: "UTC" });
   writeJson(join(home, "busy.json"), { busy: [], coverage });
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
-    status: "asked", origin: "owner", handle: "+15550107812", topic: "call", durationMin: 45, offered: [],
+    travel: { beforeMin: 0, afterMin: 0 }, status: "asked", origin: "owner", handle: "+15550107812", topic: "call", durationMin: 45, offered: [],
     constraints: { from: "2026-10-12", to: "2026-10-18", days: ["tue", "thu"], after: "13:00", before: "15:00", startTime: "13:15" },
   }, NOW, "saved-week"));
   const result = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", join(home, "busy.json"), "--request", "saved-week", "--week", "next", "--now", "2026-10-02T08:00:00Z"], { MEETLY_HOME: home });
@@ -375,7 +375,7 @@ test("request CLI re-offers retain saved excluded weekdays", () => {
   writeJson(join(home, "config.json"), CONFIG);
   writeJson(join(home, "busy.json"), { busy: [], coverage });
   writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, {
-    origin: "owner", status: "asked", handle: "+15550107812", topic: "Call", durationMin: 30,
+    travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", status: "asked", handle: "+15550107812", topic: "Call", durationMin: 30,
     constraints: { days: ["mon", "tue"] }, excludedDays: ["mon"], offered: [],
   }, NOW, "excluded"));
   const result = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", join(home, "busy.json"), "--request", "excluded", "--now", new Date(NOW).toISOString()], { MEETLY_HOME: home });

@@ -104,7 +104,7 @@ For other times on a booked meeting, follow "Changes after booking" below; use i
 **Format or place after booking:** for a format/place change, run `calendar.ts format --id <id> --json '<format/location and explicit travel estimate>'`.
 After a format/place change, tell the guest the new format/place once: with a pending question use `meetly_answer_owner` and `outcome: "calendar_change"`; otherwise reply in the meeting thread, using `plow_reply_to` from the owner DM
 (`plow_send_email` for email).
-Keep private travel estimates/base out of the guest message; travel-only corrections
+Keep private travel estimates out of the guest message; travel-only corrections
 get no guest notice. Do not acknowledge completion in the DM before guest delivery.
 Cancel a booked meeting with `calendar.ts cancel --id <id>`; drop an open one with
 `calendar.ts drop --id <id>`. Confirm once in the meeting thread. For a Meet, say the

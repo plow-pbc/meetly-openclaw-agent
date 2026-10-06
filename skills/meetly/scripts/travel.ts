@@ -29,12 +29,3 @@ export function travelNote(request: TravelInput & { topic: string; location?: st
   return beforeMin || afterMin
     ? `Held ${beforeMin} min travel before and ${afterMin} min after ${request.topic}${request.location ? ` at ${request.location}` : ""} — say if that's off.` : undefined;
 }
-
-export class TravelBaseRequired extends Error {
-  constructor() { super("Ask the owner privately for their home/office base before preparing in-person travel"); }
-}
-
-export function checkTravelBase(input: TravelInput, base?: string): void {
-  const travel = travelFor(input);
-  if (!base?.trim() && (input.format === "in_person" || travel.beforeMin || travel.afterMin)) throw new TravelBaseRequired();
-}

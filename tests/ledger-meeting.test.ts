@@ -14,6 +14,7 @@ const T0 = Date.parse("2026-09-28T12:00:00Z");
 const MIN = 60_000;
 const offer = { start: "2026-10-01T15:00:00-03:00", end: "2026-10-01T15:30:00-03:00", holdId: "h1", account: "owner@example.com" };
 const input = (over: Record<string, unknown> = {}) => ({
+  travel: { beforeMin: 0, afterMin: 0 },
   origin: "inbound", handle: "+15551234567", topic: "coffee", durationMin: 30, offered: [offer], ...over,
 }) as NewRequest;
 const empty = (): Ledger => ({ requests: [] });
@@ -237,4 +238,11 @@ test("email Meet links do not enter the phone reminder queue", () => {
   const ledger = bookedMeet();
   ledger.requests[0]!.channel = "email";
   assert.deepEqual(dueReminders(ledger, START - 5 * MIN, 10), []);
+});
+
+test("new offers and bookings require explicit travel", () => {
+  assert.throws(() => addRequest(empty(), input({ travel: undefined }), T0, "missing"), /explicit travel/);
+  const legacy = addRequest(empty(), input({ travel: { beforeMin: 0, afterMin: 0 } }), T0, "legacy");
+  delete (legacy.requests[0] as any).travel;
+  assert.throws(() => updateRequest(legacy, "legacy", { status: "booked", eventId: "e", booked }, T0), /explicit travel/);
 });
