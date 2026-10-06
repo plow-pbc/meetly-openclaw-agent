@@ -68,7 +68,7 @@ signed with the Plow conversation name.
 - **Holds expire.** No answer in 48 hours: the holds are deleted and the
   group is told the times were released.
 - **Overlaps only with your word.** Meetly books over an existing event only
-  when you name that event and authorize the overlap in your DM. People
+  when you approve its private question about that exact event in your DM. People
   in the group can never unlock a conflict or widen the meeting window.
 - **Stays on topic in groups.** The group is for this one meeting. Meetly does
   not read your mail, files or other conversations for the other person.
@@ -189,11 +189,11 @@ message is skipped.
   default (lunch/dinner 60 minutes, coffee 30), then the owner's configured default. Code checks interval lengths. Owner-requested duration changes replace the topic,
   duration and holds together under the calendar lock. Unnamed requests stay in
   their originating group; chat lookup requires the exact runtime chat uid.
-  Overlap authorization goes through the registered `meetly_offer_owner_dm` tool,
-  which verifies the runtime Plow owner and main-DM session before calling the
-  internal calendar writer. It uses the saved duration, then the typed meal default, then the configured default and has
-  no separate duration argument. Raw calendar
-  commands reject overlap authorization.
+  `meetly_movable` records a private question bound to the inspected event and time.
+  A fresh owner answer through `meetly_answer_owner` holds that time with exact event
+  permission and delivers the offer. Titles and past answers never grant permission;
+  private history lives in `overlap-decisions.json`. Raw calendar commands reject
+  overlap authorization.
 - **Opening groups.** Only in the owner's DM, with the base's
   `plow_start_thread`; new groups are untrusted. Guests receive the six
   scheduling tools in `PLOW_GUEST_TOOLS`; owner turns keep full tools. An uncertain

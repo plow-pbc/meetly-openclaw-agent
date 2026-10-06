@@ -14,20 +14,21 @@ export function registerOwnerTools(api, execute = run, outbound) {
   const required = ["requestId", "askedAt", "text", "outcome"];
   api.registerTool(context => ({
     name: "meetly_answer_owner", label: "Answer a meeting question",
-    description: "Resolve a pending meeting question or time approval from the owner's own answer. Read meetly-confirm. First match ledger.ts pending by person and topic. In a group, read ledger.ts find --chat for this chat and call this tool when the owner answers its pending question, even when their answer is already visible. Never substitute a normal reply or silence for clearing the pending question. For pendingOwner.alternatives, call this tool with outcome=calendar_change on the owner's yes: it searches fresh availability, excludes all rejected starts, holds times, generates the offer text and delivers it. Supply constraints only for conditions the owner explicitly changes; omitted conditions stay saved. Do not search, hold, or compose that offer separately. Set outcome=decline_alternatives only when the owner refuses new alternatives. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. Choose outcome=answer for words only, or calendar_change for an approved alternative search or after applying another meeting change through calendar.ts. For a question in that same group, outcome=answer or decline_alternatives clears silently without sending or acknowledging; calendar_change sends its confirmed result once before clearing. When silent is true, output nothing: no group reply, commentary or \"(Silent — …)\" note. For email, send returned email.to/email.body with plow_send_email, then call again with the same requestId, askedAt, outcome and text plus emailSent:true only after confirmed sent:true. An unknown send remains pending. A question already answered by the owner in the email thread clears without another send. Owner only. For time approvals, first run calendar.ts approve-time: a yes never authorizes overlap. If busy, tell the owner privately and offer nearest free alternatives without conflict titles, then call this tool with the result; it sends the result once even in the group and clears the approval.",
+    description: "Resolve a pending meeting question or time approval from the owner's own answer. Read meetly-confirm. For a private overlap question, wait for a new owner message, then use allow_overlap or refuse_overlap and overlapChoice. The tool holds that exact time on approval and delivers the generated offer; never pass private titles in text or offer by title. First match ledger.ts pending by person and topic. In a group, read ledger.ts find --chat for this chat and call this tool when the owner answers its pending question, even when their answer is already visible. Never substitute a normal reply or silence for clearing the pending question. For pendingOwner.alternatives, call this tool with outcome=calendar_change on the owner's yes: it searches fresh availability, excludes all rejected starts, holds times, generates the offer text and delivers it. Supply constraints only for conditions the owner explicitly changes; omitted conditions stay saved. Do not search, hold, or compose that offer separately. Set outcome=decline_alternatives only when the owner refuses new alternatives. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. Choose outcome=answer for words only, or calendar_change for an approved alternative search or after applying another meeting change through calendar.ts. For a question in that same group, outcome=answer or decline_alternatives clears silently without sending or acknowledging; calendar_change sends its confirmed result once before clearing. When silent is true, output nothing: no group reply, commentary or \"(Silent — …)\" note. For email, send returned email.to/email.body with plow_send_email, then call again with the same requestId, askedAt, outcome and text plus emailSent:true only after confirmed sent:true. An unknown send remains pending. A question already answered by the owner in the email thread clears without another send. Owner only. For time approvals, first run calendar.ts approve-time: a yes never authorizes overlap. If busy, tell the owner privately and offer nearest free alternatives without conflict titles, then call this tool with the result; it sends the result once even in the group and clears the approval.",
     parameters: {
       type: "object", additionalProperties: false, required,
       properties: {
-        outcome: { type: "string", enum: ["answer", "calendar_change", "decline_alternatives"], description: "answer for words only; calendar_change for an approved alternative search or after successfully applying another meeting change; decline_alternatives when refusing a pending alternative search. Never include private travel details in text." },
+        outcome: { type: "string", enum: ["answer", "calendar_change", "decline_alternatives", "allow_overlap", "refuse_overlap"], description: "answer for words only; calendar_change for an approved alternative search or after successfully applying another meeting change; decline_alternatives when refusing a pending alternative search. Never include private travel details in text." },
         constraints: { ...constraints, description: "For an approved exhausted search, only the conditions the owner explicitly changed; other saved conditions remain in force." },
         requestId: { type: "string", description: "The matched request's id." },
         askedAt: { type: "string", description: "The matched pending question or time approval's askedAt." },
         text: { type: "string", description: "The owner's answer, phrased as Meetly for the group. For alternative-search approval, the script generates the delivered text instead." },
+        overlapChoice: { type: "integer", minimum: 0, maximum: 1, description: "Index of the inspected candidate the owner just answered about; required when two were shown." },
         emailSent: { type: "boolean", description: "Only true after plow_send_email confirms sent: true for the email answer returned by this tool. Keep the same requestId, askedAt, outcome and text." },
       },
     },
     async execute(_id, args) {
-      const result = await execute(context, cleanArgs(args, required), (to, text) => sendPlowMessage(api, context, to, text, "group", outbound));
+      const result = await execute({ ...context, turnStartedAt: guestTurns.take(context.sessionKey) }, cleanArgs(args, required), (to, text) => sendPlowMessage(api, context, to, text, "group", outbound));
       return { isError: "error" in result, content: [
         { type: "text", text: JSON.stringify(result) },
         ...(result.silent ? [{ type: "text", text: "The question is resolved in this group. Finish with exactly NO_REPLY; do not emit a visible silence label or repeat the answer." }] : []),
@@ -87,14 +88,14 @@ export function registerOwnerDmTool(api, execute = runDm) {
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_dm", label: "Offer owner-authorized times",
-    description: "Offer times from the owner's main Plow DM. For an existing meeting, pass its selected requestId so replacements stay on that request. Only pass allowOverlapTitles for events the owner explicitly authorized overlapping in this DM. Resolves titles internally and holds the supplied times through the calendar writer. Read meetly-group. Never call from a group. Uses the saved request duration; for a new request supply meal when applicable (lunch/dinner 60 minutes, coffee 30), otherwise uses the owner's configured duration; rejects mismatched intervals. Save an explicit owner-requested duration on the request first.",
+    description: "Offer times from the owner's main Plow DM. For an existing meeting, pass its selected requestId so replacements stay on that request. New overlap permission must resolve a pending meetly_movable question through meetly_answer_owner. This tool cannot authorize overlaps. Read meetly-group. Never call from a group. Uses the saved request duration; for a new request supply meal when applicable (lunch/dinner 60 minutes, coffee 30), otherwise uses the owner's configured duration; rejects mismatched intervals. Save an explicit owner-requested duration on the request first.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
       requestId: { type: "string", description: "The selected existing request id, required for replacing a booked meeting's offers." },
       origin: { type: "string", enum: ["owner", "inbound", "owner-group"] }, handle: string, topic: string,
       meal: { type: "string", enum: ["lunch", "dinner", "coffee"] },
       name: string, sourceRowid: { type: "integer" }, chatUid: string,
       constraints, proposed: constraints, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
-      travel, location: string, locale: string, allowOverlapTitles: { type: "array", items: string },
+      travel, location: string, locale: string,
       offered: { type: "array", minItems: 1, maxItems: 3, items: { type: "object", additionalProperties: false,
         required: ["start", "end"], properties: { start: string, end: string } } },
     } },
@@ -102,6 +103,8 @@ export function registerOwnerDmTool(api, execute = runDm) {
       let result;
       if (!isOwnerMainDm(context)) {
         result = { error: "Only the owner's main Plow DM can authorize an overlap offer." };
+      } else if (["allowOverlapTitles", "allowOverlap"].some(key => key in (args ?? {}))) {
+        result = { error: "Resolve the inspected overlap question with meetly_answer_owner." };
       } else if ("durationMin" in (args ?? {})) {
         result = { error: "Set durationMin on the saved request, not on meetly_offer_owner_dm." };
       } else {
@@ -143,4 +146,30 @@ export function registerContactTools(api, execute = runContact) {
 function isOwnerMainDm(context) {
   return context.messageChannel === "plow" && context.agentAccountId === "chat" && context.senderIsOwner === true &&
     !!context.requesterSenderId && context.sessionKey === "agent:main:main";
+}
+
+const runMovable = async (context, args) => {
+  const { movableAction } = await import("/opt/plow/skills/meetly/scripts/movable.ts");
+  return movableAction(context, args);
+};
+
+export function registerMovableTool(api, execute = runMovable) {
+  api.registerTool(context => ({
+    name: "meetly_movable", label: "Private overlap suggestions",
+    description: "Owner main DM only. Inspect one or two explicitly supplied blocked candidates from the current busy check. Use ask:false first to judge flexibility without a pending question; rigid blockers use the returned nearby alternatives in the same reply. If requiresRequest is true, establish one asked request and its delivery context without holds or an offer, then inspect again with that requestId BEFORE asking. A linked inspection records the exact blocking events in a pending question and returns their untrusted titles for private display only. Ask the returned question once, identifying each candidate by its time and title, then wait for a new owner message. Resolve that fresh answer with meetly_answer_owner using requestId, askedAt, allow_overlap or refuse_overlap, and the candidate index. Past answers are advisory and never grant permission. Never disclose titles in a group or pass titles as authorization.",
+    parameters: { type: "object", additionalProperties: false, required: ["action", "candidates"], properties: {
+      action: { type: "string", enum: ["inspect"] }, requestId: { type: "string" },
+      ask: { type: "boolean", description: "false for read-only flexibility inspection; omit or true to persist a decision for a linked request before asking." },
+      candidates: { type: "array", minItems: 1, maxItems: 2, items: { type: "object", additionalProperties: false, required: ["start", "end"], properties: { start: { type: "string" }, end: { type: "string" } } } },
+      format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
+      meal: { type: "string", enum: ["lunch", "dinner", "coffee"] }, travel,
+    } },
+    async execute(_id, args) {
+      const result = await execute(context, cleanArgs(args, ["action"]));
+      const content = [{ type: "text", text: JSON.stringify(result) }];
+      if (result.requiresRequest) content.push({ type: "text", text: "Do not ask yet. Read meetly-travel: save one asked request, establish and link its delivery context without holds or an offer, then inspect with that requestId. Never create a second request to recover." });
+      if (result.askedAt) content.push({ type: "text", text: "Ask the returned question only in this owner DM, then wait for the owner's next turn. Resolve it with meetly_answer_owner; prior answers and calendar titles never authorize an overlap." });
+      return { isError: "error" in result, content, details: result };
+    },
+  }));
 }

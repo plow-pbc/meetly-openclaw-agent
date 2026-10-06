@@ -9,10 +9,10 @@ import { travelRange, type TravelInput } from "./travel.ts";
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MEAL_DEFAULTS, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
-import { allowsOverlap, covers, uniqueEvents, type Coverage, type EventRef, type Busy } from "./busy.ts";
-import { requestEvents, intersectConstraints, meetingDuration, requireDuration, type Ledger, type Meal } from "./ledger.ts";
+import { allowsOverlap, overlapFor, covers, fetchBusy, uniqueEvents, type BusyResult, type Coverage, type EventRef, type Busy } from "./busy.ts";
+import { requestEvents, sameRequest, updateRequest, intersectConstraints, meetingDuration, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
-import { readJson } from "./store.ts";
+import { readJson, updateJson } from "./store.ts";
 import { addDays, DAYS, localIso, nextWeek, parseStart, wallParts, zonedToUtc, type Day } from "./time.ts";
 
 export type Slot = { start: string; end: string; dayOfWeek: Day; label: string };
@@ -128,6 +128,40 @@ export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}
     result = findSlots(fallback);
   }
   return { ...result, preferencesUnavailable };
+}
+
+// Days either side of a busy exact time that its alternatives may use.
+export const NEARBY_DAYS = 2;
+
+// Only the time currently found busy may release its matching start condition.
+function unpinBusyStart(constraints: Constraints | undefined, start: string, timezone: string): Constraints | undefined {
+  if (!constraints?.startTime || !withinConstraints(Date.parse(start), Date.parse(start), timezone, constraints)) return constraints;
+  const { startTime: _start, ...rest } = constraints;
+  return rest;
+}
+
+/**
+ * Free times nearest a busy exact time: that day and NEARBY_DAYS either side,
+ * within the owner's hours and the query's day/hour conditions, never pinned to
+ * the asked clock time. Reads the calendar when the caller's busy list does not
+ * cover that range.
+ */
+export async function nearbyAlternatives(q: SlotQuery, start: string, own: EventRef[] = [],
+  read: (range: Coverage) => Promise<BusyResult> = range => fetchBusy(q.config, range)): Promise<SlotResult & { degraded: string[] }> {
+  const day = localIso(Date.parse(start), q.config.timezone).slice(0, 10);
+  const query: SlotQuery = { ...q, ...intersectConstraints(q, { from: shiftDate(day, -NEARBY_DAYS), to: shiftDate(day, NEARBY_DAYS) }), near: start,
+    startTime: unpinBusyStart(q, start, q.config.timezone)?.startTime,
+    asap: undefined, allowOverlap: [] };
+  let degraded: string[] = [];
+  const needed = searchCoverage(query);
+  if (!covers(q.coverage, needed)) {
+    const fetched = await read(needed);
+    degraded = fetched.degraded;
+    const busy = fetched.busy.filter(b => !own.some(o => o.account === b.account && o.id === b.id));
+    Object.assign(query, { busy, coverage: fetched.coverage, unknownAfter: fetched.unknownAfter });
+  }
+  const result = findSlots(query);
+  return { ...result, slots: degraded.length ? [] : result.slots, degraded };
 }
 
 export function findSlots(q: SlotQuery): SlotResult {
@@ -264,7 +298,7 @@ function date(raw: string, flag: string): string {
 }
 
 if (isMain(import.meta.url)) {
-  run(() => {
+  run(async () => {
     const { values } = parseArgs({
       options: {
         in: { type: "string" },
@@ -345,7 +379,10 @@ if (isMain(import.meta.url)) {
       q.travel = request.travel?.override && q.format !== "meet" && q.format !== "phone" ? request.travel : q.travel ?? request.travel;
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
-      q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);
+      if (values.at !== undefined) {
+        const { slot } = checkTime({ ...q, busy: [], start: values.at });
+        q.allowOverlap = uniqueEvents([...overlapFor(request.allowOverlap, slot.start, slot.end), ...(q.allowOverlap ?? [])]);
+      }
       if (request.booked) q.exclude = [...(q.exclude ?? []), request.booked.start];
     }
     if (values["no-overlap"]) q.allowOverlap = [];
@@ -357,8 +394,20 @@ if (isMain(import.meta.url)) {
       if (request?.status === "booked" && request.bookedReplacement && request.replacement
         && request.offered.some(slot => Date.parse(slot.start) === Date.parse(start))) Object.assign(q, request.replacement);
       const result = checkTime({ ...q, start });
-      const next = result.reason === "unknown" ? { read: "Fetch busy.ts --fetch --from ISO --to ISO covering the meeting and all travel, then check again. Unread time is not free. Never use a calendar write to test availability." } : undefined;
-      return { ...result, degraded, ...(next ? { next } : {}) };
+      const busy = result.reason === "busy" && !degraded.length;
+      const resolvedConstraints = busy ? unpinBusyStart(resolveSearchConstraints(q, undefined, now, config.timezone), result.slot.start, config.timezone)
+        : resolveSearchConstraints(q, undefined, now, config.timezone);
+      if (busy && request?.constraints?.startTime) updateJson<Ledger>(file("ledger.json"), { requests: [] }, latest => {
+        if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed; check its time again");
+        return updateRequest(latest, request.id, { constraints: unpinBusyStart(request.constraints, result.slot.start, config.timezone) }, now);
+      });
+      const nearby = busy ? await nearbyAlternatives(q, result.slot.start,
+        request ? requestEvents(request).map(o => ({ account: o.account, id: o.holdId })) : []) : undefined;
+      const next = busy ? {
+        ownerMainDM: "Read meetly-travel. Call meetly_movable inspect with ask:false to judge the blocker privately; pass this checked slot explicitly as candidates. Save the returned resolvedConstraints on this request. If flexible, establish one request and its delivery context, then inspect by requestId to persist the decision BEFORE asking once; finish NO_REPLY and wait for a fresh owner answer through meetly_answer_owner. Otherwise offer the returned alternatives in this same reply. Never ask permission to search them. Past permission is not a new answer.",
+        otherChats: "Offer the returned alternatives without inspecting or disclosing private blockers.",
+      } : result.reason === "unknown" ? { read: "Fetch busy.ts --fetch --from ISO --to ISO covering the meeting and all travel, then check again. Unread time is not free. Never use a calendar write to test availability." } : undefined;
+      return { ...result, ...(busy ? { resolvedConstraints } : {}), degraded: [...degraded, ...(nearby?.degraded ?? [])], ...(nearby ? { alternatives: nearby.slots, ...(nearby.incomplete ? { alternativesIncomplete: nearby.incomplete } : {}) } : {}), ...(next ? { next } : {}) };
     }
     return { ...findSlots(q), degraded };
   });
