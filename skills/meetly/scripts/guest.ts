@@ -304,6 +304,10 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
+    if (args.restoredDays !== undefined) {
+      const restored = preferences({ days: args.restoredDays }, config.timezone).days!;
+      request = patch(request, { excludedDays: (request.excludedDays ?? []).filter(day => !restored.includes(day)) });
+    }
     return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt);
   } catch (error) {
     if (error instanceof WeekdayDateRequired) return { error: error.message, code: "DATE_REQUIRED",

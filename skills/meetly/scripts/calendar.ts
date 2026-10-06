@@ -10,7 +10,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
-import { holdHours, loadConfig, SLOT_COUNT } from "./config.ts";
+import { holdHours, loadConfig, SLOT_COUNT, DAYS } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
 import { ContactConfirmationRequired, checkContact, addRequest, requestEvents, requestHolds, sameHandle, expiredRequests, findOpenByHandle, meetingDuration, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
@@ -31,6 +31,7 @@ export type CalendarAction =
 type Step = { travel?: boolean; checkFrom?: string; checkTo?: string; verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
 type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" | "travel" | "attendee" }>; steps: Step[]; failed?: boolean };
 export type CalendarOptions = { overlapApproved?: boolean; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+class GuestExcludedWeekday extends Error {}
 class TimeApprovalBusy extends Error {
   start: string;
   constructor(start: string) { super("Time approval cannot book a busy slot; no overlap was authorized."); this.start = start; }
@@ -49,6 +50,11 @@ const holds = requestHolds;
 // Its slots change; the confirmed event and meeting details remain in place.
 function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledger {
   const request = l.requests.find(r => r.id === id);
+  input = { ...input, excludedDays: request?.excludedDays ?? input.excludedDays };
+  if (input.offered.some(slot => !withinConstraints(Date.parse(slot.start), Date.parse(slot.end), loadConfig().timezone,
+    { days: DAYS.filter(day => !input.excludedDays?.includes(day)) }))) {
+    throw new GuestExcludedWeekday("Offered time falls on a guest-excluded weekday.");
+  }
   const startTime = input.constraints === undefined ? request?.constraints?.startTime : input.constraints.startTime;
   if (startTime) {
     if (input.offered.some(slot => !withinConstraints(Date.parse(slot.start), Date.parse(slot.end), loadConfig().timezone, { startTime }))) throw new Error("Offered time does not match the owner’s exact start.");
@@ -62,6 +68,7 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
   if (validated.status !== "offered") throw new Error("replacement needs offered times");
   return updateRequest(l, id, {
     replacement: { format: validated.format, location: validated.location, travel: validated.travel },
+    excludedDays: validated.excludedDays,
     offered: validated.offered, bookedReplacement: true, allowOverlap: validated.allowOverlap ?? [], constraints: validated.constraints ?? {},
     holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
   }, now);
@@ -132,6 +139,25 @@ async function locked<T>(id: string, fn: () => Promise<T>): Promise<T> {
 export function pendingCalendarWrites(): string[] {
   try { return readdirSync(file("calendar")).filter(name => name.endsWith(".json")).map(name => decodeURIComponent(name.slice(0, -5))); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+}
+
+// Saved date changes share the writer lock so an older offer cannot commit
+// its captured conditions after the owner successfully widens them.
+export async function widenRequestDates(id: string, from: string, to: string, now = Date.now()) {
+  return locked(id, async () => {
+    const intent = readJson<Intent | undefined>(file(`calendar/${encodeURIComponent(id)}.json`), undefined);
+    if (intent?.input.action === "offer") throw new Error("Offer unresolved; run calendar.ts resume before widening dates.");
+    const widened = updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
+      const request = l.requests.find(r => r.id === id);
+      if (!request || !["asked", "offered", "booked"].includes(request.status)) throw new Error("widen-dates needs an asked, offered or booked request");
+      const constraints = { ...request.constraints };
+      // Missing bounds are already unrestricted; widening cannot add a restriction.
+      if (constraints.from !== undefined) constraints.from = [constraints.from, from].sort()[0]!;
+      if (constraints.to !== undefined) constraints.to = [constraints.to, to].sort().at(-1)!;
+      return updateRequest(l, id, { constraints }, now);
+    });
+    return { request: widened.requests.find(r => r.id === id), search: { request: id, from, to } };
+  });
 }
 
 export async function calendarAction(id: string, action: CalendarAction, options: CalendarOptions = {}) {
@@ -494,7 +520,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         return { ...r, ...(completed.input.action === "offer" && decision && "contact" in decision ? { contactApproved: true, pendingOwner: undefined } : {}),
           calendarRevision: completed.id, holdCleanup: cleanup };
       }) };
-    }); } catch (error) { if (error instanceof ContactConfirmationRequired) await fail(error); throw error; }
+    }); } catch (error) { if (error instanceof ContactConfirmationRequired || error instanceof GuestExcludedWeekday) await fail(error); throw error; }
     await cleanup();
     rmSync(journal);
     if (completed.input.action === "attendee") return { ...attendeeResult(requestById(id), completed.steps[0]!.start, true) };
