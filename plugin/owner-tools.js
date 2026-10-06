@@ -155,10 +155,10 @@ const runAttendee = async (context, { requestId, operation, email }) => {
 export function registerAttendeeTool(api, execute = runAttendee) {
   const required = ["requestId", "operation", "email"];
   api.registerTool(context => ({
-    name: "meetly_edit_attendee", label: "Edit a meeting attendee",
-    description: "Owner only. Add or remove one attendee from an existing booked meeting using its requestId and the resolved email address. Updates the invitation without moving the meeting. Confirm only after success, using confirmationTime with its time zone. Never rebook or suggest alternatives for an attendee edit. Removing the last guest requires cancellation instead; never cancel automatically.",
+    name: "meetly_edit_attendee", label: "Add a meeting attendee",
+    description: "Owner only. Add one attendee to an existing booked meeting using its requestId and the resolved email address. Updates the invitation without moving the meeting. Confirm only after success, using confirmationTime with its time zone. Never rebook or suggest alternatives for an attendee edit. Attendee removal is unsupported: tell the owner, Please remove the guest in your calendar app. Never rewrite the attendee list or cancel automatically.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
-      requestId: { type: "string" }, operation: { type: "string", enum: ["add", "remove"] }, email: { type: "string" },
+      requestId: { type: "string" }, operation: { type: "string", enum: ["add"] }, email: { type: "string" },
     } },
     async execute(_id, args) {
       let result;

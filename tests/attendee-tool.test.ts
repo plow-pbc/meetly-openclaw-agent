@@ -24,6 +24,7 @@ for (const change of [null, { senderIsOwner: false }, { requesterSenderId: undef
       assert.equal(result.details.confirmationTime, "Mon, Oct 5, 10:00 AM UTC");
       assert.deepEqual(tool.parameters.required, ["requestId", "operation", "email"]);
       assert.equal(tool.parameters.properties.senderIsOwner, undefined);
+      assert.deepEqual(tool.parameters.properties.operation.enum, ["add"]);
     }
   });
 }

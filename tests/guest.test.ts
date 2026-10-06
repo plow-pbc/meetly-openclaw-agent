@@ -337,7 +337,7 @@ test("pick books the chosen hold with fixed arguments, records the event, and de
   const update = f.commands.find(c => c[2] === "update")!;
   assert.deepEqual(update.slice(0, 5), ["plow-gog", "calendar", "update", "primary", "hold-one"]);
   for (const [flag, value] of [["--summary", "Lunch with Guest"], ["--from", offers[0]!.start], ["--to", offers[0]!.end],
-    ["--account", "owner@example.com"], ["--send-updates", "all"], ["--attendees", "guest@example.net"]]) assert.equal(update[update.indexOf(flag!) + 1], value);
+    ["--account", "owner@example.com"], ["--send-updates", "all"], ["--add-attendee", "guest@example.net"]]) assert.equal(update[update.indexOf(flag!) + 1], value);
   assert.ok(update.includes("--with-meet"));
   assert.match(update[update.indexOf("--private-prop") + 1]!, /^meetlyOperation=/);
   assert.deepEqual(f.commands.filter(c => c[2] === "delete"), [["plow-gog", "calendar", "delete", "primary", "hold-two", "--send-updates", "none", "--force", "--account", "owner@example.com"]]);
@@ -1928,8 +1928,8 @@ for (const [action, args] of actions.filter(([action]) => action !== "ask_owner"
   assert.equal(f.ownerLines.length, action === "decline" ? 1 : 0);
   if (action === "pick") {
     assert.equal("invitationSent" in result && result.invitationSent, true);
-    const booking = f.commands.find(argv => argv.includes("--attendees"))!;
-    assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net");
+    const booking = f.commands.find(argv => argv.includes("--add-attendee"))!;
+    assert.equal(booking[booking.indexOf("--add-attendee") + 1], "ana@example.net");
     assert.ok(f.commands.every(argv => argv[0] !== "/bin/sh"), "an email guest does not need Contacts");
   }
 });
@@ -1938,8 +1938,8 @@ test("an explicit additional email invitee is included without replacing the gue
   const f = emailFixture(t);
   const result = await f.act(f.ctx, "pick", { start: offers[0]!.start, attendees: ["ea@example.net"] });
   assert.ok(!("error" in result));
-  const booking = f.commands.find(argv => argv.includes("--attendees"))!;
-  assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net,ea@example.net");
+  const booking = f.commands.find(argv => argv.includes("--add-attendee"))!;
+  assert.equal(booking[booking.indexOf("--add-attendee") + 1], "ana@example.net,ea@example.net");
 });
 
 test("email requests cannot be acted on from phone turns or another email thread", async t => {
@@ -1992,8 +1992,8 @@ for (const approval of [false, true]) test(`an owner-side email booking invites 
   const result = approval ? await approveTime(f.request().id, { start: offers[0]!.start })
     : await calendarAction(f.request().id, { action: "book", start: offers[0]!.start });
   assert.equal("invitationSent" in result && result.invitationSent, true);
-  const booking = f.commands.find(argv => argv.includes("--attendees"))!;
-  assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net");
+  const booking = f.commands.find(argv => argv.includes("--add-attendee"))!;
+  assert.equal(booking[booking.indexOf("--add-attendee") + 1], "ana@example.net");
 });
 
 test("an unused empty attendee list does not block a phone booking", async t => {

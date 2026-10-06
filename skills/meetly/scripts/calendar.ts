@@ -64,6 +64,9 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
     holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
   }, now);
 }
+const attendeeResult = (request: Request, start: string, invitationUpdated: boolean) => ({
+  request, invitationUpdated, confirmationTime: formatMeetingTime(start, loadConfig().timezone, request.locale),
+});
 const checkedEvent = (step: Step, input: Intent["input"]) => {
   const event = parseEvent(step.output!);
   if (event.status === "cancelled" || Date.parse(event.start) !== Date.parse(step.start) || Date.parse(event.end) !== Date.parse(step.end)
@@ -72,7 +75,7 @@ const checkedEvent = (step: Step, input: Intent["input"]) => {
     const raw = parseCalendarObject(step.output!);
     const updated = (raw.event ?? raw) as { attendees?: { email?: string }[]; attendeesOmitted?: boolean };
     const present = updated.attendees?.some(a => a.email?.toLowerCase() === input.email) ?? false;
-    if (updated.attendeesOmitted || present !== (input.operation === "add")) throw new Error("Attendee change not confirmed; run resume, do not repeat the write.");
+    if (updated.attendeesOmitted || !present) throw new Error("Attendee change not confirmed; run resume, do not repeat the write.");
   }
   return event;
 };
@@ -167,12 +170,14 @@ export async function calendarAction(id: string, action: CalendarAction, options
     let request = requestById(id);
     let input: CalendarAction = action;
     options.validate?.(request);
+    if (input.action === "attendee" && input.operation === "remove") throw new Error("Please remove the guest in your calendar app.");
     if ("travel" in input && input.travel !== undefined) checkTravel(input.travel);
     if (["offer", "duration", "book", "approve-time"].includes(input.action)) checkContact(ledger(), request.handle, request, input.action === "offer" ? input.request : undefined);
     if (intent && request.calendarRevision === intent.id) {
       if (input.action === "resume") {
         await cleanup();
         rmSync(journal);
+        if (intent.input.action === "attendee") return { ...attendeeResult(requestById(id), intent.steps[0]!.start, true) };
         return { request: requestById(id), ...(intent.input.action === "book" && intent.input.timeApproval ? { approved: true } : {}) };
       }
       rmSync(journal); intent = undefined;
@@ -253,31 +258,22 @@ export async function calendarAction(id: string, action: CalendarAction, options
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
         for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${saved.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, saved));
       } else if (input.action === "attendee") {
-        if (!["add", "remove"].includes(input.operation) || typeof input.email !== "string" || !/^[^\s,;@]+@[^\s,;@]+\.[^\s,;@]+$/.test(input.email.trim())) {
-          throw new Error("Supply operation add or remove and one attendee email.");
+        if (input.operation !== "add" || typeof input.email !== "string" || !/^[^\s,;@]+@[^\s,;@]+\.[^\s,;@]+$/.test(input.email.trim())) {
+          throw new Error("Supply operation add and one attendee email.");
         }
         const email = input.email = input.email.trim().toLowerCase();
-        if (input.operation === "add") checkContact(ledger(), input.email);
+        checkContact(ledger(), input.email);
         if (!request.eventId || !request.booked) throw new Error("Booked request has no calendar event.");
         const output = await call(["event", "primary", request.eventId, "--json"], request.booked.account);
         if (output === undefined) throw new Error("Cannot read the booked event's attendees.");
         const event = parseEvent(output);
         const raw = parseCalendarObject(output);
-        const current = (raw.event ?? raw) as { attendees?: { email: string; organizer?: boolean; self?: boolean; optional?: boolean; resource?: boolean; comment?: string }[]; attendeesOmitted?: boolean };
+        const current = (raw.event ?? raw) as { attendees?: { email: string }[]; attendeesOmitted?: boolean };
         if (event.id !== request.eventId || event.status === "cancelled") throw new Error("Booked event is unavailable.");
         if (current.attendeesOmitted) throw new Error("Cannot edit an incomplete attendee list.");
-        const attendees = current.attendees ?? [];
-        const target = attendees.find(a => a.email.toLowerCase() === email);
-        if (input.operation === "remove" && (target?.organizer || target?.self || sameHandle(input.email, request.booked.account))) throw new Error("Cannot remove the calendar owner; cancel the meeting instead.");
-        if (!!target === (input.operation === "add")) return { request, invitationUpdated: false };
-        const remaining = attendees.filter(a => a.email.toLowerCase() !== email);
-        if (input.operation === "remove" && !remaining.some(a => !a.organizer && !a.self && !sameHandle(a.email, request.booked!.account))) {
-          throw new Error("Cannot remove the last attendee; ask the owner whether to cancel the meeting instead.");
-        }
-        const emails = remaining.map(a => [a.email, ...(a.optional ? ["optional"] : []), ...(a.resource ? ["resource"] : []), ...(a.comment ? [`comment=${a.comment}`] : [])].join(";"));
-        if (input.operation === "remove" && remaining.some(a => /[,;]/.test(a.email) || /[,;]/.test(a.comment ?? ""))) throw new Error("Cannot preserve this attendee list through the calendar command.");
+        if (current.attendees?.some(a => a.email.toLowerCase() === email)) return { ...attendeeResult(request, event.start, false) };
         steps.push({ verb: "update", account: request.booked.account, eventId: event.id, start: event.start, end: event.end,
-          args: [input.operation === "add" ? "--add-attendee" : "--attendees", input.operation === "add" ? input.email : emails.join(","), "--send-updates", "all"], token: randomUUID() });
+          args: ["--add-attendee", input.email, "--send-updates", "all"], token: randomUUID() });
       } else {
         const config = loadConfig();
         if (input.action === "format") updateRequest(ledger(), id, { format: input.format, location: input.location, travel: input.travel }, now());
@@ -322,7 +318,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         if (input.action !== "travel") add(verb, slot, ["--summary", `${request.topic} with ${request.name ?? request.handle}`, "--send-updates", "all",
           ...(format === "meet" ? ["--with-meet"] : []),
           ...(format === "phone" ? ["--location=Phone call"] : location !== undefined ? [`--location=${location}`] : []),
-          ...(input.action === "book" && input.attendees ? ["--attendees", input.attendees] : [])], range);
+          ...(input.action === "book" && input.attendees ? [verb === "update" ? "--add-attendee" : "--attendees", input.attendees] : [])], range);
       }
       intent = { id: randomUUID(), input, steps };
       writeJson(journal, intent);
@@ -470,7 +466,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
     }); } catch (error) { if (error instanceof ContactConfirmationRequired) await fail(error); throw error; }
     await cleanup();
     rmSync(journal);
-    if (completed.input.action === "attendee") return { request: requestById(id), invitationUpdated: true };
+    if (completed.input.action === "attendee") return { ...attendeeResult(requestById(id), completed.steps[0]!.start, true) };
     const releasedTravel = !!request.travelEvents?.length;
     request = requestById(id);
     let invitationUpdated = false;
@@ -488,7 +484,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
 
   }).then(result => ({
     ...result,
-    ...(result.request.booked ? { confirmationTime: formatMeetingTime(result.request.booked.start, loadConfig().timezone, result.request.locale) } : {}),
+    ...(!("confirmationTime" in result) && result.request.booked ? { confirmationTime: formatMeetingTime(result.request.booked.start, loadConfig().timezone, result.request.locale) } : {}),
   })).catch(error => {
     if (!(error instanceof TimeApprovalBusy)) throw error;
     return { request: requestById(id), approved: false, code: "TIME_APPROVAL_BUSY", error: error.message,
