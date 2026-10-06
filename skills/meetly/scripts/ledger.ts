@@ -510,7 +510,7 @@ function jsonArg(values: { json?: string; "json-file"?: string }): any {
 }
 
 if (isMain(import.meta.url)) {
-  run(() => {
+  run(async () => {
     const [cmd, ...rest] = process.argv.slice(2);
     const { values } = parseArgs({
       args: rest,
@@ -604,16 +604,8 @@ if (isMain(import.meta.url)) {
           if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== value) throw new Error("dates must be valid YYYY-MM-DD values");
         }
         if (from > to) throw new Error("from must not be after to");
-        const ledger = updateJson<Ledger>(path, EMPTY, l => {
-          const request = l.requests.find(r => r.id === id);
-          if (!request || !["asked", "offered", "booked"].includes(request.status)) throw new Error("widen-dates needs an asked, offered or booked request");
-          const constraints = { ...request.constraints };
-          // Missing bounds are already unrestricted; widening cannot add a restriction.
-          if (constraints.from !== undefined) constraints.from = [constraints.from, from].sort()[0]!;
-          if (constraints.to !== undefined) constraints.to = [constraints.to, to].sort().at(-1)!;
-          return updateRequest(l, id, { constraints }, now);
-        });
-        return { request: ledger.requests.find(r => r.id === id), search: { request: id, from, to } };
+        const { widenRequestDates } = await import("./calendar.ts");
+        return widenRequestDates(id, from, to, now);
       }
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");

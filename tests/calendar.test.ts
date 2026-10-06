@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import fs from "node:fs";
+import { spawn } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { confirmContactOffer } from "../skills/meetly/scripts/contact-policy.ts";
@@ -1548,4 +1549,73 @@ for (const resume of [false, true]) test(`an exclusion added during offer creati
   assert.deepEqual(f.read().holdCleanup, []);
   await calendarAction("r_one", { action: "drop" }, f.options);
   t.diagnostic(JSON.stringify({ journal: pendingCalendarWrites(), newHold: f.events.get("new-1")!.status, retainedOffer: before.length }));
+});
+
+for (const booked of [false, true]) test(`date widening waits for pending ${booked ? "booked replacement" : "offer"} recovery`, async t => {
+  const f = fixture(t, "chat");
+  if (booked) await calendarAction("r_one", { action: "book", start }, f.options);
+  writeJson(f.path, { requests: [{ ...f.read(), constraints: { from: "2026-10-05", to: "2026-10-06", days: ["mon", "tue"], after: "10:00" } }] });
+  const before = f.read();
+  let output: MacOutcome | undefined;
+  const offered = [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account }];
+  await assert.rejects(calendarAction("r_one", { action: "offer", request: { ...f.offer, constraints: before.constraints, offered } }, {
+    ...f.options,
+    command: async cmd => {
+      if (cmd.argv.includes("--private-prop-filter")) return undefined;
+      const result = await f.command(cmd);
+      if (cmd.argv[2] === "create") { output = result; return { handle: "pending-offer" }; }
+      return result;
+    }, poll: async () => undefined,
+  }), /unresolved/);
+  const journal = fs.readFileSync(join(f.home, "calendar/r_one.json"), "utf8");
+  const args = ["widen-dates", "--id", "r_one", "--from", "2026-10-05", "--to", "2026-10-31"];
+  const blocked = cli("ledger.ts", args, { MEETLY_HOME: f.home });
+  assert.equal(blocked.status, 1, blocked.stdout);
+  assert.match(blocked.stderr, /resume|reconcil/i);
+  assert.deepEqual(f.read(), before);
+  assert.equal(fs.readFileSync(join(f.home, "calendar/r_one.json"), "utf8"), journal);
+  await calendarAction("r_one", { action: "resume" }, { ...f.options, poll: async () => output });
+  const result = cli("ledger.ts", args, { MEETLY_HOME: f.home });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(f.read().constraints, { ...before.constraints, to: "2026-10-31" });
+  await calendarAction("r_one", { action: "resume" }, f.options);
+  assert.equal(f.read().constraints?.to, "2026-10-31");
+  assert.deepEqual(pendingCalendarWrites(), []);
+});
+
+test("date widening waits for an active offer writer before changing the saved bounds", async t => {
+  const f = fixture(t, "chat");
+  const constraints = { from: "2026-10-05", to: "2026-10-06" };
+  writeJson(f.path, { requests: [{ ...f.read(), constraints }] });
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const offer = calendarAction("r_one", { action: "offer", request: { ...f.offer, constraints, offered: [f.offer.offered[0]!] } }, {
+    ...f.options, command: async cmd => {
+      if (cmd.argv[2] === "create") { entered(); await gate; }
+      return f.command(cmd);
+    },
+  });
+  await waiting;
+  const script = join(import.meta.dirname, "../skills/meetly/scripts/ledger.ts");
+  const args = [process.execPath, script, "widen-dates", "--id", "r_one", "--from", "2026-10-05", "--to", "2026-10-31"];
+  const child = spawn(process.execPath, ["--input-type=module", "-e",
+    `process.argv = ${JSON.stringify(args)}; await import(${JSON.stringify(new URL("../skills/meetly/scripts/ledger.ts", import.meta.url).href)}); process.stderr.write("\\nCLI_READY\\n");`],
+    { env: { ...process.env, MEETLY_HOME: f.home } });
+  let ready!: () => void, stderr = "", stdout = "", exited = false;
+  const loaded = new Promise<void>(resolve => { ready = resolve; });
+  child.stderr.on("data", data => { stderr += data; if (stderr.includes("CLI_READY")) ready(); });
+  child.stdout.on("data", data => { stdout += data; });
+  const done = new Promise<number | null>(resolve => child.on("close", code => { exited = true; ready(); resolve(code); }));
+  try {
+    await loaded;
+    assert.equal(f.read().constraints?.to, "2026-10-06", "widening must wait without touching an active offer");
+    assert.equal(exited, false, stderr);
+    release();
+    await offer;
+    assert.equal(await done, 0, stderr);
+    assert.equal(JSON.parse(stdout).request.constraints.to, "2026-10-31");
+    assert.equal(f.read().constraints?.to, "2026-10-31");
+    assert.deepEqual(pendingCalendarWrites(), []);
+  } finally { release(); await Promise.allSettled([offer, done]); }
 });

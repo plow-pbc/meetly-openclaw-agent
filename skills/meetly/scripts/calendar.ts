@@ -141,6 +141,25 @@ export function pendingCalendarWrites(): string[] {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
 }
 
+// Saved date changes share the writer lock so an older offer cannot commit
+// its captured conditions after the owner successfully widens them.
+export async function widenRequestDates(id: string, from: string, to: string, now = Date.now()) {
+  return locked(id, async () => {
+    const intent = readJson<Intent | undefined>(file(`calendar/${encodeURIComponent(id)}.json`), undefined);
+    if (intent?.input.action === "offer") throw new Error("Offer unresolved; run calendar.ts resume before widening dates.");
+    const widened = updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
+      const request = l.requests.find(r => r.id === id);
+      if (!request || !["asked", "offered", "booked"].includes(request.status)) throw new Error("widen-dates needs an asked, offered or booked request");
+      const constraints = { ...request.constraints };
+      // Missing bounds are already unrestricted; widening cannot add a restriction.
+      if (constraints.from !== undefined) constraints.from = [constraints.from, from].sort()[0]!;
+      if (constraints.to !== undefined) constraints.to = [constraints.to, to].sort().at(-1)!;
+      return updateRequest(l, id, { constraints }, now);
+    });
+    return { request: widened.requests.find(r => r.id === id), search: { request: id, from, to } };
+  });
+}
+
 export async function calendarAction(id: string, action: CalendarAction, options: CalendarOptions = {}) {
   const now = options.now ?? Date.now;
   const command = options.command ?? runOnMacOutcome;
