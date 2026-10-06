@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  addRequest, saveRequest, cleanupList, pendingOwnerList, expiredRequests, findByChat, findOpenByHandle, normalizeHandle, sameHandle, updateRequest,
+  addRequest, saveRequest, cleanupList, pendingOwnerList, expiredRequests, findByChat, findOpenByHandle, normalizeHandle, sameHandle, updateRequest, recordDelivery,
   type Ledger, type NewRequest, type Patch,
 } from "../skills/meetly/scripts/ledger.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
@@ -484,4 +484,17 @@ test("find reads externally sourced email handles as literal file data", () => {
   assert.equal(found.json.request.id, "literal-address");
   assert.equal(found.json.request.handle, handle);
   assert.equal(cli("ledger.ts", ["find", "--handle-file", handleFile, "--handle", "other@example.com"], { MEETLY_HOME: home }).status, 1);
+});
+
+for (const state of ["matching", "different", "delivered", "no-answer-attempt"] as const) test(`answer-clear preserves unrelated confirmation reservations: ${state}`, () => {
+  const at = new Date(T0).toISOString();
+  const formatConfirmation = { text: "Alex will call you.", attemptedAt: state === "different" ? new Date(T0 + HOUR).toISOString() : at,
+    ...(state === "delivered" ? { delivered: true } : {}) };
+  const ledger = addRequest(empty(), input({ chatUid: "group" }), T0, "r_1");
+  ledger.requests[0] = { ...ledger.requests[0]!, formatConfirmation, pendingOwner: { question: "Will you call?", askedAt: at,
+    ...(state === "no-answer-attempt" ? {} : { answerAttemptedAt: at }) } };
+  const next = recordDelivery(ledger, "r_1", "answer", "clear", T0 + HOUR).requests[0]!;
+  assert.equal(next.pendingOwner?.answerAttemptedAt, undefined);
+  assert.deepEqual(next.formatConfirmation, state === "matching" ? { text: formatConfirmation.text } : formatConfirmation);
+  assert.deepEqual(ledger.requests[0]!.formatConfirmation, formatConfirmation);
 });

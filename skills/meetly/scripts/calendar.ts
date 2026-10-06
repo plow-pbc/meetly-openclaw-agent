@@ -521,7 +521,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
           .filter(h => !(r.status === "booked" && r.eventId === h.holdId && r.booked?.account === h.account));
         const decision = l.requests.find(r => r.id === id)!.pendingOwner;
         return { ...r, ...(completed.input.action === "format" ? { pendingOwner: decision } : {}), ...(completed.input.action === "offer" && decision && "contact" in decision ? { contactApproved: true, pendingOwner: undefined } : {}),
-          ...(completed.input.action === "format" ? { formatConfirmation: completed.input.confirmation ? { text: completed.input.confirmation } : undefined } : {}),
+          ...(["book", "offer", "format"].includes(completed.input.action) ? { formatConfirmation:
+            completed.input.action === "format" && completed.input.confirmation ? { text: completed.input.confirmation } : undefined } : {}),
           calendarRevision: completed.id, holdCleanup: cleanup };
       }) };
     }); } catch (error) { if (error instanceof ContactConfirmationRequired || error instanceof GuestExcludedWeekday) await fail(error); throw error; }

@@ -1640,6 +1640,61 @@ for (const status of ["offered", "booked"] as const) test(`a later raw ${status}
   assert.equal(current.unchanged, true, JSON.stringify(current)); assert.equal(current.error, undefined); assert.equal(sends, 1);
 });
 
+for (const status of ["offered", "booked"] as const) for (const action of ["offer", "book"] as const) test(`committed ${status} ${action} discards its superseded format confirmation`, async t => {
+  const f = fixture(t, "chat");
+  if (status === "booked") await calendarAction("r_one", { action: "book", start }, f.options);
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Library", travel: { beforeMin: 0, afterMin: 0 }, confirmation: "Alex will meet you at the Library." }, f.options);
+  assert.ok(f.read().formatConfirmation);
+  const slot = { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account };
+  await calendarAction("r_one", action === "offer"
+    ? { action, request: { ...f.offer, format: "phone", location: "", offered: [slot] } }
+    : { action, ...slot, format: "phone", travel: { beforeMin: 0, afterMin: 0 } }, f.options);
+  let sends = 0;
+  await resumePending({ ...f.options, sendGuest: async () => { sends++; } });
+  assert.equal(sends, 0);
+  assert.equal(f.read().formatConfirmation, undefined);
+  assert.equal(status === "booked" && action === "offer" ? f.read().replacement?.format : f.read().format, "phone");
+});
+
+for (const action of ["offer", "book"] as const) test(`failed ${action} preserves the current meeting's format confirmation`, async t => {
+  const f = fixture(t, "chat");
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Library", travel: { beforeMin: 0, afterMin: 0 }, confirmation: "Alex will meet you at the Library." }, f.options);
+  const before = f.read().formatConfirmation;
+  const slot = { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account };
+  await assert.rejects(calendarAction("r_one", action === "offer"
+    ? { action, request: { ...f.offer, format: "phone", offered: [slot] } }
+    : { action, ...slot, format: "phone", travel: { beforeMin: 0, afterMin: 0 } }, { ...f.options,
+    command: async cmd => ["create", "update"].includes(cmd.argv[2]!) ? { error: "offline" } : f.command(cmd),
+  }));
+  assert.deepEqual(f.read().formatConfirmation, before);
+  assert.equal(f.read().format, "in_person");
+});
+
+for (const status of ["offered", "booked"] as const) test(`answer-clear authorizes retry of an uncertain ${status} format confirmation without calendar work`, async t => {
+  const { changeOwnerMeeting } = await import("../skills/meetly/scripts/owner-change.ts");
+  const f = fixture(t, "chat");
+  if (status === "booked") await calendarAction("r_one", { action: "book", start }, f.options);
+  writeJson(f.path, { requests: [{ ...f.read(), pendingOwner: { question: "Will you call?", askedAt: new Date(now).toISOString() } }] });
+  const ctx = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "plow-owner", sessionKey: "agent:main:main", nativeChannelId: "dm" };
+  const args = { requestId: "r_one", action: "format" as const, format: "phone" as const, travel: { beforeMin: 0, afterMin: 0 }, confirmation: "Alex will call you." };
+  let sends = 0, fail = true;
+  const send = async () => { sends++; if (fail) throw new Error("unknown delivery"); };
+  assert.ok((await changeOwnerMeeting(ctx, args, send, async () => {}, f.options)).error);
+  assert.ok((await changeOwnerMeeting(ctx, args, send, async () => {}, f.options)).error);
+  assert.equal(sends, 1);
+  assert.equal(f.read().pendingOwner?.answerAttemptedAt, f.read().formatConfirmation?.attemptedAt);
+  const cleared = cli("ledger.ts", ["delivery", "--id", "r_one", "--kind", "answer", "--action", "clear"], { MEETLY_HOME: f.home });
+  assert.equal(cleared.status, 0, cleared.stderr);
+  assert.equal(f.read().pendingOwner?.answerAttemptedAt, undefined);
+  assert.equal(f.read().formatConfirmation?.attemptedAt, undefined);
+  f.calls.length = 0; fail = false;
+  const result = await changeOwnerMeeting(ctx, args, send, async () => {}, f.options);
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.equal(sends, 2); assert.equal(f.read().formatConfirmation?.delivered, true);
+  assert.equal(f.read().pendingOwner, undefined); assert.deepEqual(f.calls, []);
+});
+
 for (const { failed, journalCleared } of [{ failed: false, journalCleared: false }, { failed: true, journalCleared: false }, { failed: false, journalCleared: true }]) test(`poll recovery delivers the saved format confirmation once: failed=${failed}, journalCleared=${journalCleared}`, async t => {
   const { changeOwnerMeeting } = await import("../skills/meetly/scripts/owner-change.ts");
   const f = fixture(t, "chat"); await calendarAction("r_one", { action: "book", start }, f.options);

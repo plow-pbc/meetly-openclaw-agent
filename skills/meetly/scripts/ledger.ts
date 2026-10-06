@@ -449,7 +449,13 @@ export function recordDelivery(ledger: Ledger, id: string, kind: string, action:
     }
     if (action === "begin" && pending.answerAttemptedAt) throw new Error("answer delivery already attempted; only the owner can authorize clearing it");
     const { answerAttemptedAt, ...question } = pending;
-    return updateRequest(ledger, id, { pendingOwner: action === "begin" ? { ...question, answerAttemptedAt: new Date(now).toISOString() } : question }, now);
+    const patch: Patch = { pendingOwner: action === "begin" ? { ...question, answerAttemptedAt: new Date(now).toISOString() } : question };
+    if (action === "clear" && answerAttemptedAt && request.formatConfirmation && !request.formatConfirmation.delivered
+      && request.formatConfirmation.attemptedAt === answerAttemptedAt) {
+      const { attemptedAt, ...confirmation } = request.formatConfirmation;
+      patch.formatConfirmation = confirmation;
+    }
+    return updateRequest(ledger, id, patch, now);
   }
   if (request.status !== "offered") throw new Error(`cannot ${kind} for ${request.status} request`);
   const [attempt, completed] = ["startedAt", "startCompletedAt"] as const;
