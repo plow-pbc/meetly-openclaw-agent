@@ -93,4 +93,3 @@ An answer that arrives before booking is recorded with
 tool's request view or run `request-view.ts --id <id>` after the calendar work.
 Ask format/place only when `askDetails` is true. The view reserves that one question;
 ask it in the current reply and never repeat it. Missing details never block scheduling.
-
