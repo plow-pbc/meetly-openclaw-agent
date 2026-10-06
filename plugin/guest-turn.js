@@ -10,12 +10,12 @@ export function createGuestTurns() {
     },
     reply(sessionKey, action, result) {
       const turn = turns.get(sessionKey);
-      if (!turn) return result;
       if (["pick", "other_times", "format", "decline"].includes(action) && !result.error && result.status) {
-        turn.schedulingResult = result;
+        if (turn) turn.schedulingResult = result;
+        return { ...result, silent: false };
       }
       // Silence belongs to the question handoff, not a completed scheduling action.
-      if (action === "ask_owner" && result.silent && turn.schedulingResult) {
+      if (action === "ask_owner" && result.silent && turn?.schedulingResult) {
         return { ...result, silent: false, schedulingResult: turn.schedulingResult };
       }
       return result;

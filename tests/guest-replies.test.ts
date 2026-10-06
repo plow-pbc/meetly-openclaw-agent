@@ -56,3 +56,12 @@ test("a booking confirmation cannot cross sessions", async t => {
   assert.equal(result.details.silent, true);
   assert.equal(result.details.schedulingResult, undefined);
 });
+
+for (const action of ["pick", "other_times", "format", "decline"]) test(`successful ${action} explicitly clears an earlier silent handoff`, () => {
+  const turn = { sessionKey: "ask-first", runId: action };
+  guestTurns.begin(turn);
+  assert.equal(guestTurns.reply(turn.sessionKey, "ask_owner", { silent: true }).silent, true);
+  const result = guestTurns.reply(turn.sessionKey, action, { status: action === "pick" ? "booked" : "offered" });
+  assert.equal(result.silent, false);
+  guestTurns.end({}, turn);
+});

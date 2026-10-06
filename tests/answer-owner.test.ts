@@ -8,10 +8,9 @@ import { recordBooking } from "../skills/meetly/scripts/record-booking.ts";
 import { guestAction } from "../skills/meetly/scripts/guest.ts";
 import { registerOwnerTools } from "../plugin/owner-tools.js";
 import { addRequest, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
-import { findSlots } from "../skills/meetly/scripts/slots.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
-import { cli, fakeCalendar, tmpHome } from "./helpers.ts";
+import { calendarEvent, cli, fakeCalendar, tmpHome } from "./helpers.ts";
 
 const ctx = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "plow-owner",
   sessionKey: "agent:main:main", nativeChannelId: "owner-dm", config: {} };
@@ -39,10 +38,10 @@ function fixture(t: TestContext) {
   return { path, ledger, read: () => readJson<Ledger>(path, { requests: [] }) };
 }
 
-function ownerTool(sendDurableMessageBatch: (input: any) => Promise<any>) {
+function ownerTool(sendDurableMessageBatch: (input: any) => Promise<any>, context = ctx) {
   let tool: any;
   const route = { agentId: "main", sessionKey: "agent:main:plow:group:group-mia" };
-  registerOwnerTools({ registerTool(factory: any) { tool = factory(ctx); }, runtime: { channel: {
+  registerOwnerTools({ registerTool(factory: any) { tool = factory(context); }, runtime: { channel: {
     routing: { resolveAgentRoute(input: any) {
       assert.deepEqual(input.peer, { kind: "group", id: "group-mia" }); return route;
     } },
@@ -178,34 +177,99 @@ test("concurrent sends and stale clears cannot consume another question", async 
   assert.deepEqual(f.read().requests[0]!.pendingOwner, newer);
 });
 
-for (const inGroup of [false, true]) test(`exhausted-search approval waits for held alternatives before delivery: inGroup=${inGroup}`, async t => {
-  const f = fixture(t), request = f.ledger.requests[0]!;
+function alternativesFixture(t: TestContext, mixed = false) {
+  const f = fixture(t);
+  t.mock.method(Date, "now", () => Date.parse("2026-10-03T08:00:00Z"));
+  const previousToken = process.env.PLOW_MCP_BRIDGE_TOKEN;
+  process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture";
+  t.after(() => { if (previousToken === undefined) delete process.env.PLOW_MCP_BRIDGE_TOKEN; else process.env.PLOW_MCP_BRIDGE_TOKEN = previousToken; });
+  const request = f.ledger.requests[0]!;
+  request.constraints = { from: "2026-10-05", to: "2026-10-05", days: ["mon"], after: "10:00", before: "11:30" };
+  request.excludedDays = ["tue"]; request.format = "phone";
+  request.offered[0]!.holdId = "old";
+  if (mixed) request.offered.push({ ...request.offered[0]!, start: "2026-10-05T10:30:00Z", end: "2026-10-05T11:00:00Z", holdId: "fresh" });
   const pendingOwner = { question: "May I check for other times again?", askedAt: args.askedAt,
-    alternatives: { previousStarts: request.offered.map(o => o.start) } };
+    alternatives: { previousStarts: ["2026-10-05T12:00:00+02:00"] } };
   f.ledger = updateRequest(f.ledger, "mia", { pendingOwner }, Date.now());
   writeJson(f.path, f.ledger);
+  const cal = fakeCalendar(request.offered.map(o => calendarEvent(o.holdId!, o.start, o.end)));
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    const call = JSON.parse(String(init.body));
+    assert.equal(call.params.name, "plow_run_command");
+    const result = await cal.command({ argv: call.params.arguments.argv });
+    return Response.json({ result: { content: [{ type: "text", text: JSON.stringify({ exit_code: 0, output: result.output }) }] } });
+  });
+  return { ...f, cal, request, pendingOwner };
+}
+
+for (const inGroup of [false, true]) for (const mixed of [false, true])
+test(`exhausted-search owner tool searches, holds and delivers without rejected starts: group=${inGroup}, mixed=${mixed}`, async t => {
+  const f = alternativesFixture(t, mixed);
   const context = inGroup ? { ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" } : ctx;
-  const sends: string[] = [];
-  const send = async (_to: string, text: string) => { sends.push(text); };
-  const early = await answerOwner(context, { ...args, text: "Yes" }, send);
-  assert.ok("error" in early, "a yes cannot be relayed and cleared before preparing alternatives");
-  assert.deepEqual(sends, []);
-  assert.deepEqual(f.read().requests[0]!.pendingOwner, pendingOwner);
-  const cal = fakeCalendar([]);
-  const constraints = { from: "2026-10-07", to: "2026-10-07", after: "10:00", before: "10:30" };
-  const search = findSlots({ ...constraints, now: Date.parse("2026-10-03T08:00:00Z"), busy: [],
-    config: { ...DEFAULTS, ownerName: "Patrick", defaultAccount: "owner@example.com", timezone: "UTC", calendars: [{ account: "owner@example.com", id: "primary" }] },
-    coverage: { from: "2026-10-07T00:00:00Z", to: "2026-10-08T00:00:00Z" },
-    durationMin: request.durationMin, exclude: pendingOwner.alternatives.previousStarts, locale: "en-US" });
-  assert.equal(search.slots.length, 1);
-  const offered = search.slots.map(slot => ({ start: slot.start, end: slot.end, account: "owner@example.com" }));
-  await calendarAction("mia", { action: "offer", request: { origin: request.origin, handle: request.handle,
-    topic: request.topic, durationMin: request.durationMin, chatUid: request.chatUid, constraints, offered } },
-    { command: cal.command, now: () => Date.parse("2026-10-03T08:00:00Z") });
-  const result = await answerOwner(context, { ...args, text: "Wednesday at 10 AM UTC is held. Does that work?" }, send);
-  assert.equal("error" in result, false, JSON.stringify(result));
-  assert.equal(sends.length, 1);
+  const deliveries: any[] = [];
+  const { tool } = ownerTool(async input => {
+    const saved = f.read().requests[0]!;
+    assert.ok(saved.pendingOwner?.answerAttemptedAt);
+    assert.ok(saved.offered.every(o => o.holdId && Date.parse(o.start) !== Date.parse(f.pendingOwner.alternatives.previousStarts[0]!)));
+    assert.ok(f.cal.calls.some(c => c[2] === "create"), "holds must precede delivery");
+    deliveries.push(input); return { status: "sent" };
+  }, context);
+  const result = await tool.execute("approve", { ...args, text: "Yes" });
+  assert.equal(result.isError, false, JSON.stringify(result.details));
+  assert.equal(deliveries.length, 1);
+  assert.match(deliveries[0].payloads[0].text, /10:30|11:00/);
+  assert.doesNotMatch(deliveries[0].payloads[0].text, /10:00|Yes|previousStarts/);
   assert.equal(f.read().requests[0]!.pendingOwner, undefined);
-  assert.equal(cal.calls.filter(c => c[2] === "create").length, 1);
-  t.diagnostic(JSON.stringify({ early, held: f.read().requests[0]!.offered, delivered: sends }));
+  assert.deepEqual(f.read().requests[0]!.constraints, f.request.constraints);
+  assert.deepEqual(f.read().requests[0]!.excludedDays, ["tue"]);
+  assert.equal(f.read().requests[0]!.durationMin, 30);
+  assert.equal((await tool.execute("again", args)).isError, true);
+  assert.equal(deliveries.length, 1);
+});
+
+for (const outcome of ["empty", "calendar-failure", "hold-failure", "delivery-unknown"])
+test(`exhausted-search transaction retains pending on ${outcome}`, async t => {
+  const f = alternativesFixture(t);
+  if (outcome === "empty") f.cal.events.set("busy", calendarEvent("busy", "2026-10-05T00:00:00Z", "2026-10-06T00:00:00Z"));
+  if (outcome === "calendar-failure") t.mock.method(globalThis, "fetch", async () => { throw new Error("offline"); });
+  if (outcome === "hold-failure") {
+    const fetch = globalThis.fetch;
+    t.mock.method(globalThis, "fetch", async (url: any, init: RequestInit) =>
+      JSON.parse(String(init.body)).params.arguments.argv[2] === "create" ? new Response("", { status: 503 }) : fetch(url, init));
+  }
+  let sends = 0;
+  const { tool } = ownerTool(async () => { sends++; return { status: "unknown" }; });
+  const result = await tool.execute("approve", { ...args, text: "Yes" });
+  assert.equal(result.isError, true);
+  assert.ok(f.read().requests[0]!.pendingOwner);
+  assert.equal(sends, outcome === "delivery-unknown" ? 1 : 0);
+  if (outcome === "delivery-unknown") {
+    const calls = [...f.cal.calls];
+    assert.equal((await tool.execute("again", args)).isError, true);
+    assert.equal(sends, 1); assert.deepEqual(f.cal.calls, calls, "unknown delivery cannot repeat the transaction");
+  } else {
+    assert.deepEqual(f.read().requests[0]!.offered, f.request.offered);
+    assert.ok(f.cal.calls.every(c => c[2] === "events"));
+  }
+});
+
+for (const decline of [false, true]) test(`exhausted-search owner decision applies only explicit changes: decline=${decline}`, async t => {
+  const f = alternativesFixture(t);
+  const deliveries: string[] = [];
+  const { tool } = ownerTool(async input => { deliveries.push(input.payloads[0].text); return { status: "sent" }; });
+  const result = await tool.execute("decision", { ...args, text: "Patrick cannot offer another time.", declineAlternatives: decline,
+    constraints: { from: "2026-10-07", to: "2026-10-07", days: ["wed"] } });
+  assert.equal(result.isError, false, JSON.stringify(result.details));
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+  assert.equal(deliveries.length, 1);
+  if (decline) {
+    assert.deepEqual(f.read().requests[0]!.offered, f.request.offered);
+    assert.deepEqual(f.cal.calls, []);
+    assert.equal(deliveries[0], "Patrick cannot offer another time.");
+  } else {
+    assert.ok(f.read().requests[0]!.offered.every(o => o.start.startsWith("2026-10-07")));
+    assert.deepEqual(f.read().requests[0]!.constraints, { ...f.request.constraints, from: "2026-10-07", to: "2026-10-07", days: ["wed"] });
+    assert.match(deliveries[0]!, /10:00|10:30|11:00/);
+    assert.doesNotMatch(deliveries[0]!, /cannot offer/);
+  }
 });
