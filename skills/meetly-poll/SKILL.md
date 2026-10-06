@@ -70,8 +70,8 @@ For an owner DM, use
    6. Run `contact.ts --handle <sender>` for their name, then `ledger.ts save
       --json` with `status: "asked"`, `origin: "inbound"`, `handle`, `name`,
       `sourceRowid` = the request's rowid, `topic`, `meal` if applicable, and
-      `durationMin`: use the explicitly requested length, otherwise `config.durationMin`.
-      Preserve an existing saved duration unless deliberately changing it. Include `proposed` for any times they proposed, their `locale`, and
+      `durationMin` only when explicitly stated; otherwise omit it and let the
+      ledger resolve the meal/config default. Include `proposed` for any times they proposed, their `locale`, and
       `format`: the format if their words say it (`meetly` "Meeting
       format"; otherwise `unknown`). No holds, no group, no message to them.
       For "next week", run `time.ts next_week --anchor <source message timestamp>` and save its returned `from`/`to` in
