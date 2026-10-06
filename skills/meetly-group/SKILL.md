@@ -86,8 +86,8 @@ from another meeting or rebuild them from chat history.
 
 When the owner replaces saved hard conditions in a group, pass the complete replacement
 as `constraints`; an empty object clears them. Omission preserves the saved policy.
-For a DM search, run `ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
-before searching, keeping any hard conditions they did not change.
+For a DM search without `--at`, run `ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
+before searching, keeping any hard conditions they did not change. Exact-time checks use the single call below.
 
 1. In the current group, call `meetly_offer_owner_group` with `topic`, required `durationMin`, `travel`, `introduction: "needed"|"already_introduced"`, `meal`, `constraints`,
    `proposed`, `name` as given by the owner in this thread, `format`, `location` and `locale` as known.
@@ -106,12 +106,21 @@ before searching, keeping any hard conditions they did not change.
    start was already attempted and stop. Only if the owner explicitly asks to clear the attempt and retry,
    run `ledger.ts delivery --id <id> --kind start --action clear` before continuing.
 2. Read the calendar.
-3. For a replacement offer, pass `--request <id>` to preserve conditions and
-   exclude this request's own holds. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
-   locale>`, with the request's `constraints` (the owner's) and, on its
-   first offer, its `proposed` times: `--days`, `--after`, `--before`,
-   `--from`/`--to`, `--duration`. For a busy requested time, use `--near <requested ISO start>`
-   instead, keeping hard conditions such as "only at 11:30", and offer in the returned order.
+3. For an existing request, pass `--request <id>` to preserve conditions and
+   exclude this request's own holds. For a search:
+   Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
+   locale> --duration <minutes>`, with the request's `constraints` (the owner's) and, on its
+   first offer, its `proposed` times: `--days`, `--after`, `--before`, `--from`/`--to`.
+   For an exact owner-requested time, run one `slots.ts` call with `--at <requested ISO start>`,
+   `--request <id>` when one exists, and the owner's conditions as `--before`, `--after`, `--days`, `--from`/`--to`.
+   Explicit conditions replace their saved counterparts; omitted conditions stay.
+   Pass only conditions the owner stated; calendar-read bounds and the default search horizon are not conditions.
+   For example: `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --request <id> --at 2026-10-29T14:00 --before 16:00`.
+   It applies the conditions and saves them on the selected request; do not add or update a ledger request before or after this check.
+   When busy, it returns ranked free alternatives on that day ±2 days, reading calendar
+   coverage as needed. Present them in this same reply without asking permission to search.
+   The matching busy clock pin is removed; no start pin is created. Other hard conditions stay.
+   If `degraded` or `alternativesIncomplete` is present, report incomplete coverage rather than no times.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
      If `constraints` block it, tell the owner which one and suggest
