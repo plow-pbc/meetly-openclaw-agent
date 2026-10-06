@@ -35,7 +35,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `drop\|expire\|cancel\|cleanup\|resume --id X` | `{request, skipped?}`: close an offer, cancel a booked event, retry cleanup, or reconcile an unresolved write |
 | `reminder-check.ts` | `--id X --event-file F [--lead-min N]` | `{action:"send"\|"wait"\|"cancelled"\|"no-link"\|"skip", send?:{chatUid, meetUrl, name, locale, time, minutesToStart}}` |
 | | `--id X --sent` | `{request}`: the reminder went out; refused if already handled |
-| `busy.ts` | `--fetch [--from ISO --to ISO] [--allow-overlap-title <owner-supplied name>]` (reads the Mac, writes `tmp/busy.json`) | `{file, busy:<count>, degraded, unknownAfter?}` |
+| `busy.ts` | `--fetch [--from ISO --to ISO]` (reads the Mac, writes `tmp/busy.json`) | `{file, busy:<count>, degraded, unknownAfter?}` |
 | | `--in F [--in F2…] [--max 100]` | `{busy:[{start,end,id,account}], unknownAfter?, degraded}` |
 | `time.ts` | `next_week --anchor ISO` | `{from,to}` in the owner's timezone, anchored to the source message timestamp; pass weekdays separately |
 | `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--week this\|next] [--asap] [--start-time HH:MM] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], durationMin, resolvedConstraints, incomplete?, unknownAfter?, degraded}` |
@@ -73,12 +73,12 @@ Notes:
 - A booked request may have replacement `offered` times and `offeredAt`. Expiry releases only
   those replacement holds; the original event remains until a move or cancellation.
 - `pendingOwner` holds one `{contact, askedAt}`, `{question, askedAt}` or `{start, end, askedAt}`.
-  `ledger.ts pending` lists them: route contact decisions to `meetly-pipeline`; questions and time approvals go to "Owner confirms" in `meetly-confirm`.
+  `ledger.ts pending` lists them: route contact decisions to `meetly-pipeline`, overlap questions to `meetly-travel`'s pending-answer flow, and other questions/time approvals to "Owner confirms" in `meetly-confirm`.
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.
   `meetUrl` only ever holds `https://meet.google.com/xxx-xxxx-xxx`, only on
   a `meet`; the ledger refuses anything else.
 - Choose duration from the meeting context and record it on each saved request; new group offers require `durationMin`. Slot search uses explicit duration, then saved request duration, then the meal default, then config.durationMin. Change duration through `calendar.ts duration` so the new duration and replacement holds commit together.
-- Raw calendar commands reject `allowOverlap` and `allowOverlapTitles`. New overlap authorization uses `meetly_offer_owner_dm`, which verifies the runtime owner and main DM session before calling the internal offer writer. The DM tool has no `durationMin` argument: it uses the saved duration, then meal default or configured fallback; mismatched intervals are errors.
+- Raw calendar commands reject `allowOverlap` and `allowOverlapTitles`. For overlap approval, follow `meetly-travel`'s pending-answer flow through `meetly_answer_owner`; permission names the inspected event and interval. `meetly_offer_owner_dm` makes ordinary offers only. It has no `durationMin` argument: it uses the saved duration, then meal default or configured fallback; mismatched intervals are errors.
 - Every calendar mutation goes through `calendar.ts`. It locks the request,
   persists each write's identity, and commits the ledger from the actual result.
   An unresolved write must be resumed, never replayed or bypassed. Reminders

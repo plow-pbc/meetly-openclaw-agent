@@ -10,7 +10,7 @@ import { holdHours, parseTime, loadConfig, MEAL_DEFAULTS, reminderLeadMin, type 
 import { isMeetUrl } from "./event.ts";
 import { DAYS } from "./time.ts";
 import { file } from "./paths.ts";
-import { uniqueEvents, type EventRef } from "./busy.ts";
+import { type EventRef, type OverlapGrant } from "./busy.ts";
 import { checkTravel, travelFor, type Travel } from "./travel.ts";
 import type { Constraints } from "./slots.ts";
 export type { Constraints } from "./slots.ts";
@@ -31,7 +31,7 @@ export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
 // One contact decision, question or out-of-hours time waiting for the owner.
 export const OWNER_QUESTION_LIMIT = 500;
 export type OverlapChoice = { start: string; end: string; event: EventRef; title: string };
-export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ contact: NewRequest } | { start: string; end: string } | { question: string; alternatives?: { previousStarts: string[] }; overlap?: { choices: OverlapChoice[]; answer?: { allowed: boolean; choice: number }; reply?: string } });
+export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ contact: NewRequest } | { start: string; end: string } | { question: string; alternatives?: { previousStarts: string[] }; overlap?: { choices: OverlapChoice[]; travel: Travel } });
 export function intersectConstraints(owner: Constraints = {}, guest: Constraints = {}): Constraints {
   return {
     ...(owner.startTime || guest.startTime ? { startTime: owner.startTime ?? guest.startTime } : {}),
@@ -77,7 +77,7 @@ export type Request = {
   constraints?: Constraints;
   // Times the person proposed; only the first offer uses them.
   proposed?: Constraints;
-  allowOverlap?: EventRef[];
+  allowOverlap?: OverlapGrant[];
   askDetails?: boolean;
   offered: Offer[];
   // Only committed replacement holds are actionable on a booked request.
@@ -351,7 +351,7 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
   input = { ...input, channel: existing.channel ?? "text", name: input.name ?? existing.name, origin: existing.origin, chatUid: input.chatUid ?? existing.chatUid,
     askDetails: input.askDetails ?? existing.askDetails,
     travel: existing.travel?.override && input.format !== "meet" && input.format !== "phone" ? existing.travel : input.travel ?? existing.travel,
-    allowOverlap: uniqueEvents([...(existing.allowOverlap ?? []), ...(input.allowOverlap ?? [])]) };
+    allowOverlap: input.allowOverlap ?? [] };
   if (existing.chatUid && input.chatUid !== existing.chatUid) throw new Error("a request cannot move to another chat");
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   const newHolds = new Set(validated.offered.flatMap((offer) => offer.holdId ? [`${offer.account}\0${offer.holdId}`] : []));

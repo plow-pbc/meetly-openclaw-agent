@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "nod
 import { dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
+import { allowsOverlap, overlapFor, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig, SLOT_COUNT } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
@@ -28,8 +28,8 @@ export type CalendarAction =
   | { action: "travel"; travel: Travel }
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
 type Step = { travel?: boolean; checkFrom?: string; checkTo?: string; verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
-type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" | "travel" }>; steps: Step[]; overlapApproval?: PendingOwner; failed?: boolean };
-export type CalendarOptions = { overlapApproval?: PendingOwner; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" | "travel" }>; steps: Step[]; overlapApproval?: { pending: PendingOwner; choice: number }; failed?: boolean };
+export type CalendarOptions = { overlapApproval?: { pending: PendingOwner; choice: number }; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
 class OverlapDecisionChanged extends Error {
   constructor() { super("Overlap decision changed."); }
 }
@@ -245,18 +245,18 @@ export async function calendarAction(id: string, action: CalendarAction, options
         if (input.request.offered.length > SLOT_COUNT) throw new Error(`Offer at most ${SLOT_COUNT} times.`);
         if (input.request.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
         if (options.overlapApproval) {
-          const pending = options.overlapApproval;
+          const { pending, choice: index } = options.overlapApproval;
           const overlap = "question" in pending ? pending.overlap : undefined;
-          const choice = overlap?.answer?.allowed ? overlap.choices[overlap.answer.choice] : undefined;
+          const choice = overlap?.choices[index];
           if (!choice || JSON.stringify(request.pendingOwner) !== JSON.stringify(pending)
             || input.request.offered.length !== 1 || input.request.offered[0]!.start !== choice.start || input.request.offered[0]!.end !== choice.end) throw new OverlapDecisionChanged();
-          input.request.allowOverlap = [choice.event];
+          input.request.allowOverlap = [{ ...choice.event, start: choice.start, end: choice.end }];
         }
         // Validate before any external effect; only the final commit replaces the old offer.
         const before = ledger();
         // Replacement permission must be freshly resolved in the owner DM.
-        if (request.status === "booked" && !options.overlapApproval) delete input.request.allowOverlap;
-        const validated = saveOffer(options.overlapApproval ? updateRequest(before, id, { allowOverlap: [] }, now()) : before, input.request, now(), id);
+        if (!options.overlapApproval) delete input.request.allowOverlap;
+        const validated = saveOffer(before, input.request, now(), id);
         const saved = validated.requests.find(r => r.id === id)!;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
         for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${saved.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, saved.replacement ?? saved));
@@ -327,7 +327,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
     };
     if (intent.failed) await fail();
     const authorize = (current = ledger()) => {
-      if (intent.overlapApproval && JSON.stringify(current.requests.find(r => r.id === id)?.pendingOwner) !== JSON.stringify(intent.overlapApproval)) throw new OverlapDecisionChanged();
+      if (intent.overlapApproval && JSON.stringify(current.requests.find(r => r.id === id)?.pendingOwner) !== JSON.stringify(intent.overlapApproval.pending)) throw new OverlapDecisionChanged();
       // A sent update must be reconciled even after revocation: its event may
       // already be booked and must not remain eligible for hold expiry.
       if (intent.steps.some(s => s.verb === "update" && s.sentAt !== undefined)) return;
@@ -366,8 +366,9 @@ export async function calendarAction(id: string, action: CalendarAction, options
         const own = [...requestEvents(requestById(id)), ...intent.steps.filter(s => s.output).map(s => ({ holdId: parseEvent(s.output!).id, account: s.account }))];
         const overlaps = busy.busy.filter(b => Date.parse(b.start) < Date.parse(step.checkTo ?? step.end) && Date.parse(b.end) > Date.parse(step.checkFrom ?? step.start));
         const timeApproval = intent.input.action === "book" && intent.input.timeApproval;
-        const allowed = timeApproval ? [] : intent.input.action === "offer"
-          ? request.status === "booked" || intent.overlapApproval ? intent.input.request.allowOverlap ?? [] : [...(request.allowOverlap ?? []), ...(intent.input.request.allowOverlap ?? [])] : request.allowOverlap;
+        const meeting = intent.steps.find(s => !s.travel) ?? request.booked;
+        const allowed = timeApproval ? [] : intent.input.action === "offer" ? intent.input.request.allowOverlap
+          : meeting ? overlapFor(request.allowOverlap, meeting.start, meeting.end) : [];
         if (overlaps.some(b => !own.some(h => h.holdId === b.id && h.account === b.account) && !allowsOverlap(b, allowed))) {
           if (intent.input.action === "offer") { step.skipped = true; writeJson(journal, intent); continue; }
           if (timeApproval) await fail(new TimeApprovalBusy(step.start));
@@ -431,7 +432,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       let next: Ledger;
       if (completed.input.action === "offer") {
         const offered = completed.steps.filter(s => !s.skipped).map(s => { const e = parseEvent(s.output!); return { start: e.start, end: e.end, holdId: e.id, account: s.account }; });
-        next = saveOffer(completed.overlapApproval ? updateRequest(l, id, { allowOverlap: [] }, now()) : l, { ...completed.input.request, offered }, now(), id);
+        next = saveOffer(l, { ...completed.input.request, offered }, now(), id);
 
       } else {
         if ("format" in completed.input && completed.input.format !== undefined) l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location ?? "", travel: completed.input.travel }, now());

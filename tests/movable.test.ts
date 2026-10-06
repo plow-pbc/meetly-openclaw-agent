@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { registerMovableTool, registerOwnerDmTool } from "../plugin/owner-tools.js";
+import { registerMovableTool } from "../plugin/owner-tools.js";
 import { movableAction, rememberOverlap, type MovableArgs } from "../skills/meetly/scripts/movable.ts";
 import { DEFAULTS, loadConfig, type Config } from "../skills/meetly/scripts/config.ts";
 import { fetchBusy } from "../skills/meetly/scripts/busy.ts";
@@ -190,12 +190,4 @@ test("private inspection unwraps the canonical calendar title", async t => {
   f.set({ events: [{ ...event(), summary: '<<<EXTERNAL_UNTRUSTED_CONTENT id="wrap">>>\nSource: google_api\n---\nFocus block\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="wrap">>>' }] });
   const result = await movableAction(owner, inspect, f.options);
   assert.equal(result.candidates![0]!.title, "Focus block");
-});
-
-test("owner offer tool rejects model-supplied overlap title authorization", async () => {
-  let tool: any, calls = 0;
-  registerOwnerDmTool({ registerTool(factory: any) { tool = factory(owner); } }, async () => { calls++; return { offered: true }; });
-  const result = await tool.execute("offer", { origin: "owner", handle: "+15550002222", topic: "Lunch", offered: [slot], allowOverlapTitles: ["Focus block"] });
-  assert.equal(result.isError, true);
-  assert.equal(calls, 0);
 });

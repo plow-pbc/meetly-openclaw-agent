@@ -18,7 +18,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (!["answer", "calendar_change", "decline_alternatives", "allow_overlap", "refuse_overlap"].includes(args.outcome ?? "")) return { error: "Choose answer, calendar_change, decline_alternatives, allow_overlap or refuse_overlap for the matching pending decision." };
   const path = file("ledger.json");
   const ledger = readJson<Ledger>(path, { requests: [] });
-  const request = ledger.requests.find(r => r.id === args.requestId);
+  let request = ledger.requests.find(r => r.id === args.requestId);
   let pending = request?.pendingOwner;
   if (!request?.chatUid || !pending || "contact" in pending || pending.askedAt !== args.askedAt
     || (!["offered", "booked"].includes(request.status) && !(request.status === "asked" && "question" in pending && pending.overlap))) return { error: "No matching pending meeting question. Read the pending requests again." };
@@ -32,7 +32,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (overlap || overlapAnswer) {
     if (!overlap || !overlapAnswer || !choice || (overlap.choices.length > 1 && args.overlapChoice === undefined)) return { error: "Choose a pending overlap candidate and allow_overlap or refuse_overlap." };
     if (ctx.agentAccountId !== "chat" || ctx.sessionKey !== "agent:main:main" || !ctx.turnStartedAt || ctx.turnStartedAt <= Date.parse(pending.askedAt)) return { error: "Wait for the owner's fresh answer in the main DM before resolving this overlap question." };
-    if (args.emailSent && (!overlap.reply || overlap.answer?.choice !== (args.overlapChoice ?? 0) || !overlap.answer.allowed || args.outcome !== "allow_overlap")) return { error: "No matching overlap offer delivery to confirm." };
+    if (args.emailSent && (args.outcome !== "allow_overlap" || !request.offered.some(slot => slot.holdId && Date.parse(slot.start) === Date.parse(choice.start) && Date.parse(slot.end) === Date.parse(choice.end)))) return { error: "No matching overlap offer delivery to confirm." };
   }
   const alternatives = "question" in pending ? pending.alternatives : undefined;
   const declined = args.outcome === "decline_alternatives";
@@ -42,62 +42,43 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     || !request.offered.some(o => !alternatives.previousStarts.some(start => Date.parse(start) === Date.parse(o.start))))) {
     return { error: "Run the alternative search and hold new times before answering. Preserve the owner's saved conditions unless explicitly changed. Leave this decision pending if no times fit or the search or write fails." };
   }
-  const alreadyVisible = inGroup && "question" in pending && ((args.outcome === "answer" && !alternatives) || declined);
+  const skipDelivery = args.outcome === "refuse_overlap" || (inGroup && "question" in pending && ((args.outcome === "answer" && !alternatives) || declined));
   const emailReceipt = request.channel === "email" && args.emailSent === true;
   if (emailReceipt && !pending.answerAttemptedAt) return { error: "No email answer attempt to confirm." };
-  if (!alreadyVisible && !emailReceipt) {
-
+  if (!emailReceipt && pending.answerAttemptedAt) return { error: "Answer delivery already attempted. Retry only after the owner explicitly authorizes clearing the attempt." };
+  if (overlap && choice) {
+    if (!emailReceipt) rememberOverlap(choice, args.outcome === "allow_overlap");
+    if (!emailReceipt && !skipDelivery) {
+      try {
+        const { id, origin, handle, name, channel, chatUid, topic, durationMin, format, location, meal, constraints, locale, askDetails } = request;
+        const result = await offerRequest({ requestId: id, origin, handle, name, channel, chatUid, topic, durationMin, format, location, meal, travel: overlap.travel, constraints, locale, askDetails,
+          offered: [{ start: choice.start, end: choice.end }] }, { ...options, overlapApproval: { pending, choice: args.overlapChoice ?? 0 }, validate(latest) {
+          options.validate?.(latest);
+          if (!sameRequest(latest, request)) throw new Error("request changed");
+        } });
+        request = result.request;
+      } catch { return { error: "Overlap offer could not be completed. The decision remains pending; reconcile any calendar operation before retrying. No booking was made." }; }
+    }
+    if (!skipDelivery) args = { ...args, text: `These times are held: ${request.offered.map(slot => formatMeetingTime(slot.start, loadConfig().timezone, request!.locale)).join("; ")}. Which works for you?` };
+  }
+  if (!skipDelivery && !emailReceipt) {
     try {
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {
-        if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed");
-        const begun = recordDelivery(latest, request.id, "answer", "begin", Date.now());
-        if (overlap) {
-          const current = begun.requests.find(r => r.id === request.id)!.pendingOwner!;
-          return updateRequest(begun, request.id, { pendingOwner: { ...current, question: "question" in pending! ? pending.question : "Overlap decision", overlap: { ...overlap, answer: { allowed: args.outcome === "allow_overlap", choice: args.overlapChoice ?? 0 } } } }, Date.now());
-        }
-        return begun;
+        if (!sameRequest(latest.requests.find(r => r.id === request!.id), request)) throw new Error("request changed");
+        return recordDelivery(latest, request!.id, "answer", "begin", Date.now());
       });
       pending = begun.requests.find(r => r.id === request.id)!.pendingOwner!;
     } catch {
       return { error: "Answer delivery already attempted or request changed. Read pending requests; retry only after the owner explicitly authorizes clearing the attempt." };
     }
   }
-  if (overlap && choice) {
-    if (emailReceipt) args = { ...args, text: overlap.reply! };
-    else {
-      rememberOverlap(choice, args.outcome === "allow_overlap");
-      if (args.outcome === "refuse_overlap") {
-        try {
-          updateJson<Ledger>(path, { requests: [] }, latest => {
-            if (JSON.stringify(latest.requests.find(r => r.id === request.id)?.pendingOwner) !== JSON.stringify(pending)) throw new Error("question changed");
-            return updateRequest(latest, request.id, { pendingOwner: null }, Date.now());
-          });
-        } catch { return { error: "The overlap question changed. Read pending requests again." }; }
-        return { answered: true, sent: false, requestId: request.id, message: "No overlap authorized; the current offer is unchanged." };
-      }
-      try {
-        const { id, origin, handle, name, channel, chatUid, topic, durationMin, format, location, meal, travel, constraints, locale, askDetails } = request;
-        const result = await offerRequest({ requestId: id, origin, handle, name, channel, chatUid, topic, durationMin, format, location, meal, travel, constraints, locale, askDetails,
-          offered: [{ start: choice.start, end: choice.end }] }, { ...options, overlapApproval: pending });
-        if ("error" in result) throw new Error("Offer failed");
-        const reply = `These times are held: ${result.request.offered.map(slot => formatMeetingTime(slot.start, loadConfig().timezone, request.locale)).join("; ")}. Which works for you?`;
-        updateJson<Ledger>(path, { requests: [] }, latest => {
-          const current = latest.requests.find(r => r.id === request.id)?.pendingOwner;
-          if (JSON.stringify(current) !== JSON.stringify(pending) || !current || !("question" in current) || !current.overlap) throw new Error("question changed");
-          pending = { ...current, overlap: { ...current.overlap, reply } };
-          return updateRequest(latest, request.id, { pendingOwner: pending }, Date.now());
-        });
-        args = { ...args, text: reply };
-      } catch { return { error: "Overlap offer could not be completed. The decision remains pending; reconcile any calendar operation before retrying. No booking was made." }; }
-    }
-  }
-  if (request.channel === "email" && !alreadyVisible && !emailReceipt) {
+  if (request.channel === "email" && !skipDelivery && !emailReceipt) {
     return { email: { to: request.chatUid, body: args.text!.trim() }, requestId: request.id, askedAt: pending.askedAt,
       message: "Send this answer with plow_send_email. Only after sent: true, call meetly_answer_owner again with these same fields and emailSent: true. Unknown delivery stays pending; do not resend." };
   }
   try {
     // The owner's words may already be visible, but a calendar change still needs its result delivered.
-    if (!alreadyVisible && request.channel !== "email") await send(request.chatUid, args.text!.trim());
+    if (!skipDelivery && request.channel !== "email") await send(request.chatUid!, args.text!.trim());
   } catch {
     return { error: "Answer delivery is unknown. The question remains pending; do not resend automatically." };
   }
@@ -108,8 +89,9 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
       return updateRequest(latest, request.id, { pendingOwner: null }, Date.now());
     });
   } catch {
-    return { error: "The answer is in the group, but its pending question could not be cleared. Do not resend; repair the ledger." };
+    return { error: "The pending question could not be cleared. Do not resend; repair the ledger." };
   }
-  return { answered: true, sent: !alreadyVisible, requestId: request.id,
+  return { answered: true, sent: !skipDelivery, requestId: request.id,
+    ...(args.outcome === "refuse_overlap" ? { message: "No overlap authorized; the current offer is unchanged." } : {}),
     ...(inGroup && request.channel !== "email" ? { silent: true } : {}) };
 }

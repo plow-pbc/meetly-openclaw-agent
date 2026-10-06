@@ -55,7 +55,7 @@ export async function movableAction(ctx: OwnerContext, args: MovableArgs, option
     const candidates = choices.map(({ event: _event, ...slot }) => ({ ...slot, previous: memory[slot.title.toLowerCase()] ?? null }));
     if (!request || !choices.length) return { candidates };
     if (!request.chatUid || !["asked", "offered", "booked"].includes(request.status)) throw new Error("inspect a linked scheduling request");
-    const pendingOwner = { askedAt: new Date(Date.now()).toISOString(), question: "May I offer one of these times over its existing commitment, leaving that event unchanged?", overlap: { choices } };
+    const pendingOwner = { askedAt: new Date(Date.now()).toISOString(), question: "May I offer one of these times over its existing commitment, leaving that event unchanged?", overlap: { choices, travel: travel.travel! } };
     updateJson<Ledger>(path, { requests: [] }, latest => {
       const current = latest.requests.find(r => r.id === request.id);
       if (!sameRequest(current, request) || current?.pendingOwner) throw new Error("a decision is already pending or the request changed");

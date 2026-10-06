@@ -49,7 +49,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const ledger = addRequest({ requests: [] }, {
     travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", handle: context.requesterSenderId, chatUid: context.nativeChannelId, name: "Guest", topic: "Lunch",
     durationMin: 30, constraints: { days: ["mon", "tue"], after: "10:00", before: "15:00", from: "2026-10-05", to: "2026-10-06" },
-    allowOverlap: [{ account: "owner@example.com", id: "approved" }], offered: offers.map(o => ({ ...o })), format: "unknown", locale: "en-US",
+    allowOverlap: [{ account: "owner@example.com", id: "approved", start: offers[0]!.start, end: offers[0]!.end }], offered: offers.map(o => ({ ...o })), format: "unknown", locale: "en-US",
   }, now, "request-one");
   const save = (value: Ledger) => writeJson(join(home, "ledger.json"), value);
   save(ledger);
@@ -87,7 +87,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
     const request = read().requests.find(r => r.id === "request-one");
     if (request) {
       assert.deepEqual(request.constraints, ledger.requests[0]!.constraints);
-      assert.deepEqual(request.allowOverlap, request.booked ? [] : [{ account: "owner@example.com", id: "approved" }]);
+      assert.deepEqual(request.allowOverlap, request.booked || request.offered.some(slot => !offers.some(original => slot.holdId === original.holdId)) ? [] : ledger.requests[0]!.allowOverlap);
       assert.equal(request.durationMin, ledger.requests[0]!.durationMin);
     }
   });

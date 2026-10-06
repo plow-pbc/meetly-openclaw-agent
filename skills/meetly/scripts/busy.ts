@@ -13,6 +13,9 @@ import { writeJson } from "./store.ts";
 import { zonedToUtc } from "./time.ts";
 
 export type EventRef = { account: string; id: string };
+export type OverlapGrant = EventRef & { start: string; end: string };
+export const overlapFor = (grants: OverlapGrant[] = [], start: string, end: string) =>
+  grants.filter(grant => Date.parse(grant.start) === Date.parse(start) && Date.parse(grant.end) === Date.parse(end));
 export const allowsOverlap = (event: Partial<EventRef>, refs: EventRef[] = []) =>
   refs.some(ref => !!ref.account && !!ref.id && ref.account === event.account && ref.id === event.id);
 export const uniqueEvents = (refs: EventRef[]) => refs.filter((ref, i) => allowsOverlap(ref, [ref]) && !allowsOverlap(ref, refs.slice(0, i)));

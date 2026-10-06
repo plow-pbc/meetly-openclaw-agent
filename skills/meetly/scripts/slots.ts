@@ -9,7 +9,7 @@ import { travelRange, type TravelInput } from "./travel.ts";
 import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MEAL_DEFAULTS, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
-import { allowsOverlap, covers, uniqueEvents, type Coverage, type EventRef, type Busy } from "./busy.ts";
+import { allowsOverlap, overlapFor, covers, uniqueEvents, type Coverage, type EventRef, type Busy } from "./busy.ts";
 import { requestEvents, intersectConstraints, meetingDuration, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson } from "./store.ts";
@@ -350,7 +350,10 @@ if (isMain(import.meta.url)) {
       q.travel = request.travel?.override && q.format !== "meet" && q.format !== "phone" ? request.travel : q.travel ?? request.travel;
       q.durationMin ??= request.durationMin;
       q.locale ??= request.locale;
-      q.allowOverlap = uniqueEvents([...(request.allowOverlap ?? []), ...(q.allowOverlap ?? [])]);
+      if (values.at !== undefined) {
+        const { slot } = checkTime({ ...q, busy: [], start: values.at });
+        q.allowOverlap = uniqueEvents([...overlapFor(request.allowOverlap, slot.start, slot.end), ...(q.allowOverlap ?? [])]);
+      }
       if (request.booked) q.exclude = [...(q.exclude ?? []), request.booked.start];
     }
     if (values["no-overlap"]) q.allowOverlap = [];
