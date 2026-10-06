@@ -22,7 +22,7 @@ test("preboot carries every step of the pinned base's boot", () => {
   const flat = (text: string) => text.replace(/\s+/g, " ");
   const preboot = flat(readFileSync(join(root, "boot", "preboot.ts"), "utf8"));
   const base = readFileSync(join(root, "tests", "fixtures", "base-main.ts.txt"), "utf8");
-  // The two lines preboot deliberately changes, and what it has instead.
+  // The base steps customized for Meetly, and what they have instead.
   const changed: Record<string, string> = {
     "const config = renderConfig(identity, base);": "const config = withMacTimeout(renderConfig(identity, base));",
     'await syncConfig(config, "/var/lib/plow/openclaw.json", "/etc/plow/openclaw");': "await syncConfig(config, CONFIG, INCLUDES);",
