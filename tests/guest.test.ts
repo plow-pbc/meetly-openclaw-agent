@@ -1915,29 +1915,12 @@ function emailFixture(t: TestContext) {
   request.handle = "ana@example.net";
   request.name = "Ana";
   f.save(f.ledger);
-  const ctx = { ...context, agentAccountId: "email", requesterSenderId: "ea@example.net", senderIsOwner: false,
-    config: { channels: { plow: { apiBase: "https://plow.test", emailLineUid: "mail-line" } } } };
-  const thread = { uid: ctx.nativeChannelId, status: "active", participants: [
-    { type: "agent", relationship: "self", line: { uid: "mail-line" } },
-    { type: "member", provider_key: "ANA@example.net" }, { type: "member", provider_key: ctx.requesterSenderId },
-  ] };
-  const fetchCalendar = globalThis.fetch;
-  const previous = process.env.PLOW_AGENT_TOKEN;
-  process.env.PLOW_AGENT_TOKEN = "email-fixture";
-  t.after(() => { if (previous === undefined) delete process.env.PLOW_AGENT_TOKEN; else process.env.PLOW_AGENT_TOKEN = previous; });
-  t.mock.method(globalThis, "fetch", async (url: string | URL | globalThis.Request, init?: RequestInit) => {
-    if (String(url).startsWith("https://plow.test/")) {
-      assert.equal(String(url), `https://plow.test/v1/chats/${ctx.nativeChannelId}`);
-      assert.equal((init?.headers as Record<string, string>).Authorization, "Bearer email-fixture");
-      return Response.json(thread);
-    }
-    return fetchCalendar(url, init);
-  });
+  const ctx = { ...context, agentAccountId: "email", requesterSenderId: "ea@example.net", senderIsOwner: false };
   const emailTools = new Map<string, { execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
   registerGuestTools({ registerTool(factory: (context: GuestContext) => { name: string; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
     const tool = factory(ctx); emailTools.set(tool.name, tool);
   } }, guestAction);
-  return { ...f, ctx, thread, emailTools };
+  return { ...f, ctx, emailTools };
 }
 
 test("the first email reply and CC booking carry thread delivery and details instructions", async t => {
@@ -1991,7 +1974,7 @@ test("email requests cannot be acted on from phone turns or another email thread
   assert.equal(f.commands.length, 0);
 });
 
-for (const action of ["view", "pick", "decline"] as const) test(`unlinked email refuses a matching roster from an unaffiliated thread: ${action}`, async t => {
+for (const action of ["view", "pick", "decline"] as const) test(`unlinked email refuses actions from an unaffiliated thread: ${action}`, async t => {
   const f = emailFixture(t);
   delete f.ledger.requests[0]!.chatUid;
   f.ledger.requests[0]!.startedAt = new Date(now).toISOString();

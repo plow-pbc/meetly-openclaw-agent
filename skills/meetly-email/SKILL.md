@@ -19,16 +19,18 @@ to an originating trusted group.
 1. Resolve one email address from the owner's words, the current email thread,
    or Contacts. If ambiguous or missing, ask the owner privately and stop before
    creating holds. Do not require or substitute a phone number.
-2. Read `ledger.ts find --handle <email>` (or `--chat <this thread uid>` for an
-   existing thread). Reuse an existing email request. An open text request stays
+2. Use the file-writing tool to save the resolved address verbatim to a local
+   file, then read `ledger.ts find --handle-file <path>` (or `--chat <this thread uid>` for an
+   existing thread). Never interpolate externally sourced addresses into shell
+   text, including echo or heredocs. Reuse an existing email request. An open text request stays
    on its original channel; tell the owner before starting anything else.
    If `startedAt` exists without `chatUid`, do not send again. Only an explicit
    owner instruction may clear that attempt with `ledger.ts delivery --id <id>
    --kind start --action clear`.
 3. Follow `meetly-group`, "Read the calendar" and "Offer times" for slot search.
    Resolve next week to explicit dates, preserve the owner's constraints and
-   find three times with `slots.ts --count 3`. Save them with `calendar.ts offer`
-   using `channel: "email"`, `origin: "owner"`, `handle: <email>`, name, topic,
+   find three times with `slots.ts --count 3`. Write the request JSON with the file-writing tool and save it with
+   `calendar.ts offer --json-file <path>`, using `channel: "email"`, `origin: "owner"`, `handle: <email>`, name, topic,
    meal when applicable, duration, format, location, locale, constraints and offered slots with the
    default calendar account. Preserve the channel on every re-offer. If the owner
    is starting the request in an email thread already containing the guest,

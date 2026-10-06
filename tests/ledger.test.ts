@@ -467,3 +467,16 @@ test("inbound meal classification applies code defaults and preserves explicit l
     assert.equal(result.json.request.meal, meal);
   }
 });
+
+test("find reads externally sourced email handles as literal file data", () => {
+  const home = tmpHome();
+  const handle = 'x`id`$(whoami)\'"@example.com';
+  writeJson(join(home, "ledger.json"), addRequest(empty(), input({ origin: "owner", channel: "email", handle }), T0, "literal-address"));
+  const handleFile = join(home, "address.txt");
+  writeFileSync(handleFile, handle + "\n");
+  const found = cli("ledger.ts", ["find", "--handle-file", handleFile], { MEETLY_HOME: home });
+  assert.equal(found.status, 0, found.stderr);
+  assert.equal(found.json.request.id, "literal-address");
+  assert.equal(found.json.request.handle, handle);
+  assert.equal(cli("ledger.ts", ["find", "--handle-file", handleFile, "--handle", "other@example.com"], { MEETLY_HOME: home }).status, 1);
+});

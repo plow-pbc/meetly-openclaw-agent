@@ -42,8 +42,7 @@ thread. A CC'd assistant can choose for Ana; only Ana receives the calendar
 invitation unless another attendee is explicitly requested. Questions Meetly
 cannot answer go privately to you. Meet links are included at booking for
 email, with no scheduled email reminder; unattended upkeep notices go to you.
-An uncertain initial send is never repeated automatically: the first reply
-can link the thread using its participants.
+An uncertain initial send is never repeated automatically.
 
 Meetly always speaks as your assistant, in the third person: *"Jean is free Tue
 29/9 at 12:00"*, never *"I'm free"*. It never texts from your own Messages

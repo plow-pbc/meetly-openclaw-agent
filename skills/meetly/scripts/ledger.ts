@@ -478,6 +478,7 @@ if (isMain(import.meta.url)) {
       args: rest,
       options: {
         handle: { type: "string" },
+        "handle-file": { type: "string" },
         name: { type: "string" },
         chat: { type: "string" },
         id: { type: "string" },
@@ -490,6 +491,10 @@ if (isMain(import.meta.url)) {
         action: { type: "string" },
       },
     });
+    if (values["handle-file"] !== undefined) {
+      if (values.handle !== undefined) throw new Error("pass only one of --handle or --handle-file");
+      values.handle = readFileSync(values["handle-file"], "utf8").trim();
+    }
     const path = file("ledger.json");
     const now = Date.now();
     switch (cmd) {
@@ -509,7 +514,7 @@ if (isMain(import.meta.url)) {
           if (matches.length > 1) throw new Error("Ambiguous guest name; ask the owner which meeting they mean.");
           return { request: matches[0] ?? null };
         }
-        throw new Error("usage: ledger.ts find --handle H [--status asked|offered] | --chat U | --name N");
+        throw new Error("usage: ledger.ts find --handle H|--handle-file F [--status asked|offered] | --chat U | --name N");
       }
       case "add": {
         const input = jsonArg(values);
