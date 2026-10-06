@@ -50,7 +50,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
       request = (await calendarAction(request.id, { action: "offer", request: {
         origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
         offered: slots.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),
-      } }, { validate(latest) { if (JSON.stringify(latest) !== JSON.stringify(before)) throw new Error("Request changed. Read pending requests again."); } })).request;
+      } }, { validate(latest) { if (!sameRequest(latest, before)) throw new Error("Request changed. Read pending requests again."); } })).request;
       const guestLocale = locale ?? "en-US";
       const labels = request.offered.map(o => localeFormatter(guestLocale, config.timezone).format(new Date(o.start)));
       const choices = new Intl.ListFormat(guestLocale, { type: "disjunction" }).format(labels);
