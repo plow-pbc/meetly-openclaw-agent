@@ -206,7 +206,7 @@ test("an answer needs an explicit outcome before clearing or sending", async t =
 
 for (const inGroup of [false, true]) test(`exhausted-search approval waits for held alternatives before delivery: inGroup=${inGroup}`, async t => {
   const f = fixture(t), request = f.ledger.requests[0]!;
-  const pendingOwner = { question: "What dates or time window may I offer?", askedAt: args.askedAt,
+  const pendingOwner = { question: "May I check for other times again?", askedAt: args.askedAt,
     alternatives: { previousStarts: request.offered.map(o => o.start) } };
   f.ledger = updateRequest(f.ledger, "mia", { pendingOwner }, Date.now());
   writeJson(f.path, f.ledger);
