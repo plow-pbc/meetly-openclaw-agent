@@ -1619,3 +1619,13 @@ test("date widening waits for an active offer writer before changing the saved b
     assert.deepEqual(pendingCalendarWrites(), []);
   } finally { release(); await Promise.allSettled([offer, done]); }
 });
+
+for (const offered of [true, false]) test(`selected booked replacement rejects changed duration before effects: offered=${offered}`, async t => {
+  const f = fixture(t, "chat");
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const before = f.read(); f.calls.length = 0;
+  const request = { ...f.offer, durationMin: 60, offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T12:00:00Z", account }] };
+  await assert.rejects(offered ? offerRequest({ ...request, requestId: "r_one" }, f.options)
+    : calendarAction("r_one", { action: "offer", request }, f.options), /booked duration/i);
+  assert.deepEqual(f.read(), before); assert.deepEqual(f.calls, []);
+});

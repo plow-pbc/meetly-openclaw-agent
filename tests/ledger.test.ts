@@ -485,3 +485,9 @@ test("find reads externally sourced email handles as literal file data", () => {
   assert.equal(found.json.request.handle, handle);
   assert.equal(cli("ledger.ts", ["find", "--handle-file", handleFile, "--handle", "other@example.com"], { MEETLY_HOME: home }).status, 1);
 });
+
+test("new ledger records cannot create a second meeting in a booked conversation", () => {
+  const ledger = addRequest(empty(), input({ chatUid: "group" }), T0, "r_1");
+  ledger.requests[0]!.status = "booked";
+  assert.throws(() => addRequest(ledger, input({ origin: "owner-group", chatUid: "group" }), T0 + HOUR, "r_2"), /SEPARATE_MEETING_REQUIRED/);
+});

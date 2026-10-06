@@ -52,6 +52,7 @@ export function registerOwnerGroupTool(api, execute = runGroup, outbound) {
       week: { type: "string", enum: ["this", "next"] },
       asap: { type: "boolean" },
       durationMin: { type: "integer", minimum: 1, description: "Your chosen meeting duration in minutes, recorded on the request." },
+      requestId: { type: "string", description: "Existing meeting in this group selected for rescheduling. Omit for a separate meeting; booked groups coordinate that privately." },
       topic: string, meal: { type: "string", enum: ["lunch", "dinner", "coffee"] }, name: { type: "string", description: "Guest name explicitly given by the owner in this thread, if known." },
       constraints: { ...constraints, description: "Explicit non-relaxable owner conditions, including an accepted exact clock time in startTime. Supplied conditions replace the saved conditions; an empty object clears them and omission preserves them." },
       proposed: { ...constraints, description: "Preferred dates/times from the owner; these may be relaxed when busy." }, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },

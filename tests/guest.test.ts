@@ -2376,11 +2376,12 @@ test("repeating a newer meeting decline leaves the older booking untouched", asy
   const f = fixture(t);
   await f.act(context, "pick", { start: offers[0]!.start });
   const booked = f.request();
-  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { topic: "Another call", durationMin: 30, travel: { beforeMin: 0, afterMin: 0 } }) as any;
-  assert.equal(result.error, undefined, JSON.stringify(result));
-  assert.equal(f.read().requests.length, 2);
+  // Existing ledgers can contain multiple requests in the same group.
+  f.save({ requests: [booked, { ...f.ledger.requests[0]!, id: "request-two", topic: "Another call", offered: [offers[1]!] }] });
+  f.events.set(offers[1]!.holdId!, event(offers[1]!.holdId!, offers[1]!.start, offers[1]!.end));
   await f.act(context, "decline");
+  assert.equal(f.read().requests[1]!.status, "dropped");
+  assert.equal(f.events.get(offers[1]!.holdId!)!.status, "cancelled");
   const deletes = f.commands.filter(c => c[2] === "delete").length;
   await f.act(context, "decline");
   assert.equal(f.commands.filter(c => c[2] === "delete").length, deletes);
@@ -2405,4 +2406,51 @@ test("direct pick restores only guest-explicit weekdays before booking",async t=
  const f=fixture(t); f.save({requests:[{...f.request(),excludedDays:["mon","tue"]}]});
  const result=await f.act(context,"pick",{start:offers[0]!.start,restoredDays:["mon"]}) as any;
  assert.equal(result.status,"booked",JSON.stringify(result)); assert.deepEqual(f.request().excludedDays,["tue"]);
+});
+
+test("separate meeting in a booked group coordinates privately before calendar access",async t=>{
+ const f=fixture(t); const before={...f.request(),allowOverlap:[],status:"booked" as const,eventId:"booked",booked:{start:offers[0]!.start,end:offers[0]!.end,account:"owner@example.com"},offered:[]}; f.save({requests:[before]});
+ const notices:string[]=[]; const result=await offerOwnerGroup({...context,senderIsOwner:true,sessionKey:"agent:main:plow:group:chat-one"},{topic:"Another call",durationMin:30,travel:{beforeMin:0,afterMin:0}},async text=>{notices.push(text);}) as any;
+ assert.equal(result.code,"SEPARATE_MEETING_REQUIRED"); assert.equal(result.silent,true); assert.equal(notices.length,1); assert.deepEqual(f.commands,[]); assert.deepEqual(f.read().requests,[before]);
+});
+for (const blocked of [false, true]) for (const durationMin of [30, 60]) test(`selected booked group: blocked=${blocked}, duration=${durationMin}`, async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  if (blocked) contactPreference({ handle: f.request().handle, blocked: true });
+  const before = f.read(), notices: string[] = [];
+  f.commands.length = 0;
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { requestId: "request-one", topic: "Lunch", durationMin, travel: { beforeMin: 0, afterMin: 0 },
+      proposed: { from: "2026-10-05", to: "2026-10-05", after: "10:00", before: "10:30" } }, async text => { notices.push(text); }) as any;
+  if (durationMin === 60) {
+    assert.ok(result.error);
+    assert.deepEqual(f.commands, []);
+    assert.deepEqual(f.read(), before);
+    assert.deepEqual(notices, []);
+  } else if (blocked) {
+    assert.deepEqual(f.commands, []);
+    assert.equal(result.code, "OWNER_CONFIRMATION_REQUIRED", JSON.stringify(result));
+    assert.equal(result.silent, true);
+    assert.equal(notices.length, 1);
+    assert.equal(f.read().requests.length, 1);
+    assert.equal(f.request().id, "request-one");
+    assert.equal(f.request().status, "booked");
+    const pending = f.request().pendingOwner;
+    assert.ok(pending && "contact" in pending);
+    const confirmed = await confirmContactOffer({ requestId: "request-one", offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z" }] });
+    assert.equal(confirmed.request.id, "request-one");
+    assert.equal(confirmed.request.bookedReplacement, true);
+    assert.deepEqual(confirmed.request.booked, before.requests[0]!.booked);
+    assert.equal(confirmed.request.pendingOwner, undefined);
+  } else {
+    assert.equal(result.error, undefined, JSON.stringify(result));
+    assert.deepEqual(notices, []);
+    assert.equal(f.read().requests.length, 1);
+    assert.equal(f.request().id, "request-one");
+    assert.equal(f.request().bookedReplacement, true);
+    assert.deepEqual(f.request().booked, before.requests[0]!.booked);
+    assert.ok(f.request().offered.some(slot => Date.parse(slot.start) === Date.parse(offers[0]!.start)), "the request's own booked slot remains available for replacement");
+    assert.ok(f.commands.every(c => c[2] !== "update" && c[2] !== "delete"));
+  }
+  t.diagnostic(JSON.stringify({ code: result.code, rejected: !!result.error, notices: notices.length, selected: f.request().id }));
 });

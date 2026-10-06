@@ -61,6 +61,7 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
     input.constraints = { ...input.constraints, startTime };
   }
   if (request?.status !== "booked") return saveRequest(l, input, now, id);
+  if (input.durationMin !== request.durationMin) throw new Error("Changing a booked duration is not supported.");
   if (!sameHandle(request.handle, input.handle) || request.chatUid !== input.chatUid || (input.channel !== undefined && (request.channel ?? "text") !== input.channel)) throw new Error("offer belongs to another request");
   const format = input.format ?? request.format;
   const validated = addRequest(EMPTY, { ...input, format, location: input.location ?? request.location,
@@ -555,6 +556,7 @@ export async function offerRequest({ requestId: selectedId, allowOverlapTitles, 
     : current.requests.find(r => r.id === selectedId);
   if (selectedId !== undefined && (!saved || !sameHandle(saved.handle, args.handle))) throw new Error("No matching selected request.");
   const durationMin = meetingDuration(args.durationMin ?? saved?.durationMin, args.meal ?? saved?.meal, config.durationMin);
+  if (saved?.status === "booked" && durationMin !== saved.durationMin) throw new Error("Changing a booked duration is not supported.");
   if (args.offered.some(slot => Date.parse(slot.end) - Date.parse(slot.start) !== durationMin * 60_000)) {
     throw new Error("Every offered interval must match the request durationMin. Set the request duration and search again.");
   }
