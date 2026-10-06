@@ -462,10 +462,10 @@ test("only a known busy exact-time check routes the model to private inspection"
   const busy = [{ start, end: "2026-09-28T11:00:00-03:00", id: "private-id", account: "private-account" }];
   const args = ["--in", busyFile, "--now", new Date(NOW).toISOString(), "--at", start, "--duration", "30", "--format", "phone", "--travel", '{"beforeMin":0,"afterMin":0}'];
   for (const [input, guided] of [
-    [{ busy, degraded: [] }, true],
-    [{ busy: [], degraded: [] }, false],
-    [{ busy, degraded: ["unread"] }, false],
-    [{ busy, degraded: [], unknownAfter: start }, false],
+    [{ coverage, busy, degraded: [] }, true],
+    [{ coverage, busy: [], degraded: [] }, false],
+    [{ coverage, busy, degraded: ["unread"] }, false],
+    [{ coverage, busy, degraded: [], unknownAfter: start }, false],
   ] as const) {
     writeJson(busyFile, input);
     const result = cli("slots.ts", args, { MEETLY_HOME: home });
@@ -478,7 +478,7 @@ test("only a known busy exact-time check routes the model to private inspection"
       assert.doesNotMatch(JSON.stringify(result.json.next), /private-id|private-account/);
     }
   }
-  writeJson(busyFile, { busy, degraded: [] });
+  writeJson(busyFile, { coverage, busy, degraded: [] });
   const soon = cli("slots.ts", [...args, "--now", start], { MEETLY_HOME: home });
   assert.equal(soon.json.reason, "too-soon");
   assert.equal(soon.json.next, undefined);
