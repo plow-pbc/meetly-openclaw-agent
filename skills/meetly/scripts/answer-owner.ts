@@ -7,10 +7,10 @@ import { calendarAction } from "./calendar.ts";
 import { DAYS, loadConfig } from "./config.ts";
 import { findSlots, localeFormatter, searchCoverage } from "./slots.ts";
 
-type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change" | "decline_alternatives"; constraints?: Constraints };
+type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change" | "decline_alternatives"; emailSent?: boolean };
 
 export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: string, text: string) => Promise<void>): Promise<object> {
-  const chat = resolveOwnerChat(ctx);
+  const chat = resolveOwnerChat(ctx, ["chat", "email"]);
   if (!chat) {
     return { error: "Only the owner's own Plow turn can answer a meeting question." };
   }
@@ -22,8 +22,8 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   let pending = request?.pendingOwner;
   if (!request?.chatUid || !pending || "contact" in pending || pending.askedAt !== args.askedAt
     || !["offered", "booked"].includes(request.status)) return { error: "No matching pending meeting question. Read the pending requests again." };
-  const inGroup = chat === request.chatUid;
-  if (ctx.sessionKey !== "agent:main:main" && !inGroup) {
+  const inGroup = chat === request.chatUid && ctx.agentAccountId === (request.channel === "email" ? "email" : "chat");
+  if (!(ctx.agentAccountId === "chat" && ctx.sessionKey === "agent:main:main") && !inGroup) {
     return { error: "Answer from the owner's main DM or this request's group." };
   }
   const alternatives = "question" in pending ? pending.alternatives : undefined;
@@ -62,7 +62,10 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     }
   }
   const alreadyVisible = inGroup && "question" in pending && ((args.outcome === "answer" && !alternatives) || declined);
-  if (!alreadyVisible) {
+  const emailReceipt = request.channel === "email" && args.emailSent === true;
+  if (emailReceipt && !pending.answerAttemptedAt) return { error: "No email answer attempt to confirm." };
+  if (!alreadyVisible && !emailReceipt) {
+
     try {
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {
         if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed");
@@ -73,9 +76,13 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
       return { error: "Answer delivery already attempted or request changed. Read pending requests; retry only after the owner explicitly authorizes clearing the attempt." };
     }
   }
+  if (request.channel === "email" && !alreadyVisible && !emailReceipt) {
+    return { email: { to: request.chatUid, body: args.text.trim() }, requestId: request.id, askedAt: pending.askedAt,
+      message: "Send this answer with plow_send_email. Only after sent: true, call meetly_answer_owner again with these same fields and emailSent: true. Unknown delivery stays pending; do not resend." };
+  }
   try {
-    // The owner's words may be visible, but a calendar change still needs its result delivered.
-    if (!alreadyVisible) await send(request.chatUid!, text);
+    // The owner's words may already be visible, but a calendar change still needs its result delivered.
+    if (!alreadyVisible && request.channel !== "email") await send(request.chatUid, args.text.trim());
   } catch {
     return { error: "Answer delivery is unknown. The question remains pending; do not resend automatically." };
   }
@@ -89,5 +96,5 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     return { error: "The answer is in the group, but its pending question could not be cleared. Do not resend; repair the ledger." };
   }
   return { answered: true, sent: !alreadyVisible, requestId: request.id,
-    ...(inGroup ? { silent: true } : {}) };
+    ...(inGroup && request.channel !== "email" ? { silent: true } : {}) };
 }

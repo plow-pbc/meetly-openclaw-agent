@@ -203,17 +203,37 @@ test("an answer needs an explicit outcome before clearing or sending", async t =
   }
 });
 
-function alternativesFixture(t: TestContext, mixed = false) {
+for (const time of [false, true]) test(`email answers reserve the send, use the base tool and clear only after its receipt: time=${time}`, async t => {
   const f = fixture(t);
-  t.mock.method(Date, "now", () => Date.parse("2026-10-03T08:00:00Z"));
-  const previousToken = process.env.PLOW_MCP_BRIDGE_TOKEN;
-  process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture";
-  t.after(() => { if (previousToken === undefined) delete process.env.PLOW_MCP_BRIDGE_TOKEN; else process.env.PLOW_MCP_BRIDGE_TOKEN = previousToken; });
-  const request = f.ledger.requests[0]!;
-  request.constraints = { from: "2026-10-05", to: "2026-10-05", days: ["mon"], after: "10:00", before: "11:30" };
-  request.excludedDays = ["tue"]; request.format = "phone";
-  request.offered[0]!.holdId = "old";
-  if (mixed) request.offered.push({ ...request.offered[0]!, start: "2026-10-05T10:30:00Z", end: "2026-10-05T11:00:00Z", holdId: "fresh" });
+  f.ledger.requests[0]!.channel = "email";
+  if (time) f.ledger = updateRequest(f.ledger, "mia", { pendingOwner: { askedAt: args.askedAt, start: "2026-10-05T20:00:00Z", end: "2026-10-05T20:30:00Z" } }, Date.now());
+  writeJson(f.path, f.ledger);
+  const noPhone = async () => assert.fail("email answers must use plow_send_email");
+  assert.ok("error" in await answerOwner(ctx, { ...args, emailSent: true }, noPhone));
+  const result = await answerOwner(ctx, args, noPhone);
+  assert.ok("email" in result);
+  assert.deepEqual(result.email, { to: "group-mia", body: args.text });
+  assert.ok(f.read().requests[0]!.pendingOwner?.answerAttemptedAt);
+  assert.ok("error" in await answerOwner(ctx, args, noPhone), "an unknown send must not retry");
+  assert.ok("error" in await answerOwner(ctx, { ...args, askedAt: "stale", emailSent: true }, noPhone));
+  const completed = await answerOwner(ctx, { ...args, emailSent: true }, noPhone);
+  assert.deepEqual(completed, { answered: true, sent: true, requestId: "mia" });
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+  assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
+});
+
+test("an owner answer in its own email thread clears without another email or silence hook", async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.channel = "email";
+  writeJson(f.path, f.ledger);
+  const result = await answerOwner({ ...ctx, agentAccountId: "email", nativeChannelId: "group-mia", sessionKey: "email-mia" }, args,
+    async () => assert.fail("answer is already visible"));
+  assert.deepEqual(result, { answered: true, sent: false, requestId: "mia" });
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+});
+
+for (const inGroup of [false, true]) test(`exhausted-search approval waits for held alternatives before delivery: inGroup=${inGroup}`, async t => {
+  const f = fixture(t), request = f.ledger.requests[0]!;
   const pendingOwner = { question: "May I check for other times again?", askedAt: args.askedAt,
     alternatives: { previousStarts: ["2026-10-05T12:00:00+02:00"] } };
   f.ledger = updateRequest(f.ledger, "mia", { pendingOwner }, Date.now());

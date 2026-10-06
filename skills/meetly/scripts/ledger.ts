@@ -53,6 +53,7 @@ export type Reminder = { at: string; outcome: "sent" | "cancelled" | "no-link" }
 
 export type Request = {
   id: string;
+  channel: "text" | "email";
   origin: "inbound" | "owner" | "owner-group";
   handle: string;
   name?: string;
@@ -105,9 +106,9 @@ export const requestEvents = (request: Request): HoldRef[] => [
 export type Ledger = { requests: Request[]; blockedHandles?: string[] };
 
 export type NewRequest = Omit<Request,
-  "id" | "contactApproved" | "lastGuestReplyAt" | "lastNudge" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "bookedReplacement" | "meetUrl" | "reminder"
+  "id" | "channel" | "contactApproved" | "lastGuestReplyAt" | "lastNudge" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "bookedReplacement" | "meetUrl" | "reminder"
   | "startedAt" | "startCompletedAt" | "detailsAskedAt"
-  | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
+  | "offeredAt" | "createdAt" | "updatedAt"> & { channel?: Request["channel"]; status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
   "status" | "chatUid" | "eventId" | "offered" | "bookedReplacement" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "excludedDays" | "topic" | "format" | "locale">> & {
   pendingOwner?: PendingOwner | null;
@@ -159,7 +160,7 @@ function checkReminder(r: Reminder): void {
 export function normalizeHandle(h: string): string {
   if (typeof h !== "string") throw new Error("handle must be an E.164 phone or email");
   const value = h.trim();
-  if (/^[^\s@]+@[^\s@]+$/.test(value)) return value.toLowerCase();
+  if (/^[^\s@]+@[^\s@]+$/.test(value) && !/[`$"'\\;&|<>(){}\[\]*?!~#]/.test(value)) return value.toLowerCase();
   const phone = value.replace(/[\s().-]/g, "");
   if (/^\+[1-9]\d{1,14}$/.test(phone)) return phone;
   throw new Error("handle must be an E.164 phone or email");
@@ -186,8 +187,8 @@ export function checkContact(ledger: Ledger, handle: string, request?: Request, 
 }
 
 export function contactRequest(request: Request): NewRequest {
-  const { origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails } = request;
-  return { origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails, offered: [] };
+  const { channel, origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails } = request;
+  return { channel, origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails, offered: [] };
 }
 
 export const nudgeFingerprint = (reason: string, since: string): string => JSON.stringify([reason, since]);
@@ -210,10 +211,19 @@ export function sameRequest(a: Request | undefined, b: Request | undefined): boo
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-export function recordGuestReply(ledger: Ledger, chat: string, sender: string, at: number): Ledger {
+export function findGuestRequest(ledger: Ledger, account: "chat" | "email", chat: string, sender: string, senderIsOwner = false): Request | undefined {
+  if (!sender) return;
+  const email = account === "email";
+  const scoped = { requests: ledger.requests.filter(r => (r.channel === "email") === email) };
+  const request = findByChat(scoped, chat);
+  if (!request || (email ? senderIsOwner || sender === "plow-owner" : !sameHandle(request.handle, sender))) return;
+  return request;
+}
+
+export function recordGuestReply(ledger: Ledger, chat: string, sender: string, at: number, account: "chat" | "email"): Ledger {
   if (!Number.isFinite(at)) return ledger;
-  const request = findByChat(ledger, chat);
-  if (!request || !sameHandle(request.handle, sender) || !["offered", "booked"].includes(request.status)
+  const request = findGuestRequest(ledger, account, chat, sender);
+  if (!request || !["offered", "booked"].includes(request.status)
     || (request.lastGuestReplyAt !== undefined && at <= Date.parse(request.lastGuestReplyAt)) || at < Date.parse(request.offeredAt ?? request.createdAt)) return ledger;
   return { ...ledger, requests: ledger.requests.map(r => r.id === request.id
     ? { ...r, lastGuestReplyAt: new Date(at).toISOString() } : r) };
@@ -271,6 +281,9 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   for (const key of ["contactApproved", "lastGuestReplyAt", "lastNudge", "pendingOwner"]) {
     if (key in input) throw new Error(`${key} is managed by pipeline.ts`);
   }
+  const channel = input.channel ?? "text";
+  if (channel !== "text" && channel !== "email") throw new Error("channel must be text or email");
+  if (channel === "email" && !input.handle.includes("@")) throw new Error("email requests need an email address");
   for (const key of ["calendarRevision"]) {
     if (key in input) throw new Error(`${key} is managed by calendar.ts`);
   }
@@ -297,8 +310,8 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   // only ever set through update, where they are validated.
   const { booked: _b, bookedReplacement: _br, meetUrl: _m, reminder: _r, ...fields } = input as NewRequest & Partial<Pick<Request, "booked" | "bookedReplacement" | "meetUrl" | "reminder">>;
   const request: Request = status === "asked"
-    ? { ...fields, offered: [], format, id, status, createdAt: at, updatedAt: at }
-    : { ...fields, format, id, status, offeredAt: at, createdAt: at, updatedAt: at };
+    ? { ...fields, channel, offered: [], format, id, status, createdAt: at, updatedAt: at }
+    : { ...fields, channel, format, id, status, offeredAt: at, createdAt: at, updatedAt: at };
   if (doNotContact(ledger, input.handle)) {
     request.pendingOwner = { askedAt: at, contact: contactRequest(request) };
   }
@@ -319,11 +332,12 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
   if (bySource && byHandle && bySource.id !== byHandle.id) throw new Error("resolved handle belongs to another open request");
   const existing = bySource ?? byHandle;
   if (!existing) return addRequest(ledger, input, now, id);
+  if (input.channel !== undefined && input.channel !== (existing.channel ?? "text")) throw new Error("an open request cannot change channel");
   if (input.status === "asked") return ledger;
 
   // Reuse addRequest's validation and timestamp behavior, then apply its new
   // offer to the existing record. An absent chatUid must not erase the link.
-  input = { ...input, name: input.name ?? existing.name, origin: existing.origin, chatUid: input.chatUid ?? existing.chatUid,
+  input = { ...input, channel: existing.channel ?? "text", name: input.name ?? existing.name, origin: existing.origin, chatUid: input.chatUid ?? existing.chatUid,
     askDetails: input.askDetails ?? existing.askDetails,
     allowOverlap: uniqueEvents([...(existing.allowOverlap ?? []), ...(input.allowOverlap ?? [])]) };
   if (existing.chatUid && input.chatUid !== existing.chatUid) throw new Error("a request cannot move to another chat");
@@ -454,11 +468,11 @@ export function pendingOwnerList(ledger: Ledger): Request[] {
     && (r.status === "offered" || r.status === "booked" || (r.status === "asked" && "contact" in r.pendingOwner)));
 }
 
-// Booked Meets whose link is due in the group: from `leadMin` before the
+// Booked text-thread Meets whose link is due in the group: from `leadMin` before the
 // start until `graceMin` after it, once.
 export function dueReminders(ledger: Ledger, now: number, leadMin: number, graceMin = 5): Request[] {
   return ledger.requests.filter((r) => {
-    if (r.status !== "booked" || r.format !== "meet" || !r.meetUrl || !r.booked || r.reminder) return false;
+    if (r.channel === "email" || r.status !== "booked" || r.format !== "meet" || !r.meetUrl || !r.booked || r.reminder) return false;
     const start = Date.parse(r.booked.start);
     return now >= start - leadMin * 60_000 && now < start + graceMin * 60_000;
   });
@@ -485,6 +499,7 @@ if (isMain(import.meta.url)) {
       args: rest,
       options: {
         handle: { type: "string" },
+        "handle-file": { type: "string" },
         name: { type: "string" },
         chat: { type: "string" },
         id: { type: "string" },
@@ -497,6 +512,10 @@ if (isMain(import.meta.url)) {
         action: { type: "string" },
       },
     });
+    if (values["handle-file"] !== undefined) {
+      if (values.handle !== undefined) throw new Error("pass only one of --handle or --handle-file");
+      values.handle = readFileSync(values["handle-file"], "utf8").trim();
+    }
     const path = file("ledger.json");
     const now = Date.now();
     switch (cmd) {
@@ -516,7 +535,7 @@ if (isMain(import.meta.url)) {
           if (matches.length > 1) throw new Error("Ambiguous guest name; ask the owner which meeting they mean.");
           return { request: matches[0] ?? null };
         }
-        throw new Error("usage: ledger.ts find --handle H [--status asked|offered] | --chat U | --name N");
+        throw new Error("usage: ledger.ts find --handle H|--handle-file F [--status asked|offered] | --chat U | --name N");
       }
       case "add": {
         const input = jsonArg(values);
