@@ -2,15 +2,19 @@
 // name, phones and emails, read-only across every AddressBook store (the root
 // one and one per sync source), in one Mac call. Never a note or an address.
 // A handle with no card is not an error: the request goes on with the handle.
+import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
 import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
 import { runOnMac, type BridgeOptions } from "./mac.ts";
 import { normalizeHandle, sameHandle } from "./ledger.ts";
+import { fetchIdentity, findOwnerDm, plowApi, type ApiOptions } from "./owner-chat.ts";
 
 export type Person = { name: string | null; phones: string[]; emails: string[] };
 export type Lookup =
   | { found: true; handle: string; name: string | null; phones: string[]; emails: string[]; matches: number }
-  | { found: false; handle: string; reason?: "mac-unavailable" };
+  | { found: false; handle: string; reason?: "mac-unavailable" | "bridge-token-missing" };
+
+export type ContactOptions = BridgeOptions & { api?: ApiOptions };
 
 const STRIPPED = "replace(replace(replace(replace(replace(replace(p.ZFULLNUMBER, ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')";
 
@@ -29,8 +33,29 @@ export function contactQuery(handle: string): string {
     "union all select 'E', e.ZOWNER, e.ZADDRESS, '', '' from ZABCDEMAILADDRESS e where e.ZOWNER in m;";
 }
 
+async function ownerRegion(opts: ApiOptions = {}): Promise<CountryCode | undefined> {
+  const dm = findOwnerDm(await fetchIdentity(plowApi(opts)));
+  const phone = dm?.participants?.find(p => p.type === "member" && p.role === "owner")?.provider_key;
+  if (!phone?.startsWith("+")) return undefined;
+  return parsePhoneNumberFromString(phone, { extract: false })?.country;
+}
+
+function samePhone(value: string, handle: string, defaultCountry?: CountryCode): boolean {
+  // Do not extract a number from text or collapse an extension into its main line.
+  if (!/^[+\d\s().-]+$/.test(value)) return false;
+  const phone = parsePhoneNumberFromString(value, { defaultCountry, extract: false });
+  if (!phone?.isPossible() || phone.number !== handle) return false;
+  if (value.trim().startsWith("+")) {
+    // An international number must keep every digit, except an explicit optional trunk zero.
+    const international = value.replace(new RegExp(`^(\\s*\\+${phone.countryCallingCode}\\s*)\\(0\\)`), "$1");
+    if (international.replace(/[\s().-]/g, "") !== handle) return false;
+  }
+  return true;
+}
+
 // The cards in the output (`S|n` starts store n) that really carry the handle.
-export function parseContacts(output: string, handle: string): Person[] {
+export function parseContacts(output: string, handle: string, defaultCountry?: CountryCode): Person[] {
+  handle = normalizeHandle(handle);
   const cards = new Map<string, Person>();
   let store = "";
   for (const line of output.split("\n")) {
@@ -42,11 +67,14 @@ export function parseContacts(output: string, handle: string): Person[] {
     if (kind === "E") cards.get(key)?.emails.push(a);
   }
   return [...cards.values()].filter((p) =>
-    [...p.phones, ...p.emails].some((value) => sameHandle(value, handle)));
+    handle.startsWith("+")
+      ? p.phones.some(value => samePhone(value, handle, defaultCountry))
+      : p.emails.some(value => sameHandle(value, handle)));
 }
 
-export async function lookupContact(handle: string, opts: BridgeOptions = {}): Promise<Lookup> {
+export async function lookupContact(handle: string, opts: ContactOptions = {}): Promise<Lookup> {
   handle = normalizeHandle(handle);
+  if (!(opts.token ?? process.env.PLOW_MCP_BRIDGE_TOKEN)) return { found: false, handle, reason: "bridge-token-missing" };
   const query = contactQuery(handle);
   const output = await runOnMac({
     argv: ["/bin/sh", "-c",
@@ -58,7 +86,8 @@ export async function lookupContact(handle: string, opts: BridgeOptions = {}): P
     timeoutMs: 30_000,
   }, opts).catch(() => undefined);
   if (output === undefined) return { found: false, handle, reason: "mac-unavailable" };
-  const people = parseContacts(output, handle);
+  const region = handle.startsWith("+") ? await ownerRegion(opts.api).catch(() => undefined) : undefined;
+  const people = parseContacts(output, handle, region);
   const first = people[0];
   if (!first) return { found: false, handle };
   return { found: true, handle, name: first.name, phones: first.phones, emails: first.emails, matches: people.length };

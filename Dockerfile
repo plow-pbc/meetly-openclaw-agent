@@ -11,6 +11,10 @@ ENV AGENT_ID=meetly \
 
 COPY prompt/AGENTS.md /opt/plow/prompt/AGENTS.md
 COPY skills/ /opt/plow/skills/
+COPY package.json package-lock.json /opt/plow/skills/
+USER root
+RUN npm ci --omit=dev --ignore-scripts --prefix /opt/plow/skills
+USER node
 
 # Meetly's entrypoint: the base's boot step for step, plus the setup gate
 # plugin and the Mac relay's request timeout.
