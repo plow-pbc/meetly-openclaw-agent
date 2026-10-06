@@ -43,8 +43,8 @@ test("AGENTS.md renders the conversation identity and keeps the base's tool and 
   assert.ok(flat(prompt).includes("Email participants may act on that thread's scheduling request with guest tools;"));
 });
 
-test("the seven Meetly skills exist", () => {
-  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-email", "meetly-group", "meetly-pipeline", "meetly-poll", "meetly-setup"]);
+test("the eight Meetly skills exist", () => {
+  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-email", "meetly-group", "meetly-pipeline", "meetly-poll", "meetly-setup", "meetly-travel"]);
 });
 
 test("every skill has frontmatter naming its directory and a description", () => {
@@ -76,6 +76,7 @@ test("the poll never contacts anyone new: it saves the request as asked and asks
   assert.ok(poll.includes("never contacts anyone new: it opens no group and messages no one who wrote to the owner"));
   assert.ok(poll.includes("`ledger.ts save --json` with `status: \"asked\"`"));
   assert.ok(poll.includes("No holds, no group, no message to them."));
+  assert.match(poll, /`travel`.*`meetly-travel`/);
   assert.ok(poll.includes("Run `pipeline.ts nudge` once"));
   assert.ok(poll.includes("give https://plow.co/download/latch"));
 });
