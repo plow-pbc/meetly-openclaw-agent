@@ -535,7 +535,7 @@ test("raw ledger mutations cannot bypass DM overlap authorization", t => {
   const f = fixture(t), before = f.read();
   for (const action of ["add", "save", "update"]) {
     const args = action === "update" ? {} : { ...f.offer, handle: "+15557654321" };
-    const result = cli("ledger.ts", [action, "--id", "r_one", "--json",
+    const result = cli("ledger.ts", [action, ...(action === "update" ? ["--id", "r_one"] : []), "--json",
       JSON.stringify({ ...args, allowOverlap: [{ account, id: "busy" }] })], { MEETLY_HOME: f.home });
     assert.equal(result.status, 1, action);
     assert.match(result.stderr, /owner DM|managed by calendar/);
@@ -1515,4 +1515,37 @@ for (const change of ["start", "end"] as const) test(`travel correction rejects 
   assert.deepEqual([...f.events], events);
   assert.ok(f.calls.every(argv => !["create", "update", "delete"].includes(argv[2]!)));
   assert.deepEqual(pendingCalendarWrites(), []);
+});
+
+for (const status of ["offered", "booked"] as const) test(`writer rejects guest-excluded weekday on ${status} offer before calendar effects`, async t => {
+ const f=fixture(t,"chat"); if(status==="booked") await calendarAction("r_one",{action:"book",start},f.options);
+ writeJson(f.path,{requests:[{...f.read(),excludedDays:["mon"]}]}); const before=f.read(); f.calls.length=0;
+ await assert.rejects(calendarAction("r_one",{action:"offer",request:{...f.offer,excludedDays:[],offered:[{start,end,account}]}},f.options),/guest-excluded/);
+ assert.deepEqual(f.calls,[]); assert.deepEqual(f.read(),before);
+});
+for (const resume of [false, true]) test(`an exclusion added during offer creation releases new holds: resume=${resume}`, async t => {
+  const f = fixture(t, "chat"), before = f.read().offered;
+  const command = async (cmd: MacCommand) => {
+    if (resume && cmd.argv.includes("--private-prop-filter")) return undefined;
+    const result = await f.command(cmd);
+    if (cmd.argv[2] === "create") {
+      writeJson(f.path, { requests: [{ ...f.read(), excludedDays: ["mon"] }] });
+      if (resume) return { handle: "pending-create" };
+    }
+    return result;
+  };
+  const action = calendarAction("r_one", { action: "offer", request: { ...f.offer, offered: [f.offer.offered[0]!] } },
+    { ...f.options, command, poll: async () => undefined });
+  await assert.rejects(action, resume ? /unresolved/ : /guest-excluded/);
+  if (resume) await assert.rejects(calendarAction("r_one", { action: "resume" }, {
+    ...f.options, poll: async () => ({ output: JSON.stringify({ event: f.events.get("new-1") }) }),
+  }), /guest-excluded/);
+  assert.deepEqual(pendingCalendarWrites(), []);
+  assert.equal(f.events.get("new-1")!.status, "cancelled");
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+  assert.deepEqual(f.read().offered, before);
+  assert.deepEqual(f.read().excludedDays, ["mon"]);
+  assert.deepEqual(f.read().holdCleanup, []);
+  await calendarAction("r_one", { action: "drop" }, f.options);
+  t.diagnostic(JSON.stringify({ journal: pendingCalendarWrites(), newHold: f.events.get("new-1")!.status, retainedOffer: before.length }));
 });

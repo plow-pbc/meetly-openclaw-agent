@@ -2346,3 +2346,9 @@ for (const time of [undefined, "11:00"]) test(`booked weekday replacements use t
   assert.equal(f.ownerLines.length, 0);
   t.diagnostic(JSON.stringify(result));
 });
+
+test("direct pick restores only guest-explicit weekdays before booking",async t=>{
+ const f=fixture(t); f.save({requests:[{...f.request(),excludedDays:["mon","tue"]}]});
+ const result=await f.act(context,"pick",{start:offers[0]!.start,restoredDays:["mon"]}) as any;
+ assert.equal(result.status,"booked",JSON.stringify(result)); assert.deepEqual(f.request().excludedDays,["tue"]);
+});
