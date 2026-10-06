@@ -313,7 +313,7 @@ test("owner answers apply calendar changes before clearing the question", () => 
   assert.match(question, /failed or unresolved write, leave the question pending/);
   registerOwnerTools({ registerTool(factory: (ctx: object) => { description: string }) {
     const description = factory({}).description;
-    assert.match(description, /For a question without alternatives, apply any location, format or time change/);
+    assert.match(description, /For a question without alternatives or overlap, apply any location, format or time change/);
     assert.match(description, /If the answer requests a calendar change, call only after the calendar writer succeeds/);
     assert.match(description, /failed or unresolved writes leave the question pending/);
   } });
