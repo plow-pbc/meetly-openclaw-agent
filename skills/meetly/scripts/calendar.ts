@@ -7,7 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
-import { holdHours, loadConfig } from "./config.ts";
+import { holdHours, loadConfig, SLOT_COUNT } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
 import { expiredRequests, findOpenByHandle, meetingDuration, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
@@ -160,6 +160,7 @@ export async function calendarAction(id: string, input: CalendarAction, options:
       const steps: Step[] = [];
       const add = (verb: Step["verb"], slot: Offer, args: string[]) => steps.push({ verb, account: slot.account, eventId: slot.holdId, start: slot.start, end: slot.end, args, token: randomUUID() });
       if (input.action === "offer") {
+        if (input.request.offered.length > SLOT_COUNT) throw new Error(`Offer at most ${SLOT_COUNT} times.`);
         if (input.request.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
         // Validate before any external effect; only the final commit replaces the old offer.
         const before = ledger();
@@ -321,6 +322,7 @@ export type OfferInput = Omit<NewRequest, "durationMin" | "offered"> & {
   durationMin?: number; offered: (Omit<Offer, "account"> & { account?: string })[]; allowOverlapTitles?: string[];
 };
 export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, options: CalendarOptions = {}) {
+  if (args.offered.length > SLOT_COUNT) throw new Error(`Offer at most ${SLOT_COUNT} times.`);
   if (args.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
   const config = loadConfig();
   if (config.paused) throw new Error("Scheduling is paused.");

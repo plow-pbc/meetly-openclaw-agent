@@ -135,7 +135,7 @@ export function findSlots(q: SlotQuery): SlotResult {
   const resolvedConstraints = Object.fromEntries(Object.entries(intersectConstraints({}, q)).filter(([, value]) => value !== undefined));
   if (q.asap && q.near) throw new Error("asap searches earliest first; omit near");
   const duration = meetingDuration(q.durationMin, q.meal, q.config.durationMin);
-  const count = q.count ?? SLOT_COUNT;
+  const count = Math.min(q.count ?? SLOT_COUNT, SLOT_COUNT);
   const near = q.near === undefined ? undefined : Date.parse(checkTime({ now, config, durationMin: duration, busy: [], start: q.near }).slot.start);
 
   let [startMin, endMin] = windowFor(config, q.meal, q.startTime, duration);

@@ -1424,6 +1424,20 @@ test("owner-group re-offers respect saved excluded weekdays", async t => {
   assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-06")), JSON.stringify(f.request().offered));
 });
 
+test("owner DM rejects four offered times before calendar or ledger effects", async t => {
+  const f = fixture(t), before = f.read();
+  let tool: any;
+  registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
+  const result = await tool.execute("call", { origin: "owner", handle: context.requesterSenderId, topic: "Call",
+    allowOverlapTitles: ["Approved overlap"],
+    offered: Array.from({ length: 4 }, (_, i) => ({ start: `2026-10-0${5 + i}T10:00:00Z`, end: `2026-10-0${5 + i}T10:30:00Z` })) });
+  assert.equal(result.isError, true);
+  assert.match(result.details.error, /at most 3/i);
+  assert.deepEqual(f.commands, []);
+  assert.deepEqual(f.read(), before);
+  assert.equal(tool.parameters.properties.offered.maxItems, 3);
+});
+
 test("owner DM meal schema carries a new lunch through the calendar writer", async t => {
   const f = fixture(t);
   f.save({ requests: [] }); f.events.clear();
