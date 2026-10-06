@@ -94,6 +94,8 @@ test("a booked replacement ages from its own offer and prior guest replies do no
   ledger = updateRequest(ledger, "offer", { status: "booked", offered: [], booked: { ...offer } }, T0 + HOUR);
   assert.deepEqual(pipeline(ledger, T0 + 30 * HOUR), []);
   ledger = updateRequest(ledger, "offer", { offered: [offer] }, T0 + 30 * HOUR);
+  assert.deepEqual(pipeline(ledger, T0 + 55 * HOUR), [], "unmarked booked offers are not replacement holds");
+  ledger = updateRequest(ledger, "offer", { offered: [offer], bookedReplacement: true }, T0 + 30 * HOUR);
   assert.equal(pipeline(ledger, T0 + 53 * HOUR)[0]!.nudge, false);
   assert.equal(pipeline(ledger, T0 + 54 * HOUR)[0]!.reason, "stale-offer");
   ledger = updateRequest(ledger, "offer", { offered: [] }, T0 + 55 * HOUR);
