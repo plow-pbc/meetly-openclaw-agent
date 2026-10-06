@@ -1862,3 +1862,27 @@ for (const [start, timezone] of [
   assert.deepEqual(f.commands, []);
   assert.deepEqual(f.ownerLines, []);
 });
+
+for (const time of [undefined, "11:00"]) test(`booked weekday replacements use the booking week: time=${time}`, async t => {
+  const f = fixture(t);
+  f.ledger.requests[0]!.constraints = { days: ["mon", "thu"], from: "2026-10-05", to: "2026-10-09", after: "10:00", before: "15:00" };
+  f.save(f.ledger);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  const booked = f.request().booked;
+  assert.deepEqual(f.request().offered, []);
+  const before = f.commands.length;
+  const result = JSON.parse((await f.tools.get("meetly_other_times")!.execute("weekday", {
+    offer_week: true, start: { weekday: "thu", ...(time ? { time } : {}) },
+  })).content[0]!.text);
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.ok(result.offered.length);
+  assert.ok(result.offered.every((o: { start: string }) => o.start.startsWith("2026-10-08")));
+  if (time) assert.equal(Date.parse(result.offered[0].start), Date.parse("2026-10-08T11:00:00Z"));
+  assert.deepEqual(f.request().booked, booked);
+  assert.equal(f.request().eventId, "hold-one");
+  assert.equal(f.request().bookedReplacement, true);
+  assert.ok(f.request().offered.every(o => o.holdId));
+  assert.ok(f.commands.slice(before).every(c => c[2] !== "update" && c[2] !== "delete"));
+  assert.equal(f.ownerLines.length, 0);
+  t.diagnostic(JSON.stringify(result));
+});

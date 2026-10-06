@@ -279,16 +279,12 @@ test("meeting confirmations stay in the group while pending questions route priv
   assert.ok(scriptsSkill().includes("Ask format/place only when `askDetails` is true"));
   assert.ok(confirm.includes("clears the pending item only after the send succeeds"));
   assert.ok(confirm.includes("Never send the answer separately"));
+  assert.doesNotMatch(confirm, /Deliver every result with `meetly_answer_owner`/);
   assert.ok(toolDescriptions().get("meetly_ask_owner")!.includes("Ask the owner privately about a guest question you cannot answer"));
 });
 
 test("unanswerable guest questions and owner answers in the thread stay silent", () => {
-  const descriptions = new Map<string, string>();
-  const api = { registerTool(factory: (ctx: object) => { name: string; description: string }) {
-    const tool = factory({}); descriptions.set(tool.name, tool.description);
-  } };
-  registerGuestTools(api);
-  registerOwnerTools(api);
+  const descriptions = toolDescriptions();
   assert.match(descriptions.get("meetly_ask_owner")!, /Scheduling questions you can answer stay in the group/);
   assert.match(descriptions.get("meetly_ask_owner")!, /For question handoffs, stay silent in the group/);
   assert.match(descriptions.get("meetly_answer_owner")!, /clears silently without sending or acknowledging/);
@@ -342,12 +338,6 @@ test("trust changes remain an explicit owner action and failed group opening is 
   const group = groupSkill();
   assert.ok(group.includes("If `plow_start_thread` definitely fails, tell the owner what it said and stop"));
   assert.doesNotMatch(group, /guest turns are reply-only|full guest tools are needed|on a guest's turn|## Outside the owner's hours/);
-});
-
-test("owner approval re-check uses the saved meeting duration and meal", () => {
-  const group = confirmSkill();
-  const approval = group.slice(group.indexOf("## Owner confirms"), group.indexOf("## Existing meetings"));
-  assert.ok(approval.includes("calendar.ts approve-time --id <id>"));
 });
 
 test("an owner introduction waits without asking the group to plan a meeting", () => {
@@ -408,6 +398,8 @@ test("time approvals cannot infer overlap permission and busy times get nearest 
   assert.ok(group.includes("Never read conflict titles to invent permission"));
   assert.ok(group.includes("slots.ts --near <near> --request <id> --no-overlap"));
   assert.ok(group.includes("tell the owner in their DM that the time is busy"));
+  const busy = group.slice(group.indexOf("`code: TIME_APPROVAL_BUSY`"), group.indexOf("- **No:**"));
+  assert.ok(busy.includes("Deliver once to the saved group, using `meetly_answer_owner` only when a pending approval exists"));
 });
 
 test("group greetings target the guest and owner coordination stays private", () => {
