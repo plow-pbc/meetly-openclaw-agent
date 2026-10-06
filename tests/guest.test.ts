@@ -1510,7 +1510,10 @@ test("exact clock constraints are owner-only; guests use the dated start argumen
   assert.equal(tools.get("meetly_offer_owner_group").parameters.properties.constraints.properties.startTime.type, "string");
 });
 
-for (const deliveryFails of [false, true]) test(`exhausted scheduling keeps private conditions out of its reply: deliveryFails=${deliveryFails}`, async t => {
+for (const { deliveryFails, ownerAskSent, message, sends } of [
+  { deliveryFails: false, ownerAskSent: true, message: "Those times don't work. I've asked Alex about another day or time and will get back to you here.", sends: 1 },
+  { deliveryFails: true, ownerAskSent: undefined, message: "Those times don't work. I can't confirm another time yet.", sends: 1 },
+]) test(`exhausted scheduling keeps private conditions out of its reply: deliveryFails=${deliveryFails}`, async t => {
   const f = fixture(t);
   f.events.set("busy", event("busy", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z"));
   f.delivery.fail = deliveryFails;
@@ -1518,12 +1521,14 @@ for (const deliveryFails of [false, true]) test(`exhausted scheduling keeps priv
   const result = JSON.parse((await tool.execute("first", { offer_week: false })).content[0]!.text);
   assert.equal(result.code, "NO_ALTERNATIVES");
   assert.equal(result.conditions, undefined);
+  const pending = f.request().pendingOwner;
+  assert.ok(pending && "question" in pending && pending.alternatives);
+  assert.deepEqual(pending.alternatives.previousStarts, f.request().offered.map(o => o.start));
   assert.notEqual(result.silent, true);
-  assert.equal(result.ownerAskSent === true, !deliveryFails);
-  if (deliveryFails) assert.doesNotMatch(result.message, /asked Alex|Alex.*repl/i);
-  else assert.match(result.message, /asked Alex/);
+  assert.equal(result.ownerAskSent, ownerAskSent);
+  assert.equal(result.message, message);
   assert.equal(result.recovery.action, "wait");
-  assert.equal(f.deliveries.length, 1);
+  assert.equal(f.deliveries.length, sends);
   await tool.execute("again", { offer_week: false });
-  assert.equal(f.deliveries.length, 1);
+  assert.equal(f.deliveries.length, sends);
 });

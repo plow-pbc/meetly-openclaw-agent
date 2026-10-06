@@ -148,7 +148,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   if (incomplete && !slots.length) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current offer is unchanged.", code: "INCOMPLETE_CALENDAR", incomplete };
   if (!slots.length) {
     const handoff = await askOwner(request, config, {
-      question: "No alternative times fit the meeting conditions. What dates or time window may I offer instead?",
+      question: "No alternative times fit the meeting conditions. May I check for other times again? Tell me if I can change the dates or time window.",
     }, sendOwner, "scheduling");
     return { error: "No other times are available within the owner’s conditions. The current offer is unchanged.",
       ...handoff, code: "NO_ALTERNATIVES",

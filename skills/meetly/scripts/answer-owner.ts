@@ -25,7 +25,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (alternatives && args.declineAlternatives !== true && (!request.offered.length
     || request.offered.some(o => !o.holdId)
     || !request.offered.some(o => !alternatives.previousStarts.some(start => Date.parse(start) === Date.parse(o.start))))) {
-    return { error: "Search and hold alternatives within the owner's explicit new dates or time window before answering. A bare yes does not define new conditions; ask the owner. Leave this decision pending if the search or write fails." };
+    return { error: "Run the alternative search and hold new times before answering. Preserve the owner's saved conditions unless explicitly changed. Leave this decision pending if no times fit or the search or write fails." };
   }
   const alreadyVisible = inGroup && "question" in pending && (!alternatives || args.declineAlternatives === true);
   if (!alreadyVisible) {
