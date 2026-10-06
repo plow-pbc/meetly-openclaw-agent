@@ -1694,7 +1694,7 @@ test("runtime hooks keep a replacement unpickable through a prompt rebuild, then
   t.mock.method(Date, "now", () => now - 1);
   await hooks.before_prompt_build!({}, turn);
   t.mock.method(Date, "now", () => now);
-  const offered = await tools.get("meetly_other_times")!.execute("offer", { offer_week: false, offer_week: false, start: offers[1]!.start });
+  const offered = await tools.get("meetly_other_times")!.execute("offer", { offer_week: false, start: offers[1]!.start });
   assert.equal(offered.isError, false);
   assert.equal(Date.parse(offered.details.offered[0].start), Date.parse(offers[1]!.start));
   const before = f.read();
