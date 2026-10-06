@@ -4,9 +4,9 @@ import { doNotContact, sameRequest, setDoNotContact, type Ledger } from "./ledge
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 
-export function contactPreference(args: { handle: string; blocked: boolean; name?: string }) {
+export function contactPreference(args: { handle: string; blocked: boolean }) {
   if (typeof args.blocked !== "boolean") throw new Error("blocked must be a boolean");
-  const ledger = updateJson<Ledger>(file("ledger.json"), { requests: [] }, l => setDoNotContact(l, args.handle, args.blocked, Date.now(), args.name));
+  const ledger = updateJson<Ledger>(file("ledger.json"), { requests: [] }, l => setDoNotContact(l, args.handle, args.blocked, Date.now()));
   return { doNotContact: doNotContact(ledger, args.handle) };
 }
 
@@ -21,7 +21,7 @@ export async function confirmContactOffer(args: { requestId: string; offered: Of
   if (!offered.length || offered.some(o => Date.parse(o.end) - Date.parse(o.start) !== durationMin * 60_000)) throw new Error("Search times matching the saved request duration before confirming contact.");
   const updated = updateJson<Ledger>(path, { requests: [] }, l => {
     if (!sameRequest(request, l.requests.find(r => r.id === request.id))) throw new Error("Request changed; read it before confirming contact.");
-    return { requests: l.requests.map(r => r.id === request.id ? { ...r,
+    return { ...l, requests: l.requests.map(r => r.id === request.id ? { ...r,
       pendingOwner: { ...pending, contact: { ...pending.contact, status: "offered" as const, offered } },
     } : r) };
   });

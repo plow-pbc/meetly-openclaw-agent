@@ -11,7 +11,7 @@ import { pipeline, reserveNudges } from "../skills/meetly/scripts/pipeline.ts";
 import plugin from "../plugin/index.js";
 import { calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
-import { doNotContact, pendingOwnerList, addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
+import { doNotContact, pendingOwnerList, expiredRequests, addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { withinConstraints } from "../skills/meetly/scripts/slots.ts";
 import { DEFAULTS, SLOT_COUNT } from "../skills/meetly/scripts/config.ts";
@@ -1796,7 +1796,7 @@ for (const args of [{ question: "Should I bring the budget?" }, { start: "2026-1
 for (const existing of [true, false]) for (const delivery of ["sent", "unknown", "throws"]) {
   test(`owner-group contact confirmation stays private (${existing ? "existing request" : "preference only"}, ${delivery})`, async t => {
     const f = fixture(t);
-    f.ledger.requests[0]!.doNotContact = true;
+    f.ledger.blockedHandles = [context.requesterSenderId];
     if (!existing) {
       f.ledger.requests[0]!.status = "dropped";
       delete f.ledger.requests[0]!.chatUid;
@@ -1825,6 +1825,7 @@ for (const existing of [true, false]) for (const delivery of ["sent", "unknown",
       buildOutboundSessionContext: (args: any) => args,
       sendDurableMessageBatch: async (args: any) => {
         sent.push(args);
+        assert.equal(reserveNudges(f.read(), now).text, null, "private contact handoff must reserve the poll fingerprint before sending");
         if (delivery === "throws") throw new Error("PRIVATE transport diagnostic");
         return { status: delivery };
       },
@@ -1837,7 +1838,7 @@ for (const existing of [true, false]) for (const delivery of ["sent", "unknown",
     assert.equal(sent.length, 1);
     assert.equal(sent[0].to, "plow-owner");
     assert.equal(sent[0].session.sessionKey, "agent:main:main");
-    assert.match(sent[0].payloads[0].text, /Guest.*\+15551234567/);
+    assert.match(sent[0].payloads[0].text, /Name: "Guest".*\+15551234567/);
     assert.match(sent[0].payloads[0].text, /Coffee/);
     assert.match(sent[0].payloads[0].text, /2026-10-05.*2026-10-11/);
     assert.match(sent[0].payloads[0].text, /do not contact/i);
@@ -1871,7 +1872,7 @@ for (const existing of [true, false]) for (const delivery of ["sent", "unknown",
 
 test("an existing owner-group offer still respects a do-not-contact flag", async t => {
   const f = fixture(t);
-  f.ledger.requests[0]!.doNotContact = true;
+  f.ledger.blockedHandles = [context.requesterSenderId];
   f.save(f.ledger);
   const before = f.read();
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { topic: "Lunch", durationMin: 30 });
@@ -1901,7 +1902,7 @@ test("contact tools deny group and guest callers; private confirmation resumes t
       assert.equal(result.isError, true);
       const clear = await tools.get("meetly_contact_preference").execute("clear", { handle: saved.handle, blocked: false });
       assert.equal(clear.isError, true);
-      assert.equal(f.request().doNotContact, true);
+      assert.equal(f.request().contactApproved, undefined);
       assert.equal(f.commands.length, 0);
     } else {
       assert.equal(result.isError, false, JSON.stringify(result));
@@ -1910,11 +1911,28 @@ test("contact tools deny group and guest callers; private confirmation resumes t
       assert.deepEqual(f.request().constraints, contact.constraints);
       f.ledger.requests[0]!.constraints = contact.constraints;
       assert.equal(f.request().pendingOwner, undefined);
-      assert.equal(f.request().doNotContact, false);
+      assert.equal(f.request().contactApproved, true);
       assert.equal(doNotContact(f.read(), saved.handle), true);
       const picked = await guestAction(context, "pick", { start: offers[0]!.start });
       assert.equal("status" in picked && picked.status, "booked", JSON.stringify(picked));
       t.diagnostic(JSON.stringify({ groupHandoff: contact, confirmed: result.details.request.id, guestBooking: picked }));
     }
   }
+});
+
+test("unmarked booked offers cannot be viewed, picked or expired as replacements", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  const request = { ...f.request(), offered: offers };
+  delete request.bookedReplacement;
+  f.save({ requests: [request] });
+  const before = f.read(), commands = f.commands.length;
+  const view = JSON.parse((await f.tools.get("meetly_view_request")!.execute("view", {})).content[0]!.text);
+  assert.deepEqual(view.offered, []);
+  const pick = await f.act(context, "pick", { start: offers[1]!.start });
+  assert.match(JSON.stringify(pick), /Choose one of/);
+  assert.deepEqual(expiredRequests(f.read(), 48, now + 49 * 3600_000), []);
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.commands.length, commands);
+  t.diagnostic(JSON.stringify({ view, pick }));
 });

@@ -21,7 +21,7 @@ export function view(request: Request, config: Config) {
     // Reserve before returning permission to ask; a lost reply must not ask twice.
     askDetails = true;
     const at = new Date(Date.now()).toISOString();
-    return { requests: ledger.requests.map(r => r.id === current.id ? { ...r, detailsAskedAt: at, updatedAt: at } : r) };
+    return { ...ledger, requests: ledger.requests.map(r => r.id === current.id ? { ...r, detailsAskedAt: at, updatedAt: at } : r) };
   });
   const format = localeFormatter(request.locale ?? "en-US", config.timezone);
   const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });

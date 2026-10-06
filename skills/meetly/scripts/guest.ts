@@ -223,7 +223,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   updateJson<Ledger>(file("ledger.json"), EMPTY, ledger => {
     unchanged(request, ledger.requests.find(r => r.id === request.id)!);
     const next = updateRequest(ledger, request.id, { pendingOwner }, Date.now());
-    return { requests: next.requests.map(r => r.id === request.id ? { ...r, lastNudge: {
+    return { ...next, requests: next.requests.map(r => r.id === request.id ? { ...r, lastNudge: {
       fingerprint: nudgeFingerprint("question" in pendingOwner ? "owner-question" : "time-approval", pendingOwner.askedAt),
       at: new Date(Date.now()).toISOString(),
     } } : r) };

@@ -65,7 +65,7 @@ export function pipeline(ledger: Ledger, now: number, unresolved: readonly strin
 export function renderPipeline(items: PipelineItem[], nudge = false): string | null {
   if (!items.length) return nudge ? null : "Nothing pending.";
   return `${nudge ? "Meetly needs your attention:" : "Meetly pipeline:"}\n${items.map(item =>
-    `- ${item.name} — ${item.topic}: ${item.detail} Since ${item.sinceLabel}.${item.doNotContact ? " Marked do not contact." : ""}`).join("\n")}`;
+    `- Name: ${JSON.stringify(item.name)}; Topic: ${JSON.stringify(item.topic)}. ${item.detail} Since ${item.sinceLabel}.${item.doNotContact ? " Marked do not contact." : ""}`).join("\n")}`;
 }
 
 export function reserveNudges(ledger: Ledger, now: number, unresolved: readonly string[] = [], display: Display = { timezone: "UTC" }) {
@@ -73,7 +73,7 @@ export function reserveNudges(ledger: Ledger, now: number, unresolved: readonly 
     && ledger.requests.find(r => r.id === item.id)!.lastNudge?.fingerprint !== item.fingerprint);
   const byId = new Map(items.map(item => [item.id, item]));
   return {
-    ledger: { requests: ledger.requests.map(request => {
+    ledger: { ...ledger, requests: ledger.requests.map(request => {
       const item = byId.get(request.id);
       return item ? { ...request, lastNudge: { fingerprint: item.fingerprint, at: new Date(now).toISOString() } } : request;
     }) },
@@ -88,7 +88,7 @@ export function retryFailedNudges(ledger: Ledger, reservations: Reservation[], n
     throw new Error("retry-failed needs the exact reservations array from the failed nudge batch");
   }
   const released: string[] = [];
-  return { ledger: { requests: ledger.requests.map(request => {
+  return { ledger: { ...ledger, requests: ledger.requests.map(request => {
     if (!reservations.some(r => r.id === request.id && r.fingerprint === request.lastNudge?.fingerprint && r.at === request.lastNudge?.at)) return request;
     const { lastNudge, ...rest } = request;
     released.push(request.id);

@@ -6,7 +6,7 @@ import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { findPreferredSlots, resolveSearchConstraints, preferredSearchCoverage, type SearchTiming } from "./slots.ts";
 import { view } from "./request-view.ts";
-import { checkContact, ContactConfirmationRequired, addRequest, requestId, findOpenByHandle, normalizeHandle, sameHandle, type Constraints, type Ledger } from "./ledger.ts";
+import { nudgeFingerprint, checkContact, ContactConfirmationRequired, addRequest, requestId, findOpenByHandle, normalizeHandle, sameHandle, type Constraints, type Ledger } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
@@ -73,7 +73,8 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
         if (saved && saved.chatUid && saved.chatUid !== chat) throw new Error("request belongs to another conversation");
         id = saved?.id ?? id;
         if (!saved) current = addRequest(current, contact, now, id);
-        return { requests: current.requests.map(r => r.id === id ? { ...r, pendingOwner: { contact, askedAt: new Date(now).toISOString() }, chatUid: chat } : r) };
+        return { ...current, requests: current.requests.map(r => r.id === id ? { ...r, pendingOwner: { contact, askedAt: new Date(now).toISOString() },
+          lastNudge: { fingerprint: nudgeFingerprint("owner-decision", new Date(now).toISOString()), at: new Date(now).toISOString() }, chatUid: chat } : r) };
       });
       // The group receives only the coordination outcome, never the private reason.
       const dates = (label: string, value?: Constraints) => {
@@ -84,7 +85,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
       let ownerAskSent = false;
       try {
         if (sendOwner) {
-          await sendOwner(`Request ${id}: you asked in your group for ${args.durationMin}-minute ${JSON.stringify(args.topic)} with ${name ?? handle} (${handle}).`
+          await sendOwner(`Request ${id}: you asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Name: ${JSON.stringify(name ?? handle)}. Handle: ${JSON.stringify(handle)}.`
             + dates("Required dates/times", args.constraints) + dates("Preferred dates/times", args.proposed)
             + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")
             + (args.format ? ` Format: ${args.format}.` : "")
