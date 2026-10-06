@@ -73,3 +73,12 @@ test("guest booking receives the host turn boundary across prompt rebuilds", asy
   await tools.get("meetly_pick_time").execute("book", {});
   assert.equal(received.turnStartedAt, startedAt);
 });
+
+for (const action of ["pick", "other_times", "format", "decline"]) test(`successful ${action} explicitly clears an earlier silent handoff`, () => {
+  const turn = { sessionKey: "ask-first", runId: action };
+  guestTurns.begin(turn);
+  assert.equal(guestTurns.reply(turn.sessionKey, "ask_owner", { silent: true }).silent, true);
+  const result = guestTurns.reply(turn.sessionKey, action, { status: action === "pick" ? "booked" : "offered" });
+  assert.equal(result.silent, false);
+  guestTurns.end({}, turn);
+});

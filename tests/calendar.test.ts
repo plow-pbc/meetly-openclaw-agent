@@ -660,39 +660,45 @@ test("a time approval never sends a conflict override even across its own hold",
   assert.equal(writes.some(c => c.includes("--confirm-conflict")), false);
 });
 
-test("booked replacement holds preserve the event, expire independently and clean up after a move", async t => {
+for (const allowOverlap of [[], [{ account, id: "private-conflict" }]]) test(`booked replacement holds preserve the event, expire independently and clean up after a move: grant=${!!allowOverlap.length}`, async t => {
   const f = fixture(t, "chat-one");
   await calendarAction("r_one", { action: "book", start }, f.options);
   const booked = f.read().booked;
-  const replacement = { ...f.offer, offered: [
+  const replacement = { ...f.offer, allowOverlap, offered: [
     { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account },
     { start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z", account },
   ] };
-  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
+  await calendarAction("r_one", { action: "offer", request: replacement }, { ...f.options, overlapApproved: !!allowOverlap.length });
   assert.equal(f.read().status, "booked");
+  assert.deepEqual(f.read().allowOverlap, allowOverlap);
   assert.equal(f.read().bookedReplacement, true);
   assert.deepEqual(f.read().booked, booked);
   assert.equal(f.events.get("hold-one")!.start.dateTime, start);
   const early = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 47 * 3600_000 });
   assert.ok(!("error" in early));
+  assert.ok("skipped" in early);
   assert.equal(early.skipped, true, "expiry uses the replacement timestamp, not the original offer");
-  assert.equal(early.groupNotice, undefined);
+  assert.equal("groupNotice" in early ? early.groupNotice : undefined, undefined);
   const expired = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
   assert.ok(!("error" in expired));
   assert.equal(expired.request.status, "booked");
   assert.deepEqual(expired.request.offered, []);
+  assert.deepEqual(expired.request.allowOverlap, []);
+  assert.deepEqual(expired.request.booked, booked);
   assert.equal(expired.request.bookedReplacement, false);
   assert.equal(f.events.get("hold-one")!.status, "confirmed");
   assert.equal(f.events.get("new-1")!.status, "cancelled");
   assert.equal(f.events.get("new-2")!.status, "cancelled");
+  assert.ok("groupNotice" in expired);
   assert.equal(expired.groupNotice?.chatUid, "chat-one");
   assert.match(expired.groupNotice?.text ?? "", /replacement times were released.*booking.*unchanged/i);
   t.diagnostic(`Group expiry notice: ${expired.groupNotice?.text}`);
   const again = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
   assert.ok(!("error" in again));
+  assert.ok("skipped" in again);
   assert.equal(again.skipped, true);
-  assert.equal(again.groupNotice, undefined);
-  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
+  assert.equal("groupNotice" in again ? again.groupNotice : undefined, undefined);
+  await calendarAction("r_one", { action: "offer", request: replacement }, { ...f.options, overlapApproved: !!allowOverlap.length });
   await calendarAction("r_one", { action: "book", start: replacement.offered[0]!.start }, f.options);
   assert.equal(f.read().eventId, "hold-one");
   assert.equal(f.read().booked!.start, replacement.offered[0]!.start);
@@ -1024,7 +1030,7 @@ for (const outcome of ["busy", "success"] as const) for (const batch of [false, 
     }, poll: async () => ({ handle: "approval" }) };
   await assert.rejects(approveTime("r_one", { start }, options), /unresolved/);
   const journal = join(f.home, "calendar/r_one.json");
-  const intent = readJson(journal, {});
+  const intent = readJson<{ steps: { output?: string }[] }>(journal, { steps: [] });
   const resumed = { ...options, poll: async () => outcome === "success" ? completed
     : { error: "PRIVATE CONFLICT DETAILS", code: "calendar-conflict" as const } };
   const resume = async () => batch ? (await resumePending(resumed)).results[0]! : calendarAction("r_one", { action: "resume" }, resumed);
@@ -1039,6 +1045,7 @@ for (const outcome of ["busy", "success"] as const) for (const batch of [false, 
     assert.deepEqual("recovery" in result && result.recovery, { action: "find_nearest", allowOverlap: false });
     assert.doesNotMatch(JSON.stringify(result), /PRIVATE CONFLICT/);
   } else {
+    intent.steps[0]!.output = completed!.output;
     writeJson(journal, intent);
     const recovered = await resume();
     assert.equal("approved" in recovered && recovered.approved, true);
@@ -1047,16 +1054,86 @@ for (const outcome of ["busy", "success"] as const) for (const batch of [false, 
   }
 });
 
-test("booked replacement expiry clears its overlap grant", async t => {
-  const f = fixture(t);
+for (const jsonFile of [false, true]) test(`offer --id CLI normalizes replacement slots: jsonFile=${jsonFile}`, async t => {
+  const f = fixture(t, "chat-one");
   await calendarAction("r_one", { action: "book", start }, f.options);
   const booked = f.read().booked;
-  const allowOverlap = [{ account, id: "private-conflict" }];
-  await calendarAction("r_one", { action: "offer", request: { ...f.offer, allowOverlap } }, { ...f.options, overlapApproved: true });
-  assert.deepEqual(f.read().allowOverlap, allowOverlap);
-  await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
-  assert.deepEqual(f.read().allowOverlap, []);
-  assert.deepEqual(f.read().booked, booked);
+  const { durationMin, chatUid, ...input } = f.offer;
+  const request = { ...input, chatUid, ...(jsonFile ? {} : { durationMin }), offered: [
+    { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z" },
+    { start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z" },
+  ] };
+  const hook = join(f.home, "bridge.mjs"), calls = join(f.home, "calls.json");
+  fs.writeFileSync(hook, `
+    import { fakeCalendar } from ${JSON.stringify(new URL("./helpers.ts", import.meta.url).href)};
+    import { writeFileSync } from "node:fs";
+    const calendar = fakeCalendar(${JSON.stringify([...f.events.values()])});
+    Date.now = () => ${now};
+    globalThis.fetch = async (_url, init) => {
+      const { params } = JSON.parse(init.body);
+      const result = await calendar.command(params.arguments);
+      writeFileSync(${JSON.stringify(calls)}, JSON.stringify(calendar.calls));
+      return Response.json({ result: { content: [{ type: "text", text: JSON.stringify({ exit_code: 0, output: result.output }) }] } });
+    };
+  `);
+  const inputFile = join(f.home, "offer.json");
+  writeJson(inputFile, request);
+  const result = cli("calendar.ts", ["offer", "--id", "r_one", ...(jsonFile ? ["--json-file", inputFile] : ["--json", JSON.stringify(request)])],
+    { MEETLY_HOME: f.home, PLOW_MCP_BRIDGE_TOKEN: "fixture", NODE_OPTIONS: `--import=${hook}` });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.json.request.id, "r_one");
+  assert.equal(result.json.request.bookedReplacement, true);
+  assert.deepEqual(result.json.request.booked, booked);
+  assert.equal(result.json.request.chatUid, chatUid);
+  assert.equal(result.json.request.durationMin, durationMin);
+  assert.equal(result.json.request.offered.length, 2);
+  assert.ok(result.json.request.offered.every((slot: { account: string; holdId: string }) => slot.account === account && slot.holdId));
+  assert.equal(readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] }).requests.length, 1);
+  assert.deepEqual(readJson<string[][]>(calls, []).filter(c => ["create", "update", "delete"].includes(c[2]!)).map(c => c[2]), ["create", "create"]);
+  t.diagnostic(JSON.stringify(result.json));
+});
+
+for (const scenario of [
+  { format: "unknown", link: false, approval: true, attendees: undefined },
+  { format: "meet", link: false, approval: true, attendees: "guest@example.net" },
+  { format: "meet", link: true, approval: false, attendees: "guest@example.net" },
+] as const) for (const batch of [false, true]) test(`booking completion matches post-commit recovery: ${JSON.stringify(scenario)}, batch=${batch}`, async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "format", format: scenario.format, travel: f.input.travel }, f.options);
+  let completed: Awaited<ReturnType<typeof f.command>>;
+  const options = { ...f.options,
+    command: async (cmd: MacCommand) => {
+      if (cmd.argv[2] !== "update") return f.command(cmd);
+      completed = await f.command(cmd);
+      if (!scenario.link) {
+        const event = JSON.parse(completed.output!);
+        delete event.event.hangoutLink;
+        completed = { output: JSON.stringify(event) };
+      }
+      return { handle: "approval" };
+    }, poll: async () => ({ handle: "approval" }) };
+  await assert.rejects(calendarAction("r_one", { action: "book", start,
+    timeApproval: scenario.approval, attendees: scenario.attendees }, options), /unresolved/);
+  const journal = join(f.home, "calendar/r_one.json");
+  const intent = readJson<{ steps: { output?: string }[] }>(journal, { steps: [] });
+  const resumed = { ...options, poll: async () => completed };
+  const result = batch ? (await resumePending(resumed)).results[0]! : await calendarAction("r_one", { action: "resume" }, resumed);
+  assert.equal("approved" in result && result.approved, scenario.approval);
+  assert.equal("meetUrl" in result && result.meetUrl, scenario.link ? "https://meet.google.com/abc-defg-hij" : null);
+  assert.equal("invitationSent" in result && result.invitationSent, !!scenario.attendees);
+  assert.equal("invitationUpdated" in result && result.invitationUpdated, !!scenario.attendees);
+  assert.equal("warning" in result ? result.warning : undefined, scenario.format === "meet" && !scenario.link ? "no-meet-link" : undefined);
+  assert.equal(f.read().status, "booked");
+  assert.deepEqual(pendingCalendarWrites(), []);
+  t.diagnostic(JSON.stringify(result));
+  intent.steps[0]!.output = completed!.output;
+  writeJson(journal, intent);
+  const calls = f.calls.length;
+  const recovered = batch ? (await resumePending(resumed)).results[0]! : await calendarAction("r_one", { action: "resume" }, resumed);
+  assert.deepEqual(recovered, result);
+  assert.equal(f.calls.length, calls, "post-commit recovery does not repeat calendar writes");
+  assert.deepEqual(pendingCalendarWrites(), []);
+  t.diagnostic(JSON.stringify({ recovered }));
 });
 
 
