@@ -43,7 +43,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
 
 Notes:
-- A booked request may have `reoffer: {offered, offeredAt}`. Expiry releases only
+- A booked request may have replacement `offered` times and `offeredAt`. Expiry releases only
   those replacement holds; the original event remains until a move or cancellation.
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
   `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-confirm`.
