@@ -44,39 +44,38 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `--in busy.json [--request ID] --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, degraded}` |
 | `owner-chat.ts` | | `{chatUid}`: the owner's DM |
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
-| `pipeline.ts` | `view [--locale TAG]` | `{items, text}`: derived pending pipeline and short dated request logs; read-only |
+| `pipeline.ts` | `view [--locale TAG]` | `{items, text}`: derived pending pipeline; read-only |
 | | `nudge [--locale TAG]` | `{items, text, reservations}`: atomically reserve one owner DM batch; null text means nothing new; never repeat a reserved batch |
 | | `retry-failed --json '<reservations array>'` \| `--json-file F` | `{released}`: release only the matching batch after a confirmed send failure, so the next poll retries it |
-| | `contact --handle H [--blocked true\|false] [--name NAME]` | `{doNotContact}`: read the flag, or set/clear it only on the owner's DM instruction |
+| | `contact --handle H` | `{doNotContact}`: read the flag; changes require `meetly_contact_preference` in the owner's main DM |
 
 Notes:
 - `status` remains the lifecycle. Waiting states come from pending questions,
   unanswered `asked` requests and offer timestamps. `dropped` also means passed.
-- `doNotContact`, `lastGuestReplyAt`, `lastNudge` and the last 20 dated `log`
-  entries live on requests. Pipeline commands and the inbound reply hook own them;
+- The ledger stores `blockedHandles`; requests store `contactApproved`, `lastGuestReplyAt` and `lastNudge`.
+  The contact tools, calendar writer, pipeline commands and inbound reply hook own them;
   do not write them with `ledger.ts update` or supply them on a new request.
 - An inbound `asked` save for a flagged handle returns `skipped: "do-not-contact"`
   without adding a request. Release its cursor hold and send nothing.
-- `--confirm-contact` is only for a specific owner request confirmed in the owner's
-  DM after the warning. It leaves the flag set; never infer confirmation from a
-  guest message. Guest actions on an existing meeting do not initiate new outreach.
+- Confirm flagged requests with `meetly_confirm_contact` only after the owner's
+  main-DM confirmation. It retains the flag and grants scheduling for that request.
+  Setting the preference again revokes prior request confirmations.
 - Monitor fingerprints are reserved before the poll sends. On a confirmed send
   failure, `retry-failed` releases only matching reservations for the next poll.
   On success or unknown delivery, keep them to prevent duplicate nudges.
   Guest owner-asks reserve the same fingerprint before their own DM, so the monitor
   does not repeat them. Unresolved calendar journals stay with reconciliation.
-- Displayed pipeline times and history labels use `localeFormatter` in the owner's
+- Displayed pipeline times use `localeFormatter` in the owner's
   configured timezone. `--locale` chooses their language tag (default en-US).
   Raw timestamps in items and reservations are machine data, not display text.
 - A request has `channel: "text"` (the default) or `"email"`. Email requests use
   an email `handle` and their thread's `chatUid`; participants act by thread,
   not by matching the guest's sender handle. Email starts use the same delivery
   attempt markers as group starts and must not retry an unknown send.
-- A booked request may have `reoffer: {offered, offeredAt}`. Expiry releases only
+- A booked request may have replacement `offered` times and `offeredAt`. Expiry releases only
   those replacement holds; the original event remains until a move or cancellation.
-- `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
-  `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-confirm`.
-- `travelBase` is an optional config field saved through `record-setup.ts`.
+- `pendingOwner` holds one `{contact, askedAt}`, `{question, askedAt}` or `{start, end, askedAt}`.
+  `ledger.ts pending` lists them: route contact decisions to `meetly-pipeline`; questions and time approvals go to "Owner confirms" in `meetly-confirm`.
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.
   `meetUrl` only ever holds `https://meet.google.com/xxx-xxxx-xxx`, only on
   a `meet`; the ledger refuses anything else.

@@ -42,8 +42,7 @@ thread. A CC'd assistant can choose for Ana; only Ana receives the calendar
 invitation unless another attendee is explicitly requested. Questions Meetly
 cannot answer go privately to you. Meet links are included at booking for
 email, with no scheduled email reminder; unattended upkeep notices go to you.
-An uncertain initial send is never repeated automatically: the first reply
-can link the thread using its participants.
+An uncertain initial send is never repeated automatically.
 
 Meetly always speaks as your assistant, in the third person: *"Jean is free Tue
 29/9 at 12:00"*, never *"I'm free"*. It never texts from your own Messages
@@ -217,7 +216,7 @@ message is skipped.
   The model decides; the scripts count.
 - **State.** `/var/lib/plow/meetly`: `config.json` (your setup),
   `cursor.json` (last message read), `ledger.json` (requests, offered times,
-  hold ids). Writes are atomic and locked.
+  hold ids, blocked canonical handles; `contactApproved` applies only to its request). Writes are atomic and locked.
 
 ## Model
 
@@ -235,8 +234,8 @@ Existing model settings in the state volume are left unchanged.
   event and sends updates to guests. Removing the last attendee is refused; ask
   to cancel instead. Attendee edits leave the meeting time unchanged.
 - Ask Meetly to cancel a booked meeting; it deletes the event and notifies invitees.
-- Meeting times include a time zone. If a specific requested time is unavailable,
-  Meetly asks before proposing alternatives.
+  Guests can hold replacement times while the current booking stays intact;
+  a later guest choice moves the existing event.
 - If the model provider is unreachable, that five-minute check is skipped and
   the next one catches up from the same cursor.
 

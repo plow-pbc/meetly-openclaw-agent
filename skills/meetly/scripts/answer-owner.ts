@@ -3,7 +3,7 @@ import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change"; emailSent?: boolean };
+type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change" | "decline_alternatives"; emailSent?: boolean };
 
 export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: string, text: string) => Promise<void>): Promise<object> {
   const chat = resolveOwnerChat(ctx, ["chat", "email"]);
@@ -11,21 +11,30 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     return { error: "Only the owner's own Plow turn can answer a meeting question." };
   }
   if (typeof args.text !== "string" || !args.text.trim()) return { error: "Provide the owner's answer." };
-  if (!["answer", "calendar_change"].includes(args.outcome ?? "")) return { error: "Choose outcome: answer or calendar_change after a successful calendar write." };
+  if (!["answer", "calendar_change", "decline_alternatives"].includes(args.outcome ?? "")) return { error: "Choose outcome: answer, calendar_change after a successful calendar write, or decline_alternatives for a refused alternative search." };
   const path = file("ledger.json");
   const ledger = readJson<Ledger>(path, { requests: [] });
   const request = ledger.requests.find(r => r.id === args.requestId);
   let pending = request?.pendingOwner;
-  if (!request?.chatUid || !pending || pending.askedAt !== args.askedAt
+  if (!request?.chatUid || !pending || "contact" in pending || pending.askedAt !== args.askedAt
     || !["offered", "booked"].includes(request.status)) return { error: "No matching pending meeting question. Read the pending requests again." };
   const inGroup = chat === request.chatUid && ctx.agentAccountId === (request.channel === "email" ? "email" : "chat");
   if (!(ctx.agentAccountId === "chat" && ctx.sessionKey === "agent:main:main") && !inGroup) {
     return { error: "Answer from the owner's main DM or this request's group." };
   }
-  const alreadyVisible = inGroup && "question" in pending && args.outcome === "answer";
+  const alternatives = "question" in pending ? pending.alternatives : undefined;
+  const declined = args.outcome === "decline_alternatives";
+  if (declined && !alternatives) return { error: "No alternative search is pending." };
+  if (alternatives && !declined && (!request.offered.length
+    || request.offered.some(o => !o.holdId)
+    || !request.offered.some(o => !alternatives.previousStarts.some(start => Date.parse(start) === Date.parse(o.start))))) {
+    return { error: "Run the alternative search and hold new times before answering. Preserve the owner's saved conditions unless explicitly changed. Leave this decision pending if no times fit or the search or write fails." };
+  }
+  const alreadyVisible = inGroup && "question" in pending && ((args.outcome === "answer" && !alternatives) || declined);
   const emailReceipt = request.channel === "email" && args.emailSent === true;
   if (emailReceipt && !pending.answerAttemptedAt) return { error: "No email answer attempt to confirm." };
   if (!alreadyVisible && !emailReceipt) {
+
     try {
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {
         if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed");
