@@ -286,6 +286,7 @@ export function requireDuration(value: number | undefined): number {
 }
 
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
+  if ("id" in input) throw new Error("Do not pass id to ledger add/save; update or select the existing request instead.");
   if (input.chatUid && ledger.requests.some(r => r.status === "booked" && r.chatUid === input.chatUid && sameHandle(r.handle, input.handle))) throw new Error("SEPARATE_MEETING_REQUIRED: coordinate the new meeting privately in a new conversation.");
   input = { ...input, handle: normalizeHandle(input.handle) };
   if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return ledger;
@@ -337,6 +338,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
 // `asked` request turns it into `offered`; asking again while one is open
 // leaves the ledger as it is.
 export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
+  if ("id" in input) throw new Error("Do not pass id to ledger add/save; update or select the existing request instead.");
   requireDuration(input.durationMin);
   input = { ...input, handle: normalizeHandle(input.handle) };
   if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return ledger;
@@ -511,7 +513,7 @@ function jsonArg(values: { json?: string; "json-file"?: string }): any {
 }
 
 if (isMain(import.meta.url)) {
-  run(() => {
+  run(async () => {
     const [cmd, ...rest] = process.argv.slice(2);
     const { values } = parseArgs({
       args: rest,
@@ -521,6 +523,9 @@ if (isMain(import.meta.url)) {
         name: { type: "string" },
         chat: { type: "string" },
         id: { type: "string" },
+        scope: { type: "string" },
+        from: { type: "string" },
+        to: { type: "string" },
         json: { type: "string" },
         "json-file": { type: "string" },
         hours: { type: "string" },
@@ -538,7 +543,23 @@ if (isMain(import.meta.url)) {
     const now = Date.now();
     switch (cmd) {
       case "find": {
+        if (values.scope !== undefined && !["open", "all"].includes(values.scope)) throw new Error("--scope must be open or all");
         const ledger = readJson<Ledger>(path, EMPTY);
+        // Status questions and edits need every matching meeting, including
+        // completed bookings and closed requests. The caller resolves ambiguity.
+        if (values.scope === "all") {
+          if (values.status !== undefined && !STATUSES.includes(values.status as Status)) throw new Error(`--status must be ${STATUSES.join(", ")}`);
+          const handle = values.handle === undefined ? undefined : normalizeHandle(values.handle);
+          const name = values.name?.trim().toLowerCase();
+          const chat = values.chat?.trim().replace(/^plow:/, "");
+          return { requests: ledger.requests.filter(r =>
+            (values.id === undefined || r.id === values.id) &&
+            (handle === undefined || sameHandle(r.handle, handle)) &&
+            (name === undefined || r.name?.trim().toLowerCase() === name) &&
+            (chat === undefined || r.chatUid === chat) &&
+            (values.status === undefined || r.status === values.status)) };
+        }
+
         if (values.chat !== undefined) {
           const chat = values.chat.trim().replace(/^plow:/, "");
           return { request: findByChat(ledger, chat, values.handle) ?? null };
@@ -553,10 +574,11 @@ if (isMain(import.meta.url)) {
           if (matches.length > 1) throw new Error("Ambiguous guest name; ask the owner which meeting they mean.");
           return { request: matches[0] ?? null };
         }
-        throw new Error("usage: ledger.ts find --handle H|--handle-file F [--status asked|offered] | --chat U | --name N");
+        throw new Error("usage: ledger.ts find --scope all [--id X | --handle H | --name N | --chat U] [--status S] | --handle H|--handle-file F [--status asked|offered] | --chat U | --name N");
       }
       case "add": {
         const input = jsonArg(values);
+        if (values.id !== undefined || "id" in input) throw new Error("Do not pass id to ledger add/save; update or select the existing request instead.");
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => addRequest(l, input, now, id));
@@ -565,6 +587,7 @@ if (isMain(import.meta.url)) {
       }
       case "save": {
         const input = jsonArg(values);
+        if (values.id !== undefined || "id" in input) throw new Error("Do not pass id to ledger add/save; update or select the existing request instead.");
         if (input.origin === "inbound" && input.status === "asked" && input.durationMin === undefined) {
           input.durationMin = meetingDuration(input.durationMin, input.meal, loadConfig().durationMin);
         }
@@ -573,6 +596,19 @@ if (isMain(import.meta.url)) {
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
         if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
         return { request: findOpenByHandle(ledger, input.handle) ?? findOpenBySource(ledger, input) };
+      }
+      case "widen-dates": {
+        if (!values.id || !values.from || !values.to || Object.keys(values).some(key => !["id", "from", "to"].includes(key))) {
+          throw new Error("usage: ledger.ts widen-dates --id X --from YYYY-MM-DD --to YYYY-MM-DD; pass only the additional date range, never other conditions");
+        }
+        const { id, from, to } = values;
+        for (const value of [from, to]) {
+          const ms = Date.parse(value);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== value) throw new Error("dates must be valid YYYY-MM-DD values");
+        }
+        if (from > to) throw new Error("from must not be after to");
+        const { widenRequestDates } = await import("./calendar.ts");
+        return widenRequestDates(id, from, to, now);
       }
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
@@ -615,7 +651,7 @@ if (isMain(import.meta.url)) {
         return { requests: dueReminders(readJson<Ledger>(path, EMPTY), now, lead) };
       }
       default:
-        throw new Error("usage: ledger.ts find | add | save | update | delivery | expired | asked | booked | pending | cleanup | reminders");
+        throw new Error("usage: ledger.ts find | add | save | update | widen-dates | delivery | expired | asked | booked | pending | cleanup | reminders");
     }
   }, withoutPrivateTravel);
 }

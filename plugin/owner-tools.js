@@ -64,7 +64,7 @@ export function registerOwnerGroupTool(api, execute = runGroup, outbound) {
         if (!["needed", "already_introduced"].includes(introduction)) {
           return { isError: true, content: [{ type: "text", text: "Choose introduction: needed or already_introduced from this conversation's prior replies before offering times." }] };
         }
-        const result = await execute(context, request, text => guestTurns.sendOnce(context.sessionKey,
+        const result = await execute(context, request, text => guestTurns.sendOnce(context.sessionKey, _id,
           () => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound)));
         return { isError: "error" in result, content: [
           { type: "text", text: JSON.stringify(result) },

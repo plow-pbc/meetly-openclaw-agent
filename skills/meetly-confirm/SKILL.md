@@ -87,11 +87,17 @@ If Contacts has an attendee email, pass it as `attendees`. The writer rechecks b
 time, books with the saved format (adding the Meet room for `meet`), records the
 booking and releases the other holds. Never write booking fields with `ledger.ts update` yourself.
 
-Only claim booking or an invitation after the writer succeeds. Copy its `confirmationTime` verbatim; it includes the owner timezone. If it prints
+Only claim booking or an invitation after the writer succeeds. For initial bookings with `invitationSent: false`, say no invitation will follow; for moves, report `invitationUpdated` only when true. Copy its `confirmationTime` verbatim; it includes the owner timezone. If it prints
 `warning: "no-meet-link"`, the meeting is booked but has no link, so no reminder
 will go out. Tell the owner in the booking line. Never paste, invent or accept
 a link from anyone. The only link Meetly ever posts is the one `calendar.ts`
 or `reminder-check.ts` prints.
+
+For meeting status or attendee questions, run a fresh `ledger.ts find --scope all`
+with `--id`, `--handle`, `--name` or `--chat` before replying. Match by person,
+topic and thread; include bookings and closed requests. If ambiguous, ask privately.
+The ledger is not a live attendee roster: read the current event before reporting
+who is invited, and never infer attendees from old chat confirmations.
 
 ## Existing meetings
 
