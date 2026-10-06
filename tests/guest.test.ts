@@ -1261,8 +1261,12 @@ for (const offer_week of [false, true]) test(`explicit offer_week=${offer_week} 
   f.events.set("busy", event("busy", "2026-10-05T00:00:00Z", "2026-10-12T00:00:00Z"));
   const result = await f.act(context, "other_times", { offer_week, ...preference });
   if (offer_week) {
-    assert.ok("error" in result, JSON.stringify(result));
-    assert.deepEqual(f.read(), f.ledger);
+    assert.equal("code" in result && result.code, "NO_ALTERNATIVES");
+    assert.deepEqual(f.request().offered, f.ledger.requests[0]!.offered);
+    assert.deepEqual(f.request().constraints, f.ledger.requests[0]!.constraints);
+    assert.ok(f.request().pendingOwner && "question" in f.request().pendingOwner!);
+    assert.equal(f.ownerLines.length, 1);
+    assert.ok(f.commands.every(c => c[2] === "events"));
   } else {
     assert.ok(!("error" in result), JSON.stringify(result));
     assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-12")));
