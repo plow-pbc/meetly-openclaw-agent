@@ -3,7 +3,7 @@
 // operation markers for creates whose event ids were never received.
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig, MEAL_DEFAULTS, reminderLeadMin, type Meal } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
@@ -26,9 +26,9 @@ export const uniqueCleanup = (refs: HoldCleanup[]) =>
   [...refs.filter(ref => ref.sendUpdates === "all"), ...refs.filter(ref => ref.sendUpdates !== "all")]
     .filter((ref, i, all) => all.findIndex(other => sameCleanup(ref, other)) === i);
 export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
-// One question or out-of-hours time waiting for the owner's answer.
+// One contact decision, question or out-of-hours time waiting for the owner.
 export const OWNER_QUESTION_LIMIT = 500;
-export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ start: string; end: string } | { question: string; alternatives?: { previousStarts: string[] } });
+export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ contact: NewRequest } | { start: string; end: string } | { question: string; alternatives?: { previousStarts: string[] } });
 export function intersectConstraints(owner: Constraints = {}, guest: Constraints = {}): Constraints {
   return {
     ...(owner.startTime || guest.startTime ? { startTime: owner.startTime ?? guest.startTime } : {}),
@@ -59,6 +59,9 @@ export type Request = {
   sourceRowid?: number;
   chatUid?: string;
   calendarRevision?: string;
+  contactApproved?: boolean;
+  lastGuestReplyAt?: string;
+  lastNudge?: { fingerprint: string; at: string };
   topic: string;
   location?: string;
   durationMin: number;
@@ -82,8 +85,6 @@ export type Request = {
   booked?: Booked;
   meetUrl?: string;
   reminder?: Reminder;
-  notifyAttemptedAt?: string;
-  notifiedAt?: string;
   startedAt?: string;
   startCompletedAt?: string;
   // Reserved before returning a details question, including uncertain delivery.
@@ -101,11 +102,11 @@ export const requestEvents = (request: Request): HoldRef[] => [
   ...(request.status === "booked" && request.eventId && request.booked ? [{ holdId: request.eventId, account: request.booked.account }] : []),
 ];
 
-export type Ledger = { requests: Request[] };
+export type Ledger = { requests: Request[]; blockedHandles?: string[] };
 
 export type NewRequest = Omit<Request,
-  "id" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "bookedReplacement" | "meetUrl" | "reminder"
-  | "notifyAttemptedAt" | "notifiedAt" | "startedAt" | "startCompletedAt" | "detailsAskedAt"
+  "id" | "contactApproved" | "lastGuestReplyAt" | "lastNudge" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "bookedReplacement" | "meetUrl" | "reminder"
+  | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
   "status" | "chatUid" | "eventId" | "offered" | "bookedReplacement" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "excludedDays" | "topic" | "format" | "locale">> & {
@@ -169,6 +170,55 @@ export function sameHandle(a: string, b: string): boolean {
   catch { return false; }
 }
 
+export function doNotContact(ledger: Ledger, handle: string): boolean {
+  return (ledger.blockedHandles ?? []).some(blocked => sameHandle(blocked, handle));
+}
+
+export class ContactConfirmationRequired extends Error {
+  constructor() { super("This person is marked do not contact. Confirm in the owner's DM before scheduling."); }
+}
+
+export function checkContact(ledger: Ledger, handle: string, request?: Request, offer?: NewRequest): void {
+  const pending = request?.pendingOwner;
+  const decision = pending && "contact" in pending ? pending.contact : undefined;
+  if (doNotContact(ledger, handle) && !(request?.contactApproved === true && !decision)
+    && !(decision?.offered.length && isDeepStrictEqual(decision, offer))) throw new ContactConfirmationRequired();
+}
+
+export function contactRequest(request: Request): NewRequest {
+  const { origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails } = request;
+  return { origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails, offered: [] };
+}
+
+export const nudgeFingerprint = (reason: string, since: string): string => JSON.stringify([reason, since]);
+
+export function setDoNotContact(ledger: Ledger, handle: string, blocked: boolean, now: number): Ledger {
+  handle = normalizeHandle(handle);
+  const handles = (ledger.blockedHandles ?? []).filter(value => value !== handle);
+  return { ...ledger, blockedHandles: blocked ? [...handles, handle] : handles,
+    requests: ledger.requests.map(r => sameHandle(r.handle, handle) && ["asked", "offered", "booked"].includes(r.status)
+      ? { ...r, contactApproved: undefined, ...(blocked ? {
+        pendingOwner: { askedAt: new Date(now).toISOString(), contact: { ...(r.pendingOwner && "contact" in r.pendingOwner ? r.pendingOwner.contact : contactRequest(r)), offered: [] } },
+      } : r.pendingOwner && "contact" in r.pendingOwner ? { pendingOwner: undefined } : {}), updatedAt: new Date(now).toISOString() } : r) };
+}
+
+// Monitoring and question-delivery metadata do not invalidate a scheduling action's snapshot.
+export function sameRequest(a: Request | undefined, b: Request | undefined): boolean {
+  if (!a || !b) return a === b;
+  const { lastNudge: _an, lastGuestReplyAt: _ar, detailsAskedAt: _ad, updatedAt: _au, ...left } = a;
+  const { lastNudge: _bn, lastGuestReplyAt: _br, detailsAskedAt: _bd, updatedAt: _bu, ...right } = b;
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function recordGuestReply(ledger: Ledger, chat: string, sender: string, at: number): Ledger {
+  if (!Number.isFinite(at)) return ledger;
+  const request = findByChat(ledger, chat);
+  if (!request || !sameHandle(request.handle, sender) || !["offered", "booked"].includes(request.status)
+    || (request.lastGuestReplyAt !== undefined && at <= Date.parse(request.lastGuestReplyAt)) || at < Date.parse(request.offeredAt ?? request.createdAt)) return ledger;
+  return { ...ledger, requests: ledger.requests.map(r => r.id === request.id
+    ? { ...r, lastGuestReplyAt: new Date(at).toISOString() } : r) };
+}
+
 // The person's `asked` or `offered` request; `statuses` narrows it.
 export function findOpenByHandle(ledger: Ledger, handle: string, statuses: readonly Status[] = OPEN): Request | undefined {
   return ledger.requests.find((r) => statuses.includes(r.status) && sameHandle(r.handle, handle));
@@ -217,9 +267,15 @@ export function requireDuration(value: number | undefined): number {
 
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
   input = { ...input, handle: normalizeHandle(input.handle) };
-  if ("calendarRevision" in input) throw new Error("calendarRevision is managed by calendar.ts");
+  if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return ledger;
+  for (const key of ["contactApproved", "lastGuestReplyAt", "lastNudge", "pendingOwner"]) {
+    if (key in input) throw new Error(`${key} is managed by pipeline.ts`);
+  }
+  for (const key of ["calendarRevision"]) {
+    if (key in input) throw new Error(`${key} is managed by calendar.ts`);
+  }
   if ("detailsAskedAt" in input) throw new Error("detailsAskedAt is managed by request-view.ts");
-  for (const key of ["notifyAttemptedAt", "notifiedAt", "startedAt", "startCompletedAt"]) {
+  for (const key of ["startedAt", "startCompletedAt"]) {
     if (key in input) throw new Error(`${key} is managed by ledger.ts delivery`);
   }
   if (input.origin !== "inbound" && input.origin !== "owner" && input.origin !== "owner-group") throw new Error(`origin must be inbound, owner or owner-group, got ${input.origin}`);
@@ -230,7 +286,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   const status = input.status ?? "offered";
   if (status === "offered") checkOffers(input.offered);
   else if (status !== "asked") throw new Error(`a new request is asked or offered, got ${status}`);
-  else if (input.offered?.length || input.chatUid !== undefined) throw new Error("an asked request has no offered times or chat yet");
+  else if (input.offered?.length || (input.chatUid !== undefined && input.origin !== "owner-group")) throw new Error("an asked request has no offered times or chat yet");
   const format = input.format === undefined ? "unknown" : input.format;
   checkFormat(format);
   if (input.locale !== undefined) checkLocale(input.locale);
@@ -243,7 +299,10 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   const request: Request = status === "asked"
     ? { ...fields, offered: [], format, id, status, createdAt: at, updatedAt: at }
     : { ...fields, format, id, status, offeredAt: at, createdAt: at, updatedAt: at };
-  return { requests: [...ledger.requests, request] };
+  if (doNotContact(ledger, input.handle)) {
+    request.pendingOwner = { askedAt: at, contact: contactRequest(request) };
+  }
+  return { ...ledger, requests: [...ledger.requests, request] };
 }
 
 // Save the latest offer for a person without creating a second open request.
@@ -254,6 +313,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
 export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
   requireDuration(input.durationMin);
   input = { ...input, handle: normalizeHandle(input.handle) };
+  if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return ledger;
   const byHandle = findOpenByHandle(ledger, input.handle);
   const bySource = findOpenBySource(ledger, input);
   if (bySource && byHandle && bySource.id !== byHandle.id) throw new Error("resolved handle belongs to another open request");
@@ -285,7 +345,7 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
     createdAt: existing.createdAt,
     updatedAt: new Date(now).toISOString(),
   };
-  return { requests: ledger.requests.map((r) => r.id === existing.id ? replacement : r) };
+  return { ...ledger, requests: ledger.requests.map((r) => r.id === existing.id ? replacement : r) };
 }
 
 export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: number): Ledger {
@@ -301,10 +361,14 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
     if ("question" in pending && pending.alternatives !== undefined
       && (!Array.isArray(pending.alternatives?.previousStarts) || !pending.alternatives.previousStarts.length
         || pending.alternatives.previousStarts.some(start => !isDate(start)))) throw new Error("alternatives need the previous offered starts");
-    if (!isDate(pending.askedAt) || ("question" in pending
+    if ("contact" in pending) {
+      addRequest(EMPTY, { ...pending.contact, chatUid: undefined, status: "asked", offered: [] }, now, id);
+      checkOffers(pending.contact.offered, true);
+    }
+    if (!isDate(pending.askedAt) || ("contact" in pending ? "question" in pending || "start" in pending || "end" in pending : "question" in pending
       ? typeof pending.question !== "string" || !pending.question.trim() || pending.question.length > OWNER_QUESTION_LIMIT || "start" in pending || "end" in pending
       : !isDate(pending.start) || !isDate(pending.end))) {
-      throw new Error("pendingOwner needs askedAt and either a short question or valid start and end");
+      throw new Error("pendingOwner needs askedAt and a contact request, short question or valid start and end");
     }
   }
   if (patch.format !== undefined) checkFormat(patch.format);
@@ -334,32 +398,31 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   if (patch.offered !== undefined) updated.offeredAt = at;
   const requests = [...ledger.requests];
   requests[index] = updated;
-  return { requests };
+  return { ...ledger, requests };
 }
 
-// Owner notices can retry until completed; group starts and answers need an explicit clear.
+// Group starts and answers need an explicit clear before retrying an uncertain send.
 export function recordDelivery(ledger: Ledger, id: string, kind: string, action: string, now: number): Ledger {
-  if (!["notify", "start", "answer"].includes(kind) || !["begin", "complete", "clear"].includes(action)) {
-    throw new Error("delivery needs --kind notify|start|answer and --action begin|complete|clear");
+  if (!["start", "answer"].includes(kind) || !["begin", "complete", "clear"].includes(action)) {
+    throw new Error("delivery needs --kind start|answer and --action begin|complete|clear");
   }
   const request = ledger.requests.find((r) => r.id === id);
   if (!request) throw new Error(`no request ${id}`);
   if (kind === "answer") {
     const pending = request.pendingOwner;
-    if (!request.chatUid || !["offered", "booked"].includes(request.status) || !pending || action === "complete") {
+    if (!request.chatUid || !["offered", "booked"].includes(request.status) || !pending || "contact" in pending || action === "complete") {
       throw new Error("answer delivery needs a pending question or time approval and begin or clear");
     }
     if (action === "begin" && pending.answerAttemptedAt) throw new Error("answer delivery already attempted; only the owner can authorize clearing it");
     const { answerAttemptedAt, ...question } = pending;
     return updateRequest(ledger, id, { pendingOwner: action === "begin" ? { ...question, answerAttemptedAt: new Date(now).toISOString() } : question }, now);
   }
-  if (request.status !== (kind === "notify" ? "asked" : "offered")) throw new Error(`cannot ${kind} for ${request.status} request`);
-  const [attempt, completed] = kind === "notify"
-    ? ["notifyAttemptedAt", "notifiedAt"] as const : ["startedAt", "startCompletedAt"] as const;
+  if (request.status !== "offered") throw new Error(`cannot ${kind} for ${request.status} request`);
+  const [attempt, completed] = ["startedAt", "startCompletedAt"] as const;
   const at = new Date(now).toISOString();
   const updated = { ...request, updatedAt: at };
   if (action === "clear") {
-    if (kind !== "start" || request.chatUid) throw new Error("only an unlinked group start can be cleared");
+    if (request.chatUid) throw new Error("only an unlinked group start can be cleared");
     delete updated[attempt];
     delete updated[completed];
   } else if (action === "begin") {
@@ -370,7 +433,7 @@ export function recordDelivery(ledger: Ledger, id: string, kind: string, action:
     if (!request[attempt]) throw new Error(`${kind} delivery has no recorded attempt`);
     updated[completed] ??= at;
   }
-  return { requests: ledger.requests.map((r) => r.id === id ? updated : r) };
+  return { ...ledger, requests: ledger.requests.map((r) => r.id === id ? updated : r) };
 }
 
 // Age offers and booked replacement offers from their own hold timestamps;
@@ -381,14 +444,14 @@ export function expiredRequests(ledger: Ledger, hours: number, now: number): Req
 }
 
 // Requests waiting for the owner's yes.
-export function askedList(ledger: Ledger, unnotified = false): Request[] {
-  return ledger.requests.filter((r) => r.status === "asked" && (!unnotified || !r.notifiedAt));
+export function askedList(ledger: Ledger): Request[] {
+  return ledger.requests.filter((r) => r.status === "asked");
 }
 
-// Requests waiting for a question's answer or an out-of-hours approval.
+// Requests waiting for a contact decision, question's answer or time approval.
 export function pendingOwnerList(ledger: Ledger): Request[] {
   return ledger.requests.filter((r) => r.pendingOwner !== undefined
-    && (r.status === "offered" || r.status === "booked"));
+    && (r.status === "offered" || r.status === "booked" || (r.status === "asked" && "contact" in r.pendingOwner)));
 }
 
 // Booked Meets whose link is due in the group: from `leadMin` before the
@@ -430,7 +493,6 @@ if (isMain(import.meta.url)) {
         hours: { type: "string" },
         "lead-min": { type: "string" },
         status: { type: "string" },
-        unnotified: { type: "boolean" },
         kind: { type: "string" },
         action: { type: "string" },
       },
@@ -461,6 +523,7 @@ if (isMain(import.meta.url)) {
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => addRequest(l, input, now, id));
+        if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
         return { request: ledger.requests.find((r) => r.id === id) };
       }
       case "save": {
@@ -471,11 +534,13 @@ if (isMain(import.meta.url)) {
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
+        if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
         return { request: findOpenByHandle(ledger, input.handle) ?? findOpenBySource(ledger, input) };
       }
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
         const patch = jsonArg(values);
+        if (patch.pendingOwner && "contact" in patch.pendingOwner) throw new Error("Contact decisions require the owner DM tools.");
         for (const key of ["status", "eventId", "offered", "bookedReplacement", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location", "durationMin", "allowOverlap"]) {
           if (key in patch) throw new Error(`${key} is managed by calendar.ts or reminder-check.ts`);
         }
@@ -502,7 +567,7 @@ if (isMain(import.meta.url)) {
       case "booked":
         return { requests: readJson<Ledger>(path, EMPTY).requests.filter(r => r.status === "booked") };
       case "asked":
-        return { requests: askedList(readJson<Ledger>(path, EMPTY), values.unnotified) };
+        return { requests: askedList(readJson<Ledger>(path, EMPTY)) };
       case "pending":
         return { requests: pendingOwnerList(readJson<Ledger>(path, EMPTY)) };
       case "cleanup":

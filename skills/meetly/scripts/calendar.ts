@@ -9,7 +9,7 @@ import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig, SLOT_COUNT } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
-import { addRequest, requestHolds, sameHandle, expiredRequests, findOpenByHandle, meetingDuration, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
+import { ContactConfirmationRequired, checkContact, addRequest, requestHolds, sameHandle, expiredRequests, findOpenByHandle, meetingDuration, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
 import { checkTime } from "./slots.ts";
 import { formatMeetingTime } from "./time.ts";
@@ -170,6 +170,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
     let request = requestById(id);
     let input: CalendarAction = action;
     options.validate?.(request);
+    if (["offer", "duration", "book", "approve-time"].includes(input.action)) checkContact(ledger(), request.handle, request, input.action === "offer" ? input.request : undefined);
     if (intent && request.calendarRevision === intent.id) {
       if (input.action === "resume") {
         await cleanup();
@@ -234,12 +235,11 @@ export async function calendarAction(id: string, action: CalendarAction, options
         // Validate before any external effect; only the final commit replaces the old offer.
         const before = ledger();
         // Replacement permission must be freshly resolved in the owner DM.
-        if (request.status === "booked" && !options.overlapApproved) input.request.allowOverlap = [];
+        if (request.status === "booked" && !options.overlapApproved) delete input.request.allowOverlap;
         const validated = saveOffer(before, input.request, now(), id);
-        input.request.allowOverlap = validated.requests.find(r => r.id === id)!.allowOverlap;
-        input.request.name = validated.requests.find(r => r.id === id)!.name;
+        const offeredRequest = validated.requests.find(r => r.id === id)!;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
-        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${input.request.name ?? input.request.handle}`, "--send-updates", "none"]);
+        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${offeredRequest.name ?? input.request.handle}`, "--send-updates", "none"]);
       } else {
         const config = loadConfig();
         if (input.action === "format") updateRequest(ledger(), id, { format: input.format, location: input.location }, now());
@@ -284,10 +284,25 @@ export async function calendarAction(id: string, action: CalendarAction, options
       throw error ?? new Error(provisional ? "calendar write failed; new request dropped" : "calendar write failed; previous offer retained");
     };
     if (intent.failed) await fail();
+    const authorize = (current = ledger()) => {
+      // A sent update must be reconciled even after revocation: its event may
+      // already be booked and must not remain eligible for hold expiry.
+      if (intent.steps.some(s => s.verb === "update" && s.sentAt !== undefined)) return;
+      if (["offer", "book"].includes(intent.input.action)) checkContact(current, request.handle,
+        current.requests.find(r => r.id === id), intent.input.action === "offer" ? intent.input.request : undefined);
+    };
+    const checkAuthorization = async () => {
+      try { authorize(); } catch (error) {
+        for (const step of intent.steps) if (step.sentAt !== undefined && step.output === undefined && !step.skipped) step.abandoned = true;
+        await fail(error as Error);
+      }
+    };
+    await checkAuthorization();
     for (const step of intent.steps) {
       if (step.skipped) continue;
       if (step.output !== undefined) { checkedEvent(step); continue; }
       if (step.sentAt === undefined && !intent.failed) {
+        await checkAuthorization();
         const config = loadConfig();
         const results: unknown[] = [];
         for (const account of new Set(config.calendars.map(c => c.account))) {
@@ -309,7 +324,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
         if (request.eventId && request.booked) own.push({ holdId: request.eventId, account: request.booked.account });
         const overlaps = busy.busy.filter(b => Date.parse(b.start) < Date.parse(step.end) && Date.parse(b.end) > Date.parse(step.start));
         const timeApproval = intent.input.action === "book" && intent.input.timeApproval;
-        const allowed = timeApproval ? [] : intent.input.action === "offer" ? intent.input.request.allowOverlap : request.allowOverlap;
+        const allowed = timeApproval ? [] : intent.input.action === "offer"
+          ? request.status === "booked" ? intent.input.request.allowOverlap ?? [] : [...(request.allowOverlap ?? []), ...(intent.input.request.allowOverlap ?? [])] : request.allowOverlap;
         if (overlaps.some(b => !own.some(h => h.holdId === b.id && h.account === b.account) && !allowsOverlap(b, allowed))) {
           if (intent.input.action === "offer") { step.skipped = true; writeJson(journal, intent); continue; }
           if (timeApproval) await fail(new TimeApprovalBusy(step.start));
@@ -317,6 +333,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         } else if (!timeApproval && step.verb === "create" && overlaps.length && !step.args.includes("--confirm-conflict")) step.args.push("--confirm-conflict");
       }
       if (step.sentAt === undefined && !intent.failed) {
+        await checkAuthorization();
         step.sentAt = now(); writeJson(journal, intent);
         const outcome = await send([step.verb, "primary", ...(step.verb === "update" ? [step.eventId!] : []),
           ...step.args, "--from", step.start, "--to", step.end, "--private-prop", `meetlyOperation=${step.token}`, "--json"], step.account);
@@ -367,7 +384,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
     }
     if (intent.steps.every(s => s.skipped)) await fail();
     const completed = intent;
-    updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
+    try { updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
+      authorize(l);
       let next: Ledger;
       if (completed.input.action === "offer") {
         const offered = completed.steps.filter(s => !s.skipped).map(s => { const e = parseEvent(s.output!); return { start: e.start, end: e.end, holdId: e.id, account: s.account }; });
@@ -381,13 +399,15 @@ export async function calendarAction(id: string, action: CalendarAction, options
           offered: [], bookedReplacement: false, allowOverlap: [], holdCleanup: uniqueCleanup([...(before.holdCleanup ?? []), ...holds(before)]),
         }, now());
       }
-      return { requests: next.requests.map(r => {
+      return { ...next, requests: next.requests.map(r => {
         if (r.id !== id) return r;
         const cleanup = uniqueCleanup(r.holdCleanup ?? [])
           .filter(h => !(r.status === "booked" && r.eventId === h.holdId && r.booked?.account === h.account));
-        return { ...r, calendarRevision: completed.id, holdCleanup: cleanup };
+        const decision = l.requests.find(r => r.id === id)!.pendingOwner;
+        return { ...r, ...(completed.input.action === "offer" && decision && "contact" in decision ? { contactApproved: true, pendingOwner: undefined } : {}),
+          calendarRevision: completed.id, holdCleanup: cleanup };
       }) };
-    });
+    }); } catch (error) { if (error instanceof ContactConfirmationRequired) await fail(error); throw error; }
     await cleanup();
     rmSync(journal);
     return bookingResult(requestById(id), completed);
@@ -439,6 +459,7 @@ export async function offerRequest({ requestId: selectedId, allowOverlapTitles, 
     const existing = selectedId === undefined ? findOpenByHandle(l, input.handle) ?? l.requests.find(r => input.origin === "inbound" && input.sourceRowid !== undefined && r.sourceRowid === input.sourceRowid && ["asked", "offered"].includes(r.status))
       : l.requests.find(r => r.id === selectedId);
     if (selectedId !== undefined && !existing) throw new Error("No matching selected request.");
+    checkContact(l, input.handle, existing);
     if (existing && input.chatUid && existing.chatUid !== input.chatUid &&
       !(input.origin === "owner-group" && existing.status === "asked" && existing.chatUid === undefined)) throw new Error("request belongs to another conversation");
     id = existing?.id ?? requestId();

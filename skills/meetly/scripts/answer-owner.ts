@@ -1,4 +1,4 @@
-import { requestEvents, recordDelivery, updateRequest, type Constraints, type Ledger } from "./ledger.ts";
+import { sameRequest, requestEvents, recordDelivery, updateRequest, type Constraints, type Ledger } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
@@ -20,7 +20,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   const ledger = readJson<Ledger>(path, { requests: [] });
   const saved = ledger.requests.find(r => r.id === args.requestId);
   let pending = saved?.pendingOwner;
-  if (!saved?.chatUid || !pending || pending.askedAt !== args.askedAt
+  if (!saved?.chatUid || !pending || "contact" in pending || pending.askedAt !== args.askedAt
     || !["offered", "booked"].includes(saved.status)) return { error: "No matching pending meeting question. Read the pending requests again." };
   let request = saved;
   let text = args.text.trim();
@@ -50,7 +50,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
       request = (await calendarAction(request.id, { action: "offer", request: {
         origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
         offered: slots.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),
-      } }, { validate(latest) { if (JSON.stringify(latest) !== JSON.stringify(before)) throw new Error("Request changed. Read pending requests again."); } })).request;
+      } }, { validate(latest) { if (!sameRequest(latest, before)) throw new Error("Request changed. Read pending requests again."); } })).request;
       const guestLocale = locale ?? "en-US";
       const labels = request.offered.map(o => localeFormatter(guestLocale, config.timezone).format(new Date(o.start)));
       const choices = new Intl.ListFormat(guestLocale, { type: "disjunction" }).format(labels);
@@ -69,7 +69,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {
         const current = latest.requests.find(r => r.id === request.id);
         if (JSON.stringify(current?.pendingOwner) !== JSON.stringify(pending)) throw new Error("pending question changed");
-        if (JSON.stringify(current) !== JSON.stringify(request)) throw new Error("request changed");
+        if (!sameRequest(current, request)) throw new Error("request changed");
         return recordDelivery(latest, request.id, "answer", "begin", Date.now());
       });
       pending = begun.requests.find(r => r.id === request.id)!.pendingOwner!;
