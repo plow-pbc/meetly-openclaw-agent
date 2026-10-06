@@ -6,7 +6,7 @@ import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { findPreferredSlots, resolveSearchConstraints, preferredSearchCoverage, type SearchTiming } from "./slots.ts";
 import { view } from "./request-view.ts";
-import { nudgeFingerprint, checkContact, ContactConfirmationRequired, addRequest, requestId, findOpenByHandle, normalizeHandle, sameHandle, type Constraints, type Ledger } from "./ledger.ts";
+import { sameRequest, nudgeFingerprint, checkContact, ContactConfirmationRequired, addRequest, requestId, findOpenByHandle, normalizeHandle, sameHandle, type Constraints, type Ledger } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
@@ -111,7 +111,11 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
     const { request } = await offerRequest({ travel, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
       offered: slots.map(({ start, end }) => ({ start, end })),
-      origin: "owner-group", chatUid: chat, askDetails: false });
+      origin: "owner-group", chatUid: chat, askDetails: false }, {
+      validate(latest) {
+        if (existing && !sameRequest(existing, latest)) throw new Error("request changed");
+      },
+    });
     return { ...view(request, config), preferencesUnavailable };
   } catch (error) {
     return { error: "The scheduling action could not be completed. Check the request before trying again." };
