@@ -1,29 +1,22 @@
 // Private suggestions and remembered answers never grant calendar permission.
 import { toBusy, uniqueEvents, type EventRef } from "./busy.ts";
-import { loadConfig, type Config } from "./config.ts";
-import { parseCalendarObject } from "./event.ts";
-import { requestEvents, type Ledger } from "./ledger.ts";
-import { runOnMac, type BridgeOptions } from "./mac.ts";
+import { loadConfig } from "./config.ts";
+import { calendarListings, eventTitle } from "./calendar-read.ts";
+import { requestEvents, sameRequest, updateRequest, type Ledger, type OverlapChoice } from "./ledger.ts";
+import { type BridgeOptions } from "./mac.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { travelRange, type TravelInput } from "./travel.ts";
 
-export type MovableArgs = TravelInput & { action: "inspect" | "remember"; requestId?: string;
-  candidates?: { start: string; end: string }[]; title?: string; allowed?: boolean };
+export type MovableArgs = TravelInput & { action: "inspect"; requestId?: string;
+  candidates?: { start: string; end: string }[] };
 
 export async function movableAction(ctx: OwnerContext, args: MovableArgs, options: BridgeOptions = {}) {
-  if (!resolveOwnerChat(ctx) || ctx.sessionKey !== "agent:main:main") return { error: "Only the owner's main DM can inspect or remember overlap decisions." };
+  if (!resolveOwnerChat(ctx) || ctx.sessionKey !== "agent:main:main") return { error: "Only the owner's main DM can inspect overlap decisions." };
   try {
-    const path = file("config.json");
+    const path = file("ledger.json");
     const config = loadConfig();
-    if (args.action === "remember") {
-      const title = args.title?.trim().toLowerCase();
-      if (!title || title.length > 1000 || typeof args.allowed !== "boolean") throw new Error("provide an event title and an allowed/refused answer");
-      const decision = { allowed: args.allowed, at: new Date().toISOString() };
-      updateJson<Config>(path, config, saved => ({ ...saved, overlapDecisions: { ...saved.overlapDecisions, [title]: decision } }));
-      return { remembered: true, decision, grantsOverlap: false };
-    }
     if (args.action !== "inspect" || !Array.isArray(args.candidates) || args.candidates.length < 1 || args.candidates.length > 2) throw new Error("inspect one or two candidate times");
     const request = args.requestId === undefined ? undefined : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === args.requestId);
     if (args.requestId !== undefined && !request) throw new Error("unknown request");
@@ -37,23 +30,17 @@ export async function movableAction(ctx: OwnerContext, args: MovableArgs, option
     const to = new Date(Math.max(...ranges.map(r => Date.parse(r.to)))).toISOString();
     const listings: unknown[] = [];
     const titles = new Map<string, string>();
-    for (const account of new Set(config.calendars.map(c => c.account))) {
-      const output = await runOnMac({ argv: ["plow-gog", "calendar", "events", "--calendars", config.calendars.filter(c => c.account === account).map(c => c.id).join(","),
-        "--account", account, "--from", from, "--to", to, "--max", "100", "--json"],
-        readPaths: [], timeoutMs: 60_000, goal: "Meetly: privately inspect a blocked meeting time" }, options);
-      if (output === undefined) throw new Error("calendar unavailable");
-      const raw = parseCalendarObject(output) as any;
-      if (raw.errors?.length || raw.nextPageToken || !Array.isArray(raw.events ?? raw.items)) throw new Error("calendar coverage incomplete");
-      const events = (raw.events ?? raw.items).map((event: any) => ({ ...event, account }));
-      listings.push({ ...raw, events, items: undefined });
-      for (const event of events) if (typeof event.summary === "string" && event.summary.trim()) {
-        titles.set(JSON.stringify([account, event.id]), event.summary);
+    for (const { account, listing } of await calendarListings(config, { from, to }, options)) {
+      if (!listing || listing.errors?.length || listing.nextPageToken || listing.nextPageTokens?.length) throw new Error("calendar coverage incomplete");
+      listings.push(listing);
+      for (const event of listing.events) if (typeof event.summary === "string" && event.summary.trim()) {
+        titles.set(JSON.stringify([account, event.id]), eventTitle(event.summary));
       }
     }
     const busy = toBusy(listings, { tz: config.timezone, max: 100 });
     if (busy.degraded.length || busy.unknownAfter) throw new Error("calendar coverage incomplete");
-    const memory = readJson<Config>(path, config).overlapDecisions ?? {};
-    return { candidates: ranges.flatMap(slot => {
+    const memory = readJson<Decisions>(file("overlap-decisions.json"), {});
+    const choices: OverlapChoice[] = ranges.flatMap(slot => {
       const blocking = busy.busy.filter(b => Date.parse(b.start) < Date.parse(slot.to) && Date.parse(b.end) > Date.parse(slot.from)
         && !own.some(ref => ref.account === b.account && ref.id === b.id));
       // Missing identity cannot prove there is exactly one distinct blocker.
@@ -63,11 +50,26 @@ export async function movableAction(ctx: OwnerContext, args: MovableArgs, option
       const event = events[0]!;
       const title = titles.get(JSON.stringify([event.account, event.id]));
       if (!title) return [];
-      const key = title.trim().toLowerCase();
-      return [{ start: slot.start, end: slot.end, title,
-        previous: Object.hasOwn(memory, key) ? memory[key] : null }];
-    }) };
+      return [{ start: slot.start, end: slot.end, title, event: { account: event.account, id: event.id } }];
+    });
+    const candidates = choices.map(({ event: _event, ...slot }) => ({ ...slot, previous: memory[slot.title.toLowerCase()] ?? null }));
+    if (!request || !choices.length) return { candidates };
+    if (!request.chatUid || !["offered", "booked"].includes(request.status)) throw new Error("inspect a linked scheduling request");
+    const pendingOwner = { askedAt: new Date(Date.now()).toISOString(), question: "May I offer one of these times over its existing commitment, leaving that event unchanged?", overlap: { choices } };
+    updateJson<Ledger>(path, { requests: [] }, latest => {
+      const current = latest.requests.find(r => r.id === request.id);
+      if (!sameRequest(current, request) || current?.pendingOwner) throw new Error("a decision is already pending or the request changed");
+      return updateRequest(latest, request.id, { pendingOwner }, Date.now());
+    });
+    return { candidates, requestId: request.id, askedAt: pendingOwner.askedAt, question: pendingOwner.question };
+
   } catch {
-    return { error: "Could not inspect or remember the overlap decision. No permission was granted." };
+    return { error: "Could not inspect the overlap decision. No permission was granted; resolve any existing pending question first." };
   }
+}
+
+type Decisions = Record<string, { allowed: boolean; at: string }>;
+export function rememberOverlap(choice: OverlapChoice, allowed: boolean) {
+  updateJson<Decisions>(file("overlap-decisions.json"), {}, saved => ({ ...saved,
+    [choice.title.trim().toLowerCase()]: { allowed, at: new Date(Date.now()).toISOString() } }));
 }

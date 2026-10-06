@@ -2,7 +2,7 @@
 // finishes setup with --done and registers the cron jobs.
 import { parseArgs } from "node:util";
 import { isMain, run } from "./cli.ts";
-import { schedulingConfig, isField, nextField, parseField, QUESTIONS, validateConfig, type Config, type Field, type RequiredField } from "./config.ts";
+import { isField, nextField, parseField, QUESTIONS, validateConfig, type Config, type Field, type RequiredField } from "./config.ts";
 import { file } from "./paths.ts";
 import { readJson, removeFile, updateJson, withLock, writeJson } from "./store.ts";
 import { registerFromConfig } from "./register-crons.ts";
@@ -17,7 +17,7 @@ export function record(field: string, value: string): Recorded {
   const configPath = file("config.json");
   if (readJson<Config | null>(configPath, null)?.setupDoneAt) {
     const config = updateJson<Config | null>(configPath, null, (c) => validateConfig({ ...c!, ...patch }));
-    return { saved: field, config: schedulingConfig(config!) };
+    return { saved: field, config: config! };
   }
   const draft = updateJson<Partial<Config>>(file("config.draft.json"), {}, (d) => ({ ...d, ...patch }));
   const next = nextField(draft) ?? null;
@@ -40,7 +40,7 @@ export function finish(register: () => unknown, now: number = Date.now()): { don
     return done;
   });
   // config.json stays written if registration fails; --done can be re-run.
-  return { done: true, config: schedulingConfig(config), crons: register() };
+  return { done: true, config: config, crons: register() };
 }
 
 if (isMain(import.meta.url)) {

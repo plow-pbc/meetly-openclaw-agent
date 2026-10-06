@@ -39,18 +39,15 @@ if no blocker looks flexible or the owner refuses should you search alternatives
 Group and guest requests use alternatives without private inspection.
 
 
-Run `busy.ts --fetch`. Only in the owner's DM, for events they explicitly allowed
-overlapping, add `--allow-overlap-title <owner-supplied event name>` for each name.
+Run `busy.ts --fetch`.
 It checks every configured calendar on the Mac, writes
 `/var/lib/plow/meetly/tmp/busy.json` and prints only `{file, busy, degraded, unknownAfter?}`.
 Never run `plow-gog calendar events` yourself or copy a calendar listing into a file.
 Never claim the owner is free on an account in `degraded`.
 
-**Overlap permission.** The busy file keeps the allowed events' references for slot
-search without exposing them. Overlap permission alone is not a time selection.
+**Overlap permission.** `meetly_movable` binds a private pending question to the inspected event. Overlap permission alone is not a time selection.
 "Noon is fine, it can overlap my other event" grants permission to offer noon, not to book it:
-use `meetly_offer_owner_dm` with the selected `requestId` for an existing meeting and `allowOverlapTitles` to resolve the named permission,
-re-offer and hold times, then let the guest choose. Use `slots.ts --near <owner-authorized start> --request <id>` for nearest alternatives. Never write
+answer the pending question through `meetly_answer_owner` with `allow_overlap` and the inspected candidate index. The tool holds that time and delivers the offer, then the guest chooses. Use `slots.ts --near <owner-authorized start> --request <id>` for nearest alternatives. Never write
 `allowOverlap` with the ledger CLI. Only an explicit booking instruction such as "book noon"
 selects it (`meetly-confirm`, "Book the event"). Overlap permission does not authorize sharing the event title in the group.
 
@@ -122,7 +119,7 @@ before searching, keeping any hard conditions they did not change.
      loosening it; stop.
    - **`degraded` is not empty:** tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
-4. For new overlap permission, use `meetly_offer_owner_dm` with the selected `requestId` for an existing meeting and `allowOverlapTitles`; the raw CLI cannot authorize overlaps. Otherwise save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,
+4. Resolve a pending private overlap question through `meetly_answer_owner`; the raw CLI cannot authorize overlaps. Otherwise save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,
    `name`, `sourceRowid`, known `chatUid`, `topic`, `location`, `meal` if applicable, optional `durationMin`,
    `constraints` (the owner's conditions), `proposed`, `format`, `travel`,
    `locale`, and `offered[]` with each slot's `start`/`end`. Do not supply hold ids.
@@ -195,7 +192,7 @@ Save the guest name the owner gave in `name`, even when they also supplied a pho
 and Contacts has no card; keep it out of `topic`.
 
 Extract the topic, proposed times, hard conditions, explicit duration, format and
-place, and, only in the owner's DM, owner-authorized overlap titles. Follow
+place, and the request's saved overlap permission. Follow
 "Offer times" with `origin: owner`, including its inspection and wait branch for busy
 preferred times. Inspect also when few free options fit. Ask before searching
 unrequested alternatives; preserve duration, travel and hard conditions. State the

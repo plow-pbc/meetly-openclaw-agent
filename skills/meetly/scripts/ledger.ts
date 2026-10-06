@@ -30,7 +30,8 @@ export const uniqueCleanup = (refs: HoldCleanup[]) =>
 export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
 // One contact decision, question or out-of-hours time waiting for the owner.
 export const OWNER_QUESTION_LIMIT = 500;
-export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ contact: NewRequest } | { start: string; end: string } | { question: string; alternatives?: { previousStarts: string[] } });
+export type OverlapChoice = { start: string; end: string; event: EventRef; title: string };
+export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ contact: NewRequest } | { start: string; end: string } | { question: string; alternatives?: { previousStarts: string[] }; overlap?: { choices: OverlapChoice[]; answer?: { allowed: boolean; choice: number }; reply?: string } });
 export function intersectConstraints(owner: Constraints = {}, guest: Constraints = {}): Constraints {
   return {
     ...(owner.startTime || guest.startTime ? { startTime: owner.startTime ?? guest.startTime } : {}),
@@ -551,7 +552,7 @@ if (isMain(import.meta.url)) {
       }
       case "add": {
         const input = jsonArg(values);
-        if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
+        if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires an inspected question answered through meetly_answer_owner.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => addRequest(l, input, now, id));
         if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
@@ -562,7 +563,7 @@ if (isMain(import.meta.url)) {
         if (input.origin === "inbound" && input.status === "asked" && input.durationMin === undefined) {
           input.durationMin = meetingDuration(input.durationMin, input.meal, loadConfig().durationMin);
         }
-        if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
+        if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires an inspected question answered through meetly_answer_owner.");
         const id = requestId();
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
         if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
@@ -571,7 +572,7 @@ if (isMain(import.meta.url)) {
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
         const patch = jsonArg(values);
-        if (patch.pendingOwner && "contact" in patch.pendingOwner) throw new Error("Contact decisions require the owner DM tools.");
+        if (patch.pendingOwner && ("contact" in patch.pendingOwner || ("question" in patch.pendingOwner && patch.pendingOwner.overlap))) throw new Error("Contact and overlap decisions require the owner DM tools.");
         for (const key of ["travel", "travelEvents", "status", "eventId", "offered", "bookedReplacement", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location", "durationMin", "allowOverlap"]) {
           if (key in patch) throw new Error(`${key} is managed by calendar.ts or reminder-check.ts`);
         }
