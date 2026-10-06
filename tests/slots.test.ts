@@ -96,6 +96,17 @@ test("Kelp busy exact time returns covered nearby alternatives without its saved
     assert.equal(rejected.status, 1);
     assert.equal(readJson<typeof ledger>(join(home, "ledger.json"), { requests: [] }).requests.find(r => r.id === "kelp")!.constraints?.startTime, undefined);
   });
+  await t.test("a busy check never saves its matching start pin outside the passed date range", () => {
+    writeJson(join(home, "ledger.json"), ledger);
+    const outside = cli("slots.ts", [...args, "--request", "kelp", "--from", "2026-10-06", "--to", "2026-10-21"], env);
+    assert.equal(outside.status, 0, outside.stderr);
+    assert.equal(outside.json.reason, "busy");
+    assert.equal(outside.json.outsideHours, true);
+    assert.deepEqual(outside.json.alternatives, []);
+    assert.equal(outside.json.resolvedConstraints.startTime, undefined);
+    assert.deepEqual(readJson<typeof ledger>(join(home, "ledger.json"), { requests: [] }).requests.find(r => r.id === "kelp")!.constraints,
+      { before: "16:00", from: "2026-10-06", to: "2026-10-21" });
+  });
   await t.test("a complete refetch clears the earlier truncation cutoff", () => {
     writeJson(busyFile, { busy: [busy], coverage, unknownAfter: "2026-10-29T22:00:00Z", degraded: [] });
     const refreshed = cli("slots.ts", args, env);

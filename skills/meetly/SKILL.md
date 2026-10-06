@@ -95,6 +95,7 @@ Notes:
 - Check an exact time in one call: `slots.ts --at <start> --request ID --before 16:00`
   (omit `--request` only when no request exists). Pass all owner conditions as
   `--before`, `--after`, `--days`, `--from`/`--to`; no prior ledger save is needed.
+  Pass only conditions stated by the owner, never calendar-read bounds or the default search horizon.
   It applies and saves the conditions on the selected request and releases only its
   matching busy start pin. Do not update the ledger after this check. A busy check returns ranked free alternatives on the
   requested day ±2 days, fetching adequate coverage itself. Present them in the

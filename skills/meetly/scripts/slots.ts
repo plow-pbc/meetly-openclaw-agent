@@ -131,8 +131,7 @@ export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}
 }
 
 function unpinBusyStart(constraints: Constraints, start: string, timezone: string): Constraints {
-  const local = localIso(Date.parse(start), timezone), date = local.slice(0, 10);
-  if (constraints.startTime !== local.slice(11, 16) || (constraints.from && date < constraints.from) || (constraints.to && date > constraints.to)) return constraints;
+  if (constraints.startTime !== localIso(Date.parse(start), timezone).slice(11, 16)) return constraints;
   const { startTime: _busy, ...rest } = constraints;
   return rest;
 }

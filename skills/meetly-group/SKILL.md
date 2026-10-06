@@ -107,8 +107,9 @@ before searching, keeping any hard conditions they did not change. Exact-time ch
    first offer, its `proposed` times: `--days`, `--after`, `--before`, `--from`/`--to`.
    For an exact owner-requested time, run one `slots.ts` call with `--at <requested ISO start>`,
    `--request <id>` when one exists, and the owner's conditions as `--before`, `--after`, `--days`, `--from`/`--to`.
+   Pass only conditions the owner stated; calendar-read bounds and the default search horizon are not conditions.
    For example: `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --request <id> --at 2026-10-29T14:00 --before 16:00`.
-   It applies and saves those conditions itself; do not add or update a ledger request before or after this check.
+   It applies the conditions and saves them on the selected request; do not add or update a ledger request before or after this check.
    When busy, it returns ranked free alternatives on that day ±2 days, reading calendar
    coverage as needed. Present them in this same reply without asking permission to search.
    The matching busy clock pin is removed; no start pin is created. Other hard conditions stay.
