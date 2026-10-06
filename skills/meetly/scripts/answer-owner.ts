@@ -3,7 +3,7 @@ import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change" };
+type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change"; declineAlternatives?: boolean };
 
 export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: string, text: string) => Promise<void>): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -22,7 +22,13 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (ctx.sessionKey !== "agent:main:main" && !inGroup) {
     return { error: "Answer from the owner's main DM or this request's group." };
   }
-  const alreadyVisible = inGroup && "question" in pending && args.outcome === "answer";
+  const alternatives = "question" in pending ? pending.alternatives : undefined;
+  if (alternatives && args.declineAlternatives !== true && (!request.offered.length
+    || request.offered.some(o => !o.holdId)
+    || !request.offered.some(o => !alternatives.previousStarts.some(start => Date.parse(start) === Date.parse(o.start))))) {
+    return { error: "Search and hold alternatives within the owner's explicit new dates or time window before answering. A bare yes does not define new conditions; ask the owner. Leave this decision pending if the search or write fails." };
+  }
+  const alreadyVisible = inGroup && "question" in pending && args.outcome === "answer" && (!alternatives || args.declineAlternatives === true);
   if (!alreadyVisible) {
     try {
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {

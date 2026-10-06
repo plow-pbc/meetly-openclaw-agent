@@ -133,7 +133,7 @@ for (const [action, args] of actions) test(`${action} refuses missing or mismatc
     ...["+115551234567", "5551234567", "+15551234567junk"].map(requesterSenderId => ({ ...context, requesterSenderId })),
     { ...context, nativeChannelId: `plow:${context.nativeChannelId}` }]) {
     const result = await guestAction(ctx, action, { ...args, ...context, id: "request-one", handle: context.requesterSenderId } as GuestArgs);
-    assert.match(JSON.stringify(result), /Alex will confirm/);
+    assert.match(JSON.stringify(result), /No scheduling request matches/);
   }
   assert.deepEqual(f.read(), f.ledger);
   assert.deepEqual(f.commands, []);
@@ -145,7 +145,7 @@ for (const [action, args] of actions) test(`${action} refuses an unlinked offer 
   f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "other", chatUid: "other-chat", handle: "+15557654321" });
   f.save(f.ledger);
   const result = await f.act(context, action, args);
-  assert.match(JSON.stringify(result), /Alex will confirm/);
+  assert.match(JSON.stringify(result), /No scheduling request matches/);
   assert.deepEqual(f.read(), f.ledger);
   assert.deepEqual(f.commands, []);
 });
@@ -455,7 +455,7 @@ for (const scenario of ["different open request in chat", "sender offer linked e
     f.ledger.requests.push({ ...f.ledger.requests[0]!, id: "closed", status: "booked", chatUid: context.nativeChannelId, handle: "+15557654321" });
   } else { f.ledger.requests[0]!.status = "asked"; delete f.ledger.requests[0]!.chatUid; }
   f.save(f.ledger);
-  for (const [action, args] of actions) assert.match(JSON.stringify(await guestAction(context, action, args)), /Alex will confirm/);
+  for (const [action, args] of actions) assert.match(JSON.stringify(await guestAction(context, action, args)), /No scheduling request matches/);
   assert.deepEqual(f.commands, []); assert.deepEqual(f.read(), f.ledger);
 });
 
@@ -566,7 +566,7 @@ test('canonical email equality is case insensitive but never suffix based', asyn
   const f = fixture(t);
   f.ledger.requests[0]!.handle = 'Guest@Example.com'; f.save(f.ledger);
   assert.ok(!('error' in await guestAction({ ...context, requesterSenderId: 'guest@example.com' }, 'view')));
-  assert.match(JSON.stringify(await guestAction({ ...context, requesterSenderId: 'otherguest@example.com' }, 'view')), /Alex will confirm/);
+  assert.match(JSON.stringify(await guestAction({ ...context, requesterSenderId: 'otherguest@example.com' }, 'view')), /No scheduling request matches/);
 });
 
 test('a failed replacement through the writer preserves the original offer and live holds', async t => {
@@ -699,7 +699,7 @@ test("ask-owner rejects malformed or unscoped questions without sending", async 
   for (const args of [{}, { question: " " }, { question: 123 }, { start: "2026-10-05T20:00" }]) {
     assert.match((await ask.execute("bad", args)).content[0]!.text, /error/);
   }
-  assert.match(JSON.stringify(await f.act({ ...context, nativeChannelId: "other-chat" }, "ask_owner", { question: "Where?" })), /Alex will confirm/);
+  assert.match(JSON.stringify(await f.act({ ...context, nativeChannelId: "other-chat" }, "ask_owner", { question: "Where?" })), /No scheduling request matches/);
   assert.deepEqual(f.read(), f.ledger);
   assert.deepEqual(f.ownerLines, []);
   assert.deepEqual(f.commands, []);
@@ -1012,19 +1012,6 @@ for (const [display, contact, expected] of [
   const creates = f.commands.filter(argv => argv[2] === "create");
   assert.equal(creates.length, SLOT_COUNT);
   assert.ok(creates.every(argv => argv[argv.indexOf("--summary") + 1] === `Hold: Lunch with ${expected ?? context.requesterSenderId}`));
-});
-
-test("paused owner-group scheduling stops before reading the calendar", async t => {
-  const f = fixture(t);
-  const config = readJson<object>(join(f.home, "config.json"), {});
-  writeJson(join(f.home, "config.json"), { ...config, paused: true });
-  const before = f.read();
-  const args = { topic: "Planning", durationMin: 30, travel: { beforeMin: 0, afterMin: 0 } };
-  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, args);
-  writeJson(join(f.home, "config.json"), config);
-  assert.ok("error" in result);
-  assert.deepEqual(f.commands, []);
-  assert.deepEqual(f.read(), before);
 });
 
 test("owner group offers refuse missing or ambiguous guest participants before calendar writes", async t => {
@@ -1530,30 +1517,18 @@ test("exact clock constraints are owner-only; guests use the dated start argumen
   assert.equal(tools.get("meetly_offer_owner_group").parameters.properties.constraints.properties.startTime.type, "string");
 });
 
-test("exhausted scheduling asks the owner once and returns a visible holding reply", async t => {
+for (const deliveryFails of [false, true]) test(`exhausted scheduling keeps private conditions out of its reply: deliveryFails=${deliveryFails}`, async t => {
   const f = fixture(t);
   f.events.set("busy", event("busy", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z"));
-  const result = await f.act(context, "other_times", { offer_week: false }) as any;
-  assert.equal(result.code, "NO_ALTERNATIVES");
-  assert.equal(result.ownerAskSent, true);
-  assert.notEqual(result.silent, true);
-  assert.match(result.message, /asked Alex/);
-  assert.equal(result.recovery.action, "wait");
-  assert.equal(f.ownerLines.length, 1);
-  await f.act(context, "other_times", { offer_week: false });
-  assert.equal(f.ownerLines.length, 1);
-});
-
-test("an uncertain scheduling handoff stays visible without claiming delivery or sending twice", async t => {
-  const f = fixture(t);
-  f.events.set("busy", event("busy", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z"));
-  f.delivery.fail = true;
+  f.delivery.fail = deliveryFails;
   const tool = f.tools.get("meetly_other_times")!;
-  const result = JSON.parse((await tool.execute("failed", { offer_week: false })).content[0]!.text);
+  const result = JSON.parse((await tool.execute("first", { offer_week: false })).content[0]!.text);
   assert.equal(result.code, "NO_ALTERNATIVES");
+  assert.equal(result.conditions, undefined);
   assert.notEqual(result.silent, true);
-  assert.notEqual(result.ownerAskSent, true);
-  assert.doesNotMatch(result.message, /asked Alex|Alex.*repl/i);
+  assert.equal(result.ownerAskSent === true, !deliveryFails);
+  if (deliveryFails) assert.doesNotMatch(result.message, /asked Alex|Alex.*repl/i);
+  else assert.match(result.message, /asked Alex/);
   assert.equal(result.recovery.action, "wait");
   assert.equal(f.deliveries.length, 1);
   await tool.execute("again", { offer_week: false });

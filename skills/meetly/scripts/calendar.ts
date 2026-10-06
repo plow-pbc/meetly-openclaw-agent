@@ -146,8 +146,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
     const journal = file(`calendar/${encodeURIComponent(id)}.json`);
     let intent = readJson<Intent | undefined>(journal, undefined);
     let request = requestById(id);
-    let input: CalendarAction = action.action === "book" && request.pendingOwner && "start" in request.pendingOwner
-      ? { ...action, timeApproval: true } : action;
+    let input: CalendarAction = action;
     options.validate?.(request);
     if (intent && request.calendarRevision === intent.id) { rmSync(journal); intent = undefined; }
     if (intent && input.action !== "resume") throw new Error(`calendar operation unresolved for ${id}; run resume first`);

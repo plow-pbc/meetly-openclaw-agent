@@ -28,7 +28,7 @@ export const uniqueCleanup = (refs: HoldCleanup[]) =>
 export const requestId = () => `r_${randomBytes(4).toString("hex")}`;
 // One question or out-of-hours time waiting for the owner's answer.
 export const OWNER_QUESTION_LIMIT = 500;
-export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ start: string; end: string } | { question: string });
+export type PendingOwner = { askedAt: string; answerAttemptedAt?: string } & ({ start: string; end: string } | { question: string; alternatives?: { previousStarts: string[] } });
 export function intersectConstraints(owner: Constraints = {}, guest: Constraints = {}): Constraints {
   return {
     ...(owner.startTime || guest.startTime ? { startTime: owner.startTime ?? guest.startTime } : {}),
@@ -304,6 +304,9 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   }
   const pending = patch.pendingOwner;
   if (pending) {
+    if ("question" in pending && pending.alternatives !== undefined
+      && (!Array.isArray(pending.alternatives?.previousStarts) || !pending.alternatives.previousStarts.length
+        || pending.alternatives.previousStarts.some(start => !isDate(start)))) throw new Error("alternatives need the previous offered starts");
     if (!isDate(pending.askedAt) || ("question" in pending
       ? typeof pending.question !== "string" || !pending.question.trim() || pending.question.length > OWNER_QUESTION_LIMIT || "start" in pending || "end" in pending
       : !isDate(pending.start) || !isDate(pending.end))) {

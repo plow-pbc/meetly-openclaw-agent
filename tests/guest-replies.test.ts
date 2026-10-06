@@ -13,7 +13,6 @@ for (const failedAsk of [false, true]) test(`a question handoff preserves an ear
   guestTurns.begin(turn);
   t.after(() => guestTurns.end({}, turn));
   const call = async (name: string, id: string) => {
-    guestTurns.beforeTool({ toolName: name }, { ...turn, toolCallId: id });
     return tools.get(name).execute(id, {});
   };
   await call("meetly_pick_time", "pick");
@@ -37,9 +36,7 @@ test("failed picks cannot supply a booking confirmation", async t => {
   const tools = new Map<string, any>();
   registerGuestTools({ registerTool(factory: any) { const tool = factory({ sessionKey: turn.sessionKey }); tools.set(tool.name, tool); } },
     async (_ctx: unknown, action: string) => action === "pick" ? { error: "Unavailable" } : { silent: true });
-  guestTurns.beforeTool({ toolName: "meetly_pick_time" }, { ...turn, toolCallId: "pick" });
   await tools.get("meetly_pick_time").execute("pick", {});
-  guestTurns.beforeTool({ toolName: "meetly_ask_owner" }, { ...turn, toolCallId: "ask" });
   const result = await tools.get("meetly_ask_owner").execute("ask", {});
   assert.equal(result.details.silent, true);
   assert.equal(result.details.schedulingResult, undefined);
@@ -53,9 +50,7 @@ test("a booking confirmation cannot cross sessions", async t => {
   const context = { sessionKey: turn.sessionKey };
   registerGuestTools({ registerTool(factory: any) { const tool = factory(context); tools.set(tool.name, tool); } },
     async (_ctx: unknown, action: string) => action === "pick" ? { status: "booked" } : { silent: true });
-  guestTurns.beforeTool({ toolName: "meetly_pick_time" }, { ...turn, toolCallId: "pick" });
   await tools.get("meetly_pick_time").execute("pick", {});
-  guestTurns.beforeTool({ toolName: "meetly_ask_owner" }, { ...turn, toolCallId: "ask" });
   context.sessionKey = "group-two";
   const result = await tools.get("meetly_ask_owner").execute("ask", {});
   assert.equal(result.details.silent, true);
