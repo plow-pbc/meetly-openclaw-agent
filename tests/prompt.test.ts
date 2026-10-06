@@ -334,5 +334,3 @@ test("each guest time turn reads the current offer before replying, including mi
   assert.ok(p.includes("Never answer availability from chat history"));
   assert.ok(p.includes("even when the same message probes for private calendar details"));
 });
-
-
