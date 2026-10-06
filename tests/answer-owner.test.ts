@@ -315,7 +315,7 @@ test("a guest acknowledgement during availability lookup does not abort approved
   t.mock.method(globalThis, "fetch", async (url: any, init: RequestInit) => {
     if (!observed && JSON.parse(String(init.body)).params.arguments.argv[2] === "events") {
       observed = true;
-      writeJson(f.path, recordGuestReply(f.read(), "group-mia", f.request.handle, replyAt));
+      writeJson(f.path, recordGuestReply(f.read(), "group-mia", f.request.handle, replyAt, "chat"));
     }
     return fetch(url, init);
   });
