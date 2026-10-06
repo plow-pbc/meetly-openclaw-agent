@@ -51,12 +51,94 @@ function bridge(output: string | undefined): typeof fetch {
 }
 
 test("lookupContact says found, not found, or no Mac, and never throws for a missing card", async () => {
-  assert.deepEqual(await lookupContact(" +55 (47) 99254-7532 ", { token: "tok", fetch: bridge("S|0\nR|7|Ana|Souza|\nP|7|+55 (47) 99254-7532\n") }),
+  assert.deepEqual(await lookupContact(" +55 (47) 99254-7532 ", { token: "tok", api: ownerApi(undefined), fetch: bridge("S|0\nR|7|Ana|Souza|\nP|7|+55 (47) 99254-7532\n") }),
     { found: true, handle: "+5547992547532", name: "Ana Souza", phones: ["+55 (47) 99254-7532"], emails: [], matches: 1 });
-  assert.deepEqual(await lookupContact("+5547992547532", { token: "tok", fetch: bridge("S|0\nR|7|Local|Number|\nP|7|47992547532\nE|7|wrong@example.com\n") }),
+  assert.deepEqual(await lookupContact("+5547992547532", { token: "tok", api: ownerApi(undefined), fetch: bridge("S|0\nR|7|Local|Number|\nP|7|47992547532\nE|7|wrong@example.com\n") }),
     { found: false, handle: "+5547992547532" });
-  assert.deepEqual(await lookupContact("+5547992547532", { token: "tok", fetch: bridge("S|0\n") }), { found: false, handle: "+5547992547532" });
-  assert.deepEqual(await lookupContact(" A@B ", { token: "tok", fetch: bridge("S|0\nR|7|Ana|Souza|\nE|7|a@b\n") }),
+  assert.deepEqual(await lookupContact("+5547992547532", { token: "tok", api: ownerApi(undefined), fetch: bridge("S|0\n") }), { found: false, handle: "+5547992547532" });
+  assert.deepEqual(await lookupContact(" A@B ", { token: "tok", api: ownerApi(undefined), fetch: bridge("S|0\nR|7|Ana|Souza|\nE|7|a@b\n") }),
     { found: true, handle: "a@b", name: "Ana Souza", phones: [], emails: ["a@b"], matches: 1 });
-  assert.deepEqual(await lookupContact("+5547992547532", { token: "" }), { found: false, handle: "+5547992547532", reason: "mac-unavailable" });
+  assert.deepEqual(await lookupContact("+5547992547532", { token: "" }), { found: false, handle: "+5547992547532", reason: "bridge-token-missing" });
+});
+
+const card = (phone: string) => `S|0\nR|4|Ana|Lee|\nP|4|${phone}\nE|4|ana@example.com\n`;
+
+for (const [phone, handle, region] of [
+  ["555.123.4567", "+15551234567", "US"],
+  ["915.555.0188", "+19155550188", "US"],
+  ["(917) 555-0112", "+19175550112", "US"],
+  ["020 7946 0958", "+442079460958", "GB"],
+  ["0044 20 7946 0958", "+442079460958", "GB"],
+  ["011 44 20 7946 0958", "+442079460958", "US"],
+  ["+44 (0)20 7946 0958", "+442079460958", "US"],
+  ["(47) 99254-7532", "+5547992547532", "BR"],
+  ["(416) 555-0100", "+14165550100", "CA"],
+  ["(650)\u00a0555-0100", "+16505550100", "US"],
+] as const) test(`card ${phone} matches E.164 in the owner's ${region} region`, () => {
+  assert.equal(parseContacts(card(phone), handle, region)[0]?.name, "Ana Lee");
+});
+
+for (const [phone, handle, region] of [
+  ["123-4567", "+15551234567", "US"],
+  ["51234567", "+15551234567", "US"],
+  ["+445551234567", "+15551234567", "US"],
+  ["+115551234567", "+15551234567", "US"],
+  ["+15551234567junk", "+15551234567", "US"],
+  ["+16505550100 ext. 2", "+16505550100", "US"],
+  ["020 7946 0958", "+442079460958", "US"],
+  ["(650) 555-0100", "+16505550100", "GB"],
+  ["0044 20 7946 0958", "+442079460958", "US"],
+] as const) test(`card ${phone} cannot match ${handle} in ${region}`, () => {
+  assert.deepEqual(parseContacts(card(phone), handle, region), []);
+});
+
+test("national cards fail closed without an owner region; international cards still match", () => {
+  assert.deepEqual(parseContacts(card("650.555.0100"), "+16505550100"), []);
+  assert.equal(parseContacts(card("+1 (650) 555-0100"), "+16505550100")[0]?.name, "Ana Lee");
+});
+
+function ownerApi(phone: string | undefined) {
+  return { base: "https://api.plow.test", token: "agent-token", fetch: (async (url, init) => {
+    assert.equal(String(url), "https://api.plow.test/v1/agents/me");
+    assert.equal((init?.headers as Record<string, string>).Authorization, "Bearer agent-token");
+    assert.equal(init?.redirect, "error");
+    return Response.json({ line: { uid: "self" }, chats: [{ uid: "owner-dm", status: "active", participants: [
+      { type: "agent", relationship: "self", line: { uid: "self" } },
+      { type: "member", role: "owner", provider_key: phone },
+    ] }] });
+  }) as typeof fetch };
+}
+
+for (const [owner, phone, handle] of [
+  ["+16505550100", "555.123.4567", "+15551234567"],
+  ["+442079460100", "020 7946 0958", "+442079460958"],
+  ["+14165550100", "(416) 555-0101", "+14165550101"],
+] as const) test(`lookup derives the card region from owner ${owner}`, async () => {
+  const result = await lookupContact(handle, { token: "bridge-token", fetch: bridge(card(phone)), api: ownerApi(owner) });
+  assert.equal(result.found, true);
+  assert.equal("name" in result && result.name, "Ana Lee");
+});
+
+for (const owner of [undefined, "+15557654321", "6505550100", "a@b"]) test(`lookup does not infer a region from guest when owner is ${owner}`, async () => {
+  const result = await lookupContact("+16505550100", { token: "bridge-token", fetch: bridge(card("650.555.0100")), api: ownerApi(owner) });
+  assert.deepEqual(result, { found: false, handle: "+16505550100" });
+});
+
+test("a missing bridge token reports its cause without calling either service", async () => {
+  const noFetch = (async () => { assert.fail("no service should be called"); }) as typeof fetch;
+  assert.deepEqual(await lookupContact("+16505550100", { token: "", fetch: noFetch, api: { ...ownerApi("+16505550100"), fetch: noFetch } }),
+    { found: false, handle: "+16505550100", reason: "bridge-token-missing" });
+});
+
+test("a failed Mac call still reports mac-unavailable when the token exists", async () => {
+  assert.deepEqual(await lookupContact("+16505550100", { token: "tok", fetch: bridge(undefined), api: ownerApi(undefined) }),
+    { found: false, handle: "+16505550100", reason: "mac-unavailable" });
+});
+
+test("an owner identity outage never guesses national numbers but preserves international matches", async () => {
+  const api = { ...ownerApi(undefined), fetch: (async () => new Response("", { status: 503 })) as typeof fetch };
+  assert.deepEqual(await lookupContact("+16505550100", { token: "tok", fetch: bridge(card("650.555.0100")), api }),
+    { found: false, handle: "+16505550100" });
+  const international = await lookupContact("+16505550100", { token: "tok", fetch: bridge(card("+1 (650) 555-0100")), api });
+  assert.equal(international.found, true);
 });
