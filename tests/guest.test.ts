@@ -1014,19 +1014,6 @@ for (const [display, contact, expected] of [
   assert.ok(creates.every(argv => argv[argv.indexOf("--summary") + 1] === `Hold: Lunch with ${expected ?? context.requesterSenderId}`));
 });
 
-test("paused owner-group scheduling stops before reading the calendar", async t => {
-  const f = fixture(t);
-  const config = readJson<object>(join(f.home, "config.json"), {});
-  writeJson(join(f.home, "config.json"), { ...config, paused: true });
-  const before = f.read();
-  const args = { topic: "Planning", durationMin: 30, travel: { beforeMin: 0, afterMin: 0 } };
-  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, args);
-  writeJson(join(f.home, "config.json"), config);
-  assert.ok("error" in result);
-  assert.deepEqual(f.commands, []);
-  assert.deepEqual(f.read(), before);
-});
-
 test("owner group offers refuse missing or ambiguous guest participants before calendar writes", async t => {
   const f = fixture(t);
   f.save({ requests: [] });

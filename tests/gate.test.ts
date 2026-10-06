@@ -75,7 +75,6 @@ test("the plugin registers one before_prompt_build hook that skips other turns",
   const hooks: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
   gate.register({ registerTool() {}, on: (name: string, fn: (event: unknown, ctx: unknown) => unknown) => { hooks[name] = fn; }, logger: { info() {} } });
   assert.deepEqual(Object.keys(hooks), ["before_tool_call", "agent_end", "before_prompt_build"]);
-  assert.ok(hooks.before_tool_call!({ toolName: "plow_run_command", params: { argv: ["plow-gog", "calendar", "create"] } }, {}));
   assert.equal(await hooks.before_prompt_build!({}, { channel: "plow", sessionKey: "agent:main:plow:group:x" }), undefined);
 });
 

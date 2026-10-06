@@ -575,17 +575,25 @@ test("an offer waiting for the lock cannot overwrite a newer saved duration", as
   assert.equal(f.calls.filter(cmd => cmd[2] === "create").length, 1);
 });
 
-test("a pending time approval cannot book over even a saved overlap permission", async t => {
+for (const approval of [false, true]) test(`pending approval does not change explicit booking mode: timeApproval=${approval}`, async t => {
   const f = fixture(t);
   const ledger = readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] });
   ledger.requests[0]!.pendingOwner = { askedAt: new Date(now).toISOString(), start, end };
   ledger.requests[0]!.allowOverlap = [{ account, id: "conflict" }];
   writeJson(join(f.home, "ledger.json"), ledger);
   f.events.set("conflict", calendarEvent("conflict", start, end));
-  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /time approval.*busy/i);
-  assert.equal(f.read().status, "offered");
-  assert.ok(f.read().pendingOwner);
-  assert.equal(f.calls.some(c => ["create", "update"].includes(c[2]!)), false);
+  if (approval) {
+    const result = await approveTime("r_one", {}, f.options);
+    assert.equal(result.approved, false);
+    assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
+    assert.equal(f.read().status, "offered");
+    assert.ok(f.read().pendingOwner);
+    assert.equal(f.calls.some(c => ["create", "update"].includes(c[2]!)), false);
+  } else {
+    const result = await calendarAction("r_one", { action: "book", start }, f.options);
+    assert.equal(result.request.status, "booked");
+    assert.deepEqual(result.request.allowOverlap, [{ account, id: "conflict" }]);
+  }
 });
 
 for (const busy of [false, true]) test(`time approval without a pending ask ${busy ? "refuses busy time" : "books a free time"}`, async t => {
