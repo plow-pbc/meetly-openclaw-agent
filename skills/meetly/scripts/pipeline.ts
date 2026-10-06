@@ -49,7 +49,7 @@ export function pipeline(ledger: Ledger, now: number, unresolved: readonly strin
       state = "waiting_on_owner"; reason = "owner-decision"; since = request.createdAt;
       detail = "Want me to offer times?";
     } else {
-      const offeredAt = request.status === "offered" ? request.offeredAt : request.status === "booked" ? request.reoffer?.offeredAt : undefined;
+      const offeredAt = ["offered", "booked"].includes(request.status) && request.offered.length ? request.offeredAt : undefined;
       if (!offeredAt) return [];
       since = offeredAt; state = "waiting_on_them";
       const replied = request.lastGuestReplyAt !== undefined && Date.parse(request.lastGuestReplyAt) >= Date.parse(offeredAt);

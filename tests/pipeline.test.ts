@@ -70,7 +70,7 @@ test("one reserved batch contains stale offers and owner asks, without repeat af
 
 test("a new offer or owner question gets a new fingerprint; resolved states disappear", () => {
   let ledger = reserveNudges(mixed(), T0 + 25 * HOUR).ledger;
-  ledger = updateRequest(ledger, "question", { pendingOwner: null, status: "booked", booked: { ...offer } }, T0 + 26 * HOUR);
+  ledger = updateRequest(ledger, "question", { pendingOwner: null, status: "booked", offered: [], booked: { ...offer } }, T0 + 26 * HOUR);
   ledger = updateRequest(ledger, "asked", { status: "dropped" }, T0 + 26 * HOUR);
   ledger = saveRequest(ledger, { ...input, offered: [{ ...offer, start: "2026-10-09T12:00:00Z", end: "2026-10-09T12:30:00Z" }] }, T0 + 26 * HOUR, "ignored");
   assert.deepEqual(pipeline(ledger, T0 + 26 * HOUR).map(item => item.id), ["offer"]);
@@ -91,12 +91,12 @@ test("unresolved calendar writes appear in the view but only reconciliation owns
 
 test("a booked replacement ages from its own offer and prior guest replies do not suppress it", () => {
   let ledger = recordGuestReply(offered(), "Chat-A", input.handle, T0 + HOUR);
-  ledger = updateRequest(ledger, "offer", { status: "booked", booked: { ...offer } }, T0 + HOUR);
+  ledger = updateRequest(ledger, "offer", { status: "booked", offered: [], booked: { ...offer } }, T0 + HOUR);
   assert.deepEqual(pipeline(ledger, T0 + 30 * HOUR), []);
-  ledger = updateRequest(ledger, "offer", { reoffer: { offered: [offer], offeredAt: iso(T0 + 30 * HOUR) } }, T0 + 30 * HOUR);
+  ledger = updateRequest(ledger, "offer", { offered: [offer] }, T0 + 30 * HOUR);
   assert.equal(pipeline(ledger, T0 + 53 * HOUR)[0]!.nudge, false);
   assert.equal(pipeline(ledger, T0 + 54 * HOUR)[0]!.reason, "stale-offer");
-  ledger = updateRequest(ledger, "offer", { reoffer: null }, T0 + 55 * HOUR);
+  ledger = updateRequest(ledger, "offer", { offered: [] }, T0 + 55 * HOUR);
   assert.deepEqual(pipeline(ledger, T0 + 55 * HOUR), []);
 });
 
@@ -160,7 +160,7 @@ test("a never-scheduled contact's flag stays in a closed ledger record without p
 test("request logs record lifecycle and owner handoffs, survive replacement, and stay short", () => {
   let ledger = updateRequest(offered(), "offer", { pendingOwner: { question: "Lunch?", askedAt: iso(T0 + HOUR) } }, T0 + HOUR);
   ledger = saveRequest(ledger, input, T0 + 2 * HOUR, "ignored");
-  ledger = updateRequest(ledger, "offer", { pendingOwner: null, status: "booked", booked: { ...offer } }, T0 + 3 * HOUR);
+  ledger = updateRequest(ledger, "offer", { pendingOwner: null, status: "booked", offered: [], booked: { ...offer } }, T0 + 3 * HOUR);
   assert.match(request(ledger).log!.map(entry => entry.text).join("\n"), /Request offered.*Waiting for owner answer.*Times offered.*Request booked; Owner question resolved/s);
   let r: Request = request(ledger);
   for (let i = 0; i < 30; i++) r = appendLog(r, `Change ${i}`, T0 + i);

@@ -29,7 +29,20 @@ group and clears the pending item only after the send succeeds. If delivery is u
 tell the owner; do not resend. Only if the owner explicitly authorizes a retry, run
 `ledger.ts delivery --id <id> --kind answer --action clear` first.
 
-- **Question (`pendingOwner.question`):** `text` is Meetly relaying the owner's answer.
+- **Exhausted search (`pendingOwner.alternatives`):** an owner yes starts a fresh
+  alternative search before answering. Read the calendar and search with `slots.ts
+  --request <id>`, preserving saved conditions, excluded weekdays, meal and duration.
+  If the owner explicitly changes dates or the time window, search with those revised
+  conditions and omit `--request`, which would intersect the old bounds again.
+  A bare yes authorizes the search, not loosening saved conditions.
+  Pass each `previousStarts` value as `--exclude` so rejected times are not offered again.
+  Hold the returned times with `calendar.ts offer --id <id>`, including the authorized
+  constraints and the request's other saved fields; do not update the ledger first.
+  Only after successful holds call `meetly_answer_owner` with `outcome:"calendar_change"`
+  and their labels as the selection question; it sends the offer once even in the same group. If no times fit or a write is
+  unresolved, leave the decision pending and tell the owner. If the owner declines,
+  call the answer tool with `outcome:"answer"`, `declineAlternatives:true` and their refusal; retain the existing offer.
+- **Question (`pendingOwner.question`, without `alternatives`):** `text` is Meetly relaying the owner's answer.
   Apply any requested calendar change first. On failure or an unresolved write, leave the question pending. For a successful change set `outcome: "calendar_change"`: the tool delivers the confirmed result even in the same group. Otherwise set `outcome: "answer"`; in the same group the tool clears silently without
   sending or acknowledging; after `silent: true`, output nothing. If the owner answers
   a different question already visible in the group, leave the unrelated pending
@@ -43,7 +56,7 @@ tell the owner; do not resend. Only if the owner explicitly authorizes a retry, 
     pending approval exists, otherwise to the saved group. If already booked, relay it without booking again.
   - `code: TIME_APPROVAL_BUSY`: tell the owner in their DM that the time is busy.
     Read fresh busy time, run `slots.ts --near <near> --request <id> --no-overlap`,
-    hold the returned times with `calendar.ts offer` and deliver them with
+    hold the returned times with `calendar.ts offer --id <id> --json '<request with offered slots>'` and deliver them with
     `meetly_answer_owner`, as "an existing commitment" to guests. If there are no
     slots, tell the owner and leave the current offer intact.
 - **No:** use `meetly_answer_owner` to tell the group that time doesn't work
@@ -73,7 +86,7 @@ Without an owner scheduling ask, on your first reply introduce yourself as
 guest to identify a request. Larger groups are out of scope.
 
 The owner can authorize a time outside the meeting window; conflict overrides require their DM.
-For other times, follow "Offer times" with the saved conditions and the owner's changes.
+For other times on a booked meeting, follow "Changes after booking" below; use its saved id. For an open request, follow "Offer times" with the saved conditions and the owner's changes.
 **Format or place after booking:** for a format/place change, run `calendar.ts format --id <id> --json '<format/location>'`.
 After a format/place change, tell the guest the new format/place once: with a pending question use `meetly_answer_owner` and `outcome: "calendar_change"`; otherwise reply in the meeting thread, using `plow_reply_to` from the owner DM.
 Do not acknowledge completion in the DM before guest delivery.
@@ -103,10 +116,10 @@ Flagged contacts need the private confirmation in `meetly-pipeline`, then
   It keeps the owner's conditions and excludes this request's event and holds
   from busy time. Run `calendar.ts offer --id <id> --json '<request with replacement offered slots>'`,
   carrying the saved request fields listed in "Offer times". The writer saves
-  `reoffer.offered` and its hold timestamp, leaving the booked event untouched.
+  `offered` and its hold timestamp, leaving the booked event untouched.
   Show all returned replacement slots in the same group, even if the requested
   preferences could not be met. Never say no other day is available while
-  `reoffer.offered` contains held times. If none work, retain the booking.
+  `offered` contains held times. If none work, retain the booking.
 - **Move to a selected time:** read the calendar and check with
   `slots.ts --request <id> --at <start>`. Then run `calendar.ts book --id <id>
   --json '{"start":"<slot.start>","end":"<slot.end>"}'`. Do not supply attendees
@@ -115,7 +128,7 @@ Flagged contacts need the private confirmation in `meetly-pipeline`, then
   otherwise say the calendar event moved, without claiming an invitation.
   The writer releases every replacement hold after committing the move.
 - **Cancel:** run `calendar.ts cancel --id <id>`. It records `dropped`, clears
-  the reoffer and pending question, and deletes the event with `sendUpdates: "all"`.
+  the offer and pending question, and deletes the event with `sendUpdates: "all"`.
   If `holdCleanup` is nonempty, report pending cancellation/hold cleanup rather
   than claiming that every calendar deletion finished.
 

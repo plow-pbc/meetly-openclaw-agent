@@ -65,7 +65,7 @@ Notes:
 - Displayed pipeline times and history labels use `localeFormatter` in the owner's
   configured timezone. `--locale` chooses their language tag (default en-US).
   Raw timestamps in items and reservations are machine data, not display text.
-- A booked request may have `reoffer: {offered, offeredAt}`. Expiry releases only
+- A booked request may have replacement `offered` times and `offeredAt`. Expiry releases only
   those replacement holds; the original event remains until a move or cancellation.
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
   `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-confirm`.
