@@ -17,9 +17,11 @@ const STRIPPED = "replace(replace(replace(replace(replace(replace(p.ZFULLNUMBER,
 
 // Lines `R|id|first|last|org`, `P|id|number`, `E|id|email` for candidate cards;
 // suffix SQL only narrows the search, parseContacts requires canonical equality.
+// Four digits: the shortest complete national number any region allows (#51),
+// so a card saved without its country code is still a candidate.
 export function contactQuery(handle: string): string {
   handle = normalizeHandle(handle);
-  const phone = handle.startsWith("+") ? handle.slice(1).slice(-8) : "";
+  const phone = handle.startsWith("+") ? handle.slice(1).slice(-4) : "";
   const email = phone ? "" : handle.replaceAll("'", "''");
   const match = phone
     ? `select p.ZOWNER from ZABCDPHONENUMBER p where ${STRIPPED} like '%${phone}'`

@@ -7,9 +7,12 @@ test("contact queries accept canonical ledger handles", () => {
   for (const h of ["11 99999-0000", "ana", "x' or 1=1 --@a.b"]) assert.throws(() => contactQuery(h), /E\.164/, h);
 });
 
-test("the query filters on the handle's last eight digits and never reads notes or addresses", () => {
+test("the query filters on the handle's last four digits and never reads notes or addresses", () => {
   const q = contactQuery("+5547992547532");
-  assert.match(q, /like '%92547532'/);
+  assert.match(q, /like '%7532'/);
+  // A complete national number shorter than eight digits (Iceland's 555 1234) stays a candidate.
+  const suffix = /like '%(\d+)'/.exec(contactQuery("+3545551234"))![1]!;
+  assert.ok("5551234".endsWith(suffix), suffix);
   assert.doesNotMatch(q, /ZNOTE|ZABCDPOSTALADDRESS/);
   assert.match(contactQuery(" Ana@Example.com "), /lower\(e\.ZADDRESS\) = 'ana@example\.com'/);
   assert.match(contactQuery("o'brien@example.com"), /lower\(e\.ZADDRESS\) = 'o''brien@example\.com'/);
@@ -37,23 +40,25 @@ test("phone candidates match only the full canonical handle across stores", () =
   assert.deepEqual(people, [{ name: "Ana Souza", phones: ["+55 (47) 99254-7532", "+55 11 3333-0000"], emails: ["ana@example.com"] }]);
 });
 
-test("a card saved without a country code matches in the Mac's region (#51)", () => {
-  const card = (number: string) => `L|en_US\nS|0\nR|4|Ana|Lee|\nP|4|${number}\n`;
-  for (const number of ["555.123.4567", "(555) 123-4567", "1-555-123-4567"]) {
-    assert.deepEqual(parseContacts(card(number), "+15551234567").map(p => p.name), ["Ana Lee"], number);
-  }
-  // Each region's own trunk prefix: the UK drops its 0, Italy keeps it.
-  assert.equal(parseContacts("L|en_GB\nS|0\nR|5|Tom|Hale|\nP|5|07700 900123\n", "+447700900123").length, 1);
-  assert.equal(parseContacts("L|it_IT\nS|0\nR|6|Gia|Neri|\nP|6|06 1234 5678\n", "+390612345678").length, 1);
-  assert.equal(parseContacts("L|en_US@rg=gbzzzz\nS|0\nR|5|Tom|Hale|\nP|5|07700 900123\n", "+447700900123").length, 1);
-});
-
-test("a national number never matches a partial, another country, or an unknown region", () => {
-  assert.deepEqual(parseContacts("L|en_US\nS|0\nR|4|Ana|Lee|\nP|4|123-4567\n", "+15551234567"), []);
-  assert.deepEqual(parseContacts("L|en_US\nS|0\nR|5|Tom|Hale|\nP|5|7700 900123\n", "+447700900123"), []);
-  assert.deepEqual(parseContacts("S|0\nR|4|Ana|Lee|\nP|4|555.123.4567\n", "+15551234567"), []);
-  assert.deepEqual(parseContacts("L|en\nS|0\nR|4|Ana|Lee|\nP|4|555.123.4567\n", "+15551234567"), []);
-  assert.deepEqual(parseContacts("L|en_US\nS|0\nR|4|Ana|Lee|\nP|4|555.123.4567 ext 2\n", "+15551234567"), []);
+// A card saved without its country code reads in the Mac's region (#51): with or
+// without that region's trunk prefix, and never as a partial, another country's
+// number, or in an unknown region.
+for (const [locale, number, handle, names] of [
+  ["en_US", "555.123.4567", "+15551234567", ["Ana"]],
+  ["en_US", "(555) 123-4567", "+15551234567", ["Ana"]],
+  ["en_US", "1-555-123-4567", "+15551234567", ["Ana"]],
+  ["en_GB", "07700 900123", "+447700900123", ["Ana"]],
+  ["it_IT", "06 1234 5678", "+390612345678", ["Ana"]],
+  ["en_US@rg=gbzzzz", "07700 900123", "+447700900123", ["Ana"]],
+  ["en_IS", "555 1234", "+3545551234", ["Ana"]],
+  ["en_US", "123-4567", "+15551234567", []],
+  ["en_US", "7700 900123", "+447700900123", []],
+  [undefined, "555.123.4567", "+15551234567", []],
+  ["en", "555.123.4567", "+15551234567", []],
+  ["en_US", "555.123.4567 ext 2", "+15551234567", []],
+] as const) test(`national number ${number} in ${locale ?? "no region"} → ${names.length ? "match" : "no match"}`, () => {
+  const out = `${locale === undefined ? "" : `L|${locale}\n`}S|0\nR|4|Ana||\nP|4|${number}\n`;
+  assert.deepEqual(parseContacts(out, handle).map(p => p.name), names);
 });
 
 test("organization stands in for a card without a person's name", () => {
