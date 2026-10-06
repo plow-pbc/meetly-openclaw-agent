@@ -208,7 +208,7 @@ message is skipped.
   The model decides; the scripts count.
 - **State.** `/var/lib/plow/meetly`: `config.json` (your setup),
   `cursor.json` (last message read), `ledger.json` (requests, offered times,
-  hold ids). Writes are atomic and locked.
+  hold ids, blocked canonical handles; `contactApproved` applies only to its request). Writes are atomic and locked.
 
 ## Model
 

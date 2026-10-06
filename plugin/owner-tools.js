@@ -1,3 +1,4 @@
+import { guestTurns } from "./guest-turn.js";
 import { cleanArgs, constraints as guestConstraints, sendPlowMessage } from "./guest-tools.js";
 
 const constraints = { ...guestConstraints, properties: { ...guestConstraints.properties,
@@ -34,17 +35,17 @@ export function registerOwnerTools(api, execute = run, outbound) {
   }));
 }
 
-const runGroup = async (context, args) => {
+const runGroup = async (context, args, sendOwner) => {
   const { offerOwnerGroup } = await import("/opt/plow/skills/meetly/scripts/owner-group.ts");
-  return offerOwnerGroup(context, args);
+  return offerOwnerGroup(context, args, sendOwner);
 };
 
-export function registerOwnerGroupTool(api, execute = runGroup) {
+export function registerOwnerGroupTool(api, execute = runGroup, outbound) {
   const required = ["topic", "durationMin", "introduction"];
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
-    description: "Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group. For this/next week supply week, not computed dates. For earliest available starts supply asap:true. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals, guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread; participants determine identity. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless the owner requests a change. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Reply here using the returned askDetails flag. If this is your first reply in this group, introduce yourself as \"<agentName>, <ownerName>'s scheduling assistant\" in their language with the offer. An earlier introduction-only reply already counts; after that, give just the offer without introducing yourself again. Owner only.",
+    description: "Group-only: never use in the owner's DM. If silent is true, output nothing in the group and do not send another message or retry: the tool handles private coordination. Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group. For this/next week supply week, not computed dates. For earliest available starts supply asap:true. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals, guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread; participants determine identity. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless the owner requests a change. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Reply here using the returned askDetails flag. If this is your first reply in this group, introduce yourself as \"<agentName>, <ownerName>'s scheduling assistant\" in their language with the offer. An earlier introduction-only reply already counts; after that, give just the offer without introducing yourself again. Owner only.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
       introduction: { type: "string", enum: ["needed", "already_introduced"], description: "Read prior assistant messages. An earlier introduction-only reply counts; choose needed only when no introduction has been given here." },
       week: { type: "string", enum: ["this", "next"] },
@@ -56,17 +57,21 @@ export function registerOwnerGroupTool(api, execute = runGroup) {
       location: string, locale: string,
     } },
     async execute(_id, args) {
-      const { introduction, ...request } = cleanArgs(args, required);
-      if (!["needed", "already_introduced"].includes(introduction)) {
-        return { isError: true, content: [{ type: "text", text: "Choose introduction: needed or already_introduced from this conversation's prior replies before offering times." }] };
+      {
+        const { introduction, ...request } = cleanArgs(args, required);
+        if (!["needed", "already_introduced"].includes(introduction)) {
+          return { isError: true, content: [{ type: "text", text: "Choose introduction: needed or already_introduced from this conversation's prior replies before offering times." }] };
+        }
+        const result = await execute(context, request, text => guestTurns.sendOnce(context.sessionKey,
+          () => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound)));
+        return { isError: "error" in result, content: [
+          { type: "text", text: JSON.stringify(result) },
+          ...(result.silent ? [{ type: "text", text: "Finish with exactly NO_REPLY. The tool has finished; do not call this tool again to correct names or resend, and do not send another message." }] : []),
+          ...(!result.silent && !result.error && result.offered?.length ? [{ type: "text", text: introduction === "already_introduced"
+            ? "Do not introduce yourself or repeat your role. You already introduced yourself in this conversation. Reply only with the scheduling offer and selection question."
+            : "Introduce yourself once as the owner's scheduling assistant, then present the offer and selection question." }] : []),
+        ], details: result };
       }
-      const result = await execute(context, request);
-      return { isError: "error" in result, content: [
-        { type: "text", text: JSON.stringify(result) },
-        ...(!result.error && result.offered?.length ? [{ type: "text", text: introduction === "already_introduced"
-          ? "Do not introduce yourself or repeat your role. You already introduced yourself in this conversation. Reply only with the scheduling offer and selection question."
-          : "Introduce yourself once as the owner's scheduling assistant, then present the offer and selection question." }] : []),
-      ], details: result };
     },
   }));
 }
@@ -94,8 +99,7 @@ export function registerOwnerDmTool(api, execute = runDm) {
     } },
     async execute(_id, args) {
       let result;
-      if (context.messageChannel !== "plow" || context.agentAccountId !== "chat" || context.senderIsOwner !== true ||
-        !context.requesterSenderId || context.sessionKey !== "agent:main:main") {
+      if (!isOwnerMainDm(context)) {
         result = { error: "Only the owner's main Plow DM can authorize an overlap offer." };
       } else if ("durationMin" in (args ?? {})) {
         result = { error: "Set durationMin on the saved request, not on meetly_offer_owner_dm." };
@@ -106,4 +110,36 @@ export function registerOwnerDmTool(api, execute = runDm) {
       return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   }));
+}
+
+const runContact = async (action, args) => {
+  const policy = await import("/opt/plow/skills/meetly/scripts/contact-policy.ts");
+  return action === "preference" ? policy.contactPreference(args) : policy.confirmContactOffer(args);
+};
+
+export function registerContactTools(api, execute = runContact) {
+  const string = { type: "string" };
+  for (const [name, action, description, properties, required] of [
+    ["meetly_contact_preference", "preference", "Set or clear a do-not-contact preference only on the owner's explicit main-DM instruction. Resolve the exact handle first. Never use in a group.",
+      { handle: string, blocked: { type: "boolean" } }, ["handle", "blocked"]],
+    ["meetly_confirm_contact", "confirm", "Offer times for a saved flagged request only after the owner explicitly confirms contact in their main DM. Read the saved pendingOwner.contact and search matching times first. Preserves the contact flag and saved group chat. The confirmation applies only to this request. Never use in a group.",
+      { requestId: string, offered: { type: "array", minItems: 1, maxItems: 3, items: { type: "object", additionalProperties: false, required: ["start", "end"], properties: { start: string, end: string } } } }, ["requestId", "offered"]],
+  ]) api.registerTool(context => ({
+    name, label: name, description,
+    parameters: { type: "object", additionalProperties: false, required, properties },
+    async execute(_id, args) {
+      let result;
+      if (!isOwnerMainDm(context)) result = { error: "Only the owner's main Plow DM can change contact authorization." };
+      else {
+        try { result = await execute(action, cleanArgs(args, required)); }
+        catch (error) { result = { error: error instanceof Error ? error.message : "Contact action failed." }; }
+      }
+      return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  }));
+}
+
+function isOwnerMainDm(context) {
+  return context.messageChannel === "plow" && context.agentAccountId === "chat" && context.senderIsOwner === true &&
+    !!context.requesterSenderId && context.sessionKey === "agent:main:main";
 }

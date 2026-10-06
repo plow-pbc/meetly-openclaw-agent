@@ -1,4 +1,4 @@
-import { requestEvents, recordDelivery, updateRequest, type Constraints, type Ledger } from "./ledger.ts";
+import { sameRequest, recordDelivery, updateRequest, type Ledger } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
@@ -18,12 +18,10 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (!["answer", "calendar_change", "decline_alternatives"].includes(args.outcome ?? "")) return { error: "Choose outcome: answer, calendar_change after a successful calendar write, or decline_alternatives for a refused alternative search." };
   const path = file("ledger.json");
   const ledger = readJson<Ledger>(path, { requests: [] });
-  const saved = ledger.requests.find(r => r.id === args.requestId);
-  let pending = saved?.pendingOwner;
-  if (!saved?.chatUid || !pending || pending.askedAt !== args.askedAt
-    || !["offered", "booked"].includes(saved.status)) return { error: "No matching pending meeting question. Read the pending requests again." };
-  let request = saved;
-  let text = args.text.trim();
+  const request = ledger.requests.find(r => r.id === args.requestId);
+  let pending = request?.pendingOwner;
+  if (!request?.chatUid || !pending || "contact" in pending || pending.askedAt !== args.askedAt
+    || !["offered", "booked"].includes(request.status)) return { error: "No matching pending meeting question. Read the pending requests again." };
   const inGroup = chat === request.chatUid;
   if (ctx.sessionKey !== "agent:main:main" && !inGroup) {
     return { error: "Answer from the owner's main DM or this request's group." };
@@ -67,9 +65,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (!alreadyVisible) {
     try {
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {
-        const current = latest.requests.find(r => r.id === request.id);
-        if (JSON.stringify(current?.pendingOwner) !== JSON.stringify(pending)) throw new Error("pending question changed");
-        if (JSON.stringify(current) !== JSON.stringify(request)) throw new Error("request changed");
+        if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed");
         return recordDelivery(latest, request.id, "answer", "begin", Date.now());
       });
       pending = begun.requests.find(r => r.id === request.id)!.pendingOwner!;
