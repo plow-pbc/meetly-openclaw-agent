@@ -83,3 +83,11 @@ test("refuses a cancelled event, another event for a booked request, a closed re
   assert.throws(() => recordBooking(offered(), "nope", meetEvent(), ACCOUNT, T0), /no request nope/);
   assert.throws(() => recordBooking(offered(), "r_1", meetEvent(), "", T0), /account/);
 });
+
+for (const alternatives of [false, true]) test(`booking clears only obsolete alternative decisions: alternatives=${alternatives}`, () => {
+  const pending = { question: "Can we find another time?", askedAt: new Date(T0).toISOString(),
+    ...(alternatives ? { alternatives: { previousStarts: [offer.start] } } : {}) };
+  const ledger = updateRequest(offered(), "r_1", { pendingOwner: pending }, T0);
+  const result = recordBooking(ledger, "r_1", meetEvent(), ACCOUNT, T0).ledger.requests[0]!;
+  assert.deepEqual(result.pendingOwner, alternatives ? undefined : pending);
+});
