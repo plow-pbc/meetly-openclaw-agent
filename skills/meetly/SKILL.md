@@ -25,7 +25,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `reminders [--lead-min N]` | `{requests}`: booked Meets whose link is due (default 10 min before, until 5 min after the start) |
 | `event.ts` | `--in F` | `{id, status, start, end, meetUrl}` from a saved calendar event read |
 | `calendar.ts` | `offer --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer; uses explicit, then saved, then meal-default or configured `durationMin`; requires matching intervals; retains an existing offer on failure; drops a failed new request while retaining cleanup |
-| | `book --id X --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, meetUrl, warning?:"no-meet-link"}`: book and release the other holds |
+| | `book --id X --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, confirmationTime, meetUrl, warning?:"no-meet-link"}`: book and release the other holds |
 | | `format --id X --json '{"format":"meet", "location":"<optional place>"}'` | save format/location on an offered request, or update and record a booked event; both use the calendar lock |
 | | `duration --id X --json '{"durationMin":60,"topic":"…","offered":[{"start":"…","end":"…"}]}'` | `{request}`: atomically replace duration, topic and holds on an open request |
 | | `resume-pending` | `{results:[{id, request?, error?}]}`: resume all pending writes, continuing past individual failures |

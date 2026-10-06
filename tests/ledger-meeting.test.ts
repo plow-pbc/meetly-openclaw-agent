@@ -45,6 +45,7 @@ test("a format that is not one of the four is refused on add and update", () => 
 test("locale is stored, and must be a short tag", () => {
   assert.equal(addRequest(empty(), input({ locale: "pt-BR" }), T0, "r_1").requests[0]!.locale, "pt-BR");
   assert.throws(() => addRequest(empty(), input({ locale: "" }), T0, "r_1"), /locale/);
+  assert.throws(() => addRequest(empty(), input({ locale: "en_US" }), T0, "r_1"), /language tag/i);
   assert.throws(() => addRequest(empty(), input({ locale: "x".repeat(36) }), T0, "r_1"), /locale/);
   assert.throws(() => addRequest(empty(), input({ locale: 5 }), T0, "r_1"), /locale/);
 });
@@ -67,6 +68,7 @@ test("update sets format, locale, booked, meetUrl and reminder", () => {
   assert.equal(r.meetUrl, MEET);
   assert.deepEqual(r.reminder, { at: new Date(T0).toISOString(), outcome: "sent" });
   assert.equal(updateRequest(l, "r_1", { locale: "en-US" }, T0).requests[0]!.locale, "en-US");
+  assert.throws(() => updateRequest(l, "r_1", { locale: "en_US" }, T0), /language tag/i);
 });
 
 test("meetUrl only takes a Google Meet link", () => {
