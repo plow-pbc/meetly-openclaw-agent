@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { join, resolve } from "node:path";
 import { readFileSync, rmSync } from "node:fs";
 import { registerPipelineHooks } from "../plugin/pipeline.js";
-import { addRequest, appendLog, checkContact, doNotContact, recordGuestReply, sameRequest, saveRequest, setDoNotContact, updateRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
+import { addRequest, checkContact, doNotContact, recordGuestReply, sameRequest, saveRequest, setDoNotContact, updateRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { pipeline, reserveNudges, STALE_OFFER_MS } from "../skills/meetly/scripts/pipeline.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
@@ -154,20 +154,8 @@ test("a never-scheduled contact's flag stays in a closed ledger record without p
   assert.equal(ledger.requests[0]!.status, "dropped");
   assert.equal(doNotContact(ledger, "alice@example.com"), true);
   assert.deepEqual(pipeline(ledger, T0), []);
-  assert.deepEqual(ledger.requests[0]!.log, [{ at: iso(T0), text: "Do not contact enabled" }]);
 });
 
-test("request logs record lifecycle and owner handoffs, survive replacement, and stay short", () => {
-  let ledger = updateRequest(offered(), "offer", { pendingOwner: { question: "Lunch?", askedAt: iso(T0 + HOUR) } }, T0 + HOUR);
-  ledger = saveRequest(ledger, input, T0 + 2 * HOUR, "ignored");
-  ledger = updateRequest(ledger, "offer", { pendingOwner: null, status: "booked", offered: [], booked: { ...offer } }, T0 + 3 * HOUR);
-  assert.match(request(ledger).log!.map(entry => entry.text).join("\n"), /Request offered.*Waiting for owner answer.*Times offered.*Request booked; Owner question resolved/s);
-  let r: Request = request(ledger);
-  for (let i = 0; i < 30; i++) r = appendLog(r, `Change ${i}`, T0 + i);
-  assert.equal(r.log!.length, 20);
-  assert.equal(r.log![0]!.text, "Change 10");
-  assert.equal(r.log!.at(-1)!.at, iso(T0 + 29));
-});
 
 test("CLI prints a readable pending view and one durable batch even with overlapping polls", async t => {
   const f = fixture(t);
@@ -192,15 +180,14 @@ test("CLI skips unresolved writes and suppressed inbound saves can release the p
   writeJson(f.path, mixed(Date.now() - 25 * HOUR));
   writeJson(join(f.home, "calendar", "offer.json"), { id: "pending" });
   assert.ok(!cli("pipeline.ts", ["nudge"], f.env).json.items.some((item: { id: string }) => item.id === "offer"));
-  const blocked = cli("pipeline.ts", ["contact", "--handle", input.handle, "--blocked", "true"], f.env);
-  assert.equal(blocked.status, 0, blocked.stderr);
+  writeJson(f.path, setDoNotContact(readJson<Ledger>(f.path, empty()), input.handle, true, T0));
   cli("cursor.ts", ["hold", "12"], f.env);
   const save = cli("ledger.ts", ["save", "--json", JSON.stringify({ ...input, origin: "inbound", status: "asked", chatUid: undefined, offered: [], sourceRowid: 12 })], f.env);
   assert.deepEqual(save.json, { skipped: "do-not-contact" });
   assert.equal(save.status, 0);
   cli("cursor.ts", ["release"], f.env);
   assert.equal(cli("cursor.ts", ["set", "12"], f.env).json.rowid, 12);
-  assert.equal(cli("pipeline.ts", ["contact", "--handle", input.handle, "--blocked", "false"], f.env).json.doNotContact, false);
+  assert.equal(cli("pipeline.ts", ["contact", "--handle", input.handle], f.env).json.doNotContact, true);
 });
 
 test("calendar CLI refuses flagged owner requests before any calendar or ledger mutation", t => {
@@ -252,9 +239,19 @@ test("owner-facing pipeline times use localeFormatter in the configured owner zo
   assert.equal(nudge.status, 0, nudge.stderr);
   assert.ok(nudge.json.text.includes(format.format(new Date(T0))));
   assert.doesNotMatch(nudge.json.text, /\d{4}-\d{2}-\d{2}T/);
-  assert.ok(view.json.items[0].log[0].label.includes(format.format(new Date(T0))));
   const localized = cli("pipeline.ts", ["view", "--locale", "pt-BR"], f.env);
   assert.equal(localized.status, 0, localized.stderr);
   assert.ok(localized.json.text.includes(localeFormatter("pt-BR", "America/Los_Angeles").format(new Date(T0))));
   t.diagnostic(view.json.text);
+});
+
+test("raw CLI cannot clear contact policy or confirm a contact offer", t => {
+  const f = fixture(t);
+  const ledger = setDoNotContact(offered(), input.handle, true, T0);
+  writeJson(f.path, ledger);
+  const clear = cli("pipeline.ts", ["contact", "--handle", input.handle, "--blocked", "false"], f.env);
+  assert.equal(clear.status, 1);
+  const confirm = cli("calendar.ts", ["offer", "--confirm-contact", "--json", JSON.stringify(input)], f.env);
+  assert.equal(confirm.status, 1);
+  assert.deepEqual(readJson(f.path, empty()), JSON.parse(JSON.stringify(ledger)));
 });

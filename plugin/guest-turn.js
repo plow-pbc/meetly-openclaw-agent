@@ -8,6 +8,12 @@ export function createGuestTurns() {
         turns.set(ctx.sessionKey, { runId: ctx.runId, startedAt: Date.now() });
       }
     },
+    async sendOnce(sessionKey, send) {
+      const turn = turns.get(sessionKey);
+      if (!turn) throw new Error("Owner turn context unavailable");
+      turn.attempt ??= Promise.resolve().then(send);
+      await turn.attempt;
+    },
     take(sessionKey) { return turns.get(sessionKey)?.startedAt; },
     reply(sessionKey, action, result) {
       const turn = turns.get(sessionKey);

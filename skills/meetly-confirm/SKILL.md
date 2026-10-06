@@ -110,7 +110,7 @@ anything. From the group, use `ledger.ts find --chat <this chat uid>`.
 Use that request's id and recorded `chatUid`; never start another request or group.
 Before owner-requested offers or moves, run `pipeline.ts contact --handle <handle>`.
 Flagged contacts need the private confirmation in `meetly-pipeline`, then
-`--confirm-contact`. Cancellation remains allowed.
+`meetly_confirm_contact` with that saved request id and searched slots. Cancellation remains allowed.
 
 - **Other times:** read the calendar and search with `slots.ts --request <id>`.
   It keeps the owner's conditions and excludes this request's event and holds

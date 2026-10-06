@@ -3,6 +3,7 @@ import { test, type TestContext } from "node:test";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
+import { confirmContactOffer } from "../skills/meetly/scripts/contact-policy.ts";
 import { approveTime, calendarAction, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
 import { setDoNotContact, addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { macOutcome, type MacCommand, type MacOutcome } from "../skills/meetly/scripts/mac.ts";
@@ -811,9 +812,13 @@ test("a flagged owner offer requires explicit confirmation and retains the conta
   writeJson(path, setDoNotContact(readJson<Ledger>(path, { requests: [] }), f.input.handle, true, now));
   await assert.rejects(offerRequest(f.offer, f.options), /Confirm in the owner's DM/);
   assert.deepEqual(f.calls, [], "no calendar operation before confirmation");
-  const result = await offerRequest(f.offer, { ...f.options, confirmContact: true });
+  const result = await confirmContactOffer({ requestId: "r_one", offered: f.offer.offered }, f.options);
   assert.equal(result.request.doNotContact, true);
   assert.ok(f.calls.some(c => c[2] === "create"));
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  assert.equal(f.read().status, "booked");
+  writeJson(path, setDoNotContact(readJson<Ledger>(path, { requests: [] }), f.input.handle, true, now));
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, f.options), /Confirm in the owner's DM/);
 });
 
 test("booking consumes overlap permission before any later move", async t => {
@@ -851,4 +856,19 @@ test("an owner replacement commits revised conditions on the booked request", as
   assert.deepEqual(f.read().constraints, revised);
   assert.deepEqual(f.read().booked, booked);
   assert.equal(readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] }).requests.length, 1);
+});
+
+for (const action of ["offer", "duration", "book"] as const) test(`contact policy blocks direct ${action} before calendar effects`, async t => {
+  const f = fixture(t);
+  const path = join(f.home, "ledger.json");
+  writeJson(path, setDoNotContact(readJson<Ledger>(path, { requests: [] }), f.input.handle, true, now));
+  const before = fs.readFileSync(path, "utf8");
+  const input = action === "offer" ? { action, request: f.offer }
+    : action === "duration" ? { action, durationMin: 30, topic: "Call", offered: f.offer.offered }
+    : { action, start };
+  await assert.rejects(calendarAction("r_one", input, f.options), /Confirm in the owner's DM/);
+  assert.deepEqual(f.calls, []);
+  assert.equal(fs.readFileSync(path, "utf8"), before);
+  await calendarAction("r_one", { action: "cancel" }, f.options);
+  assert.equal(f.read().status, "dropped", "contact policy must leave cancellation reachable");
 });

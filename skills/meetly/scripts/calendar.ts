@@ -24,7 +24,7 @@ export type CalendarAction =
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
 type Step = { verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
 type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" }>; steps: Step[]; failed?: boolean };
-export type CalendarOptions = { confirmContact?: boolean; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+export type CalendarOptions = { validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
 class TimeApprovalBusy extends Error {
   constructor() { super("Time approval cannot book a busy slot; no overlap was authorized."); }
 }
@@ -148,6 +148,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
     let request = requestById(id);
     let input: CalendarAction = action;
     options.validate?.(request);
+    if (["offer", "duration", "book"].includes(input.action)) checkContact(ledger(), request.handle, request.contactConfirmed);
+    if (input.action === "offer" && ("contactConfirmed" in input.request || "pendingContact" in input.request)) throw new Error("Contact authorization requires the owner DM tool.");
     if (intent && request.calendarRevision === intent.id) { rmSync(journal); intent = undefined; }
     if (intent && input.action !== "resume") throw new Error(`calendar operation unresolved for ${id}; run resume first`);
     if (!intent) {
@@ -248,6 +250,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (step.skipped) continue;
       if (step.output !== undefined) { checkedEvent(step); continue; }
       if (step.sentAt === undefined && !intent.failed) {
+        if (["offer", "book"].includes(intent.input.action)) checkContact(ledger(), request.handle, requestById(id).contactConfirmed);
         const config = loadConfig();
         const results: unknown[] = [];
         for (const account of new Set(config.calendars.map(c => c.account))) {
@@ -414,7 +417,7 @@ export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, 
   }
   let id = "", provisional = false;
   updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
-    checkContact(l, input.handle, options.confirmContact);
+    checkContact(l, input.handle, findOpenByHandle(l, input.handle)?.contactConfirmed);
     const existing = findOpenByHandle(l, input.handle) ?? l.requests.find(r => input.origin === "inbound" && input.sourceRowid !== undefined && r.sourceRowid === input.sourceRowid && ["asked", "offered"].includes(r.status));
     if (existing && input.chatUid && existing.chatUid !== input.chatUid &&
       !(input.origin === "owner-group" && existing.status === "asked" && existing.chatUid === undefined)) throw new Error("request belongs to another conversation");
@@ -438,15 +441,13 @@ export async function resumePending(options: CalendarOptions = {}) {
 }
 
 if (isMain(import.meta.url)) run(async () => {
-  const { values, positionals } = parseArgs({ allowPositionals: true, options: { id: { type: "string" }, json: { type: "string" }, "json-file": { type: "string" }, "confirm-contact": { type: "boolean" } } });
+  const { values, positionals } = parseArgs({ allowPositionals: true, options: { id: { type: "string" }, json: { type: "string" }, "json-file": { type: "string" } } });
   const action = positionals[0];
   const args = values["json-file"] ? JSON.parse(readFileSync(values["json-file"], "utf8")) : JSON.parse(values.json ?? "{}");
   if (action === "resume-pending") return resumePending();
   if (action === "pending") return { ids: pendingCalendarWrites() };
   if ("allowOverlap" in args || "allowOverlapTitles" in args) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
-  if (action === "offer") checkContact(ledger(), args.handle, values["confirm-contact"]);
-  if ((action === "book" || action === "approve-time") && values.id) checkContact(ledger(), requestById(values.id).handle, values["confirm-contact"]);
-  if (action === "offer") return values.id ? calendarAction(values.id, { action: "offer", request: args }) : offerRequest(args, { confirmContact: values["confirm-contact"] });
+  if (action === "offer") return values.id ? calendarAction(values.id, { action: "offer", request: args }) : offerRequest(args);
   if (action === "approve-time" && values.id) return approveTime(values.id, args);
   if (!values.id || !["duration", "book", "format", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | approve-time|duration|book|format|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
   return calendarAction(values.id, { ...args, action } as CalendarAction);

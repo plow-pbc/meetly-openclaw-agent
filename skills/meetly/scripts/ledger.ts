@@ -62,7 +62,8 @@ export type Request = {
   doNotContact?: boolean;
   lastGuestReplyAt?: string;
   lastNudge?: { fingerprint: string; at: string };
-  log?: { at: string; text: string }[];
+  contactConfirmed?: boolean;
+  pendingContact?: NewRequest;
   topic: string;
   location?: string;
   durationMin: number;
@@ -104,7 +105,7 @@ export const requestEvents = (request: Request): HoldRef[] => [
 export type Ledger = { requests: Request[] };
 
 export type NewRequest = Omit<Request,
-  "id" | "doNotContact" | "lastGuestReplyAt" | "lastNudge" | "log" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
+  "id" | "doNotContact" | "lastGuestReplyAt" | "lastNudge" | "contactConfirmed" | "pendingContact" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
   | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
@@ -183,23 +184,6 @@ export function checkContact(ledger: Ledger, handle: string, confirmed = false):
 
 export const nudgeFingerprint = (reason: string, since: string): string => JSON.stringify([reason, since]);
 
-const LOG_LIMIT = 20;
-export function appendLog(request: Request, text: string, now: number): Request {
-  return { ...request, log: [...(request.log ?? []), { at: new Date(now).toISOString(), text }].slice(-LOG_LIMIT) };
-}
-
-function logChange(before: Request, after: Request, now: number): Request {
-  const changes: string[] = [];
-  if (before.status !== after.status) changes.push(`Request ${after.status}`);
-  else if (JSON.stringify(before.booked) !== JSON.stringify(after.booked)) changes.push("Meeting moved");
-  if (before.offeredAt !== after.offeredAt || JSON.stringify(before.offered) !== JSON.stringify(after.offered)) changes.push("Times offered");
-  if (before.pendingOwner?.askedAt !== after.pendingOwner?.askedAt || JSON.stringify(before.pendingOwner) !== JSON.stringify(after.pendingOwner)) {
-    if (!after.pendingOwner) changes.push("Owner question resolved");
-    else if (!before.pendingOwner || before.pendingOwner.askedAt !== after.pendingOwner.askedAt) changes.push("Waiting for owner answer");
-  }
-  return changes.length ? appendLog(after, changes.join("; "), now) : after;
-}
-
 export function setDoNotContact(ledger: Ledger, handle: string, blocked: boolean, now: number, name?: string): Ledger {
   handle = normalizeHandle(handle);
   if (!ledger.requests.some(r => sameHandle(r.handle, handle))) {
@@ -207,17 +191,17 @@ export function setDoNotContact(ledger: Ledger, handle: string, blocked: boolean
     // A closed preference record keeps a new contact's flag in the same ledger.
     const id = requestId();
     ledger = addRequest(ledger, { origin: "owner", handle, name, status: "asked", topic: "Scheduling preference", durationMin: 30, offered: [] }, now, id);
-    ledger = { requests: ledger.requests.map(r => r.id === id ? { ...r, status: "dropped", log: [] } : r) };
+    ledger = { requests: ledger.requests.map(r => r.id === id ? { ...r, status: "dropped" } : r) };
   }
-  return { requests: ledger.requests.map(r => sameHandle(r.handle, handle) && !!r.doNotContact !== blocked
-    ? appendLog({ ...r, doNotContact: blocked, updatedAt: new Date(now).toISOString() }, blocked ? "Do not contact enabled" : "Do not contact cleared", now) : r) };
+  return { requests: ledger.requests.map(r => sameHandle(r.handle, handle)
+    ? { ...r, doNotContact: blocked, contactConfirmed: false, updatedAt: new Date(now).toISOString() } : r) };
 }
 
 // Monitoring and question-delivery metadata do not invalidate a scheduling action's snapshot.
 export function sameRequest(a: Request | undefined, b: Request | undefined): boolean {
   if (!a || !b) return a === b;
-  const { lastNudge: _an, log: _al, lastGuestReplyAt: _ar, detailsAskedAt: _ad, updatedAt: _au, ...left } = a;
-  const { lastNudge: _bn, log: _bl, lastGuestReplyAt: _br, detailsAskedAt: _bd, updatedAt: _bu, ...right } = b;
+  const { lastNudge: _an, lastGuestReplyAt: _ar, detailsAskedAt: _ad, updatedAt: _au, ...left } = a;
+  const { lastNudge: _bn, lastGuestReplyAt: _br, detailsAskedAt: _bd, updatedAt: _bu, ...right } = b;
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
@@ -227,7 +211,7 @@ export function recordGuestReply(ledger: Ledger, chat: string, sender: string, a
   if (!request || !sameHandle(request.handle, sender) || !["offered", "booked"].includes(request.status)
     || (request.lastGuestReplyAt !== undefined && at <= Date.parse(request.lastGuestReplyAt)) || at < Date.parse(request.offeredAt ?? request.createdAt)) return ledger;
   return { requests: ledger.requests.map(r => r.id === request.id
-    ? appendLog({ ...r, lastGuestReplyAt: new Date(at).toISOString() }, "Guest replied", at) : r) };
+    ? { ...r, lastGuestReplyAt: new Date(at).toISOString() } : r) };
 }
 
 // The person's `asked` or `offered` request; `statuses` narrows it.
@@ -279,7 +263,7 @@ export function requireDuration(value: number | undefined): number {
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
   input = { ...input, handle: normalizeHandle(input.handle) };
   if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return ledger;
-  for (const key of ["doNotContact", "lastGuestReplyAt", "lastNudge", "log"]) {
+  for (const key of ["doNotContact", "lastGuestReplyAt", "lastNudge", "contactConfirmed", "pendingContact"]) {
     if (key in input) throw new Error(`${key} is managed by pipeline.ts`);
   }
   for (const key of ["calendarRevision"]) {
@@ -297,7 +281,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   const status = input.status ?? "offered";
   if (status === "offered") checkOffers(input.offered);
   else if (status !== "asked") throw new Error(`a new request is asked or offered, got ${status}`);
-  else if (input.offered?.length || input.chatUid !== undefined) throw new Error("an asked request has no offered times or chat yet");
+  else if (input.offered?.length || (input.chatUid !== undefined && input.origin !== "owner-group")) throw new Error("an asked request has no offered times or chat yet");
   const format = input.format === undefined ? "unknown" : input.format;
   checkFormat(format);
   if (input.locale !== undefined) checkLocale(input.locale);
@@ -311,7 +295,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
     ? { ...fields, offered: [], format, id, status, createdAt: at, updatedAt: at }
     : { ...fields, format, id, status, offeredAt: at, createdAt: at, updatedAt: at };
   if (doNotContact(ledger, input.handle)) request.doNotContact = true;
-  return { requests: [...ledger.requests, appendLog(request, `Request ${status}`, now)] };
+  return { requests: [...ledger.requests, request] };
 }
 
 // Save the latest offer for a person without creating a second open request.
@@ -351,11 +335,10 @@ export function saveRequest(ledger: Ledger, input: NewRequest, now: number, id: 
     format: validated.format === "unknown" ? existing.format ?? "unknown" : validated.format,
     locale: input.locale ?? existing.locale,
     holdCleanup,
-    log: existing.log,
     createdAt: existing.createdAt,
     updatedAt: new Date(now).toISOString(),
   };
-  return { requests: ledger.requests.map((r) => r.id === existing.id ? logChange(existing, replacement, now) : r) };
+  return { requests: ledger.requests.map((r) => r.id === existing.id ? replacement : r) };
 }
 
 export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: number): Ledger {
@@ -402,7 +385,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   }
   if (patch.offered !== undefined) updated.offeredAt = at;
   const requests = [...ledger.requests];
-  requests[index] = logChange(ledger.requests[index]!, updated, now);
+  requests[index] = updated;
   return { requests };
 }
 
