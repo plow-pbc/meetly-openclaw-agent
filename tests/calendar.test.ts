@@ -644,16 +644,17 @@ test("a time approval never sends a conflict override even across its own hold",
   assert.equal(writes.some(c => c.includes("--confirm-conflict")), false);
 });
 
-test("booked replacement holds preserve the event, expire independently and clean up after a move", async t => {
+for (const allowOverlap of [[], [{ account, id: "private-conflict" }]]) test(`booked replacement holds preserve the event, expire independently and clean up after a move: grant=${!!allowOverlap.length}`, async t => {
   const f = fixture(t, "chat-one");
   await calendarAction("r_one", { action: "book", start }, f.options);
   const booked = f.read().booked;
-  const replacement = { ...f.offer, offered: [
+  const replacement = { ...f.offer, allowOverlap, offered: [
     { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account },
     { start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z", account },
   ] };
-  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
+  await calendarAction("r_one", { action: "offer", request: replacement }, { ...f.options, overlapApproved: !!allowOverlap.length });
   assert.equal(f.read().status, "booked");
+  assert.deepEqual(f.read().allowOverlap, allowOverlap);
   assert.equal(f.read().bookedReplacement, true);
   assert.deepEqual(f.read().booked, booked);
   assert.equal(f.events.get("hold-one")!.start.dateTime, start);
@@ -665,6 +666,8 @@ test("booked replacement holds preserve the event, expire independently and clea
   assert.ok(!("error" in expired));
   assert.equal(expired.request.status, "booked");
   assert.deepEqual(expired.request.offered, []);
+  assert.deepEqual(expired.request.allowOverlap, []);
+  assert.deepEqual(expired.request.booked, booked);
   assert.equal(expired.request.bookedReplacement, false);
   assert.equal(f.events.get("hold-one")!.status, "confirmed");
   assert.equal(f.events.get("new-1")!.status, "cancelled");
@@ -676,7 +679,7 @@ test("booked replacement holds preserve the event, expire independently and clea
   assert.ok(!("error" in again));
   assert.equal(again.skipped, true);
   assert.equal(again.groupNotice, undefined);
-  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
+  await calendarAction("r_one", { action: "offer", request: replacement }, { ...f.options, overlapApproved: !!allowOverlap.length });
   await calendarAction("r_one", { action: "book", start: replacement.offered[0]!.start }, f.options);
   assert.equal(f.read().eventId, "hold-one");
   assert.equal(f.read().booked!.start, replacement.offered[0]!.start);
@@ -904,14 +907,41 @@ for (const outcome of ["busy", "success"] as const) for (const batch of [false, 
   }
 });
 
-test("booked replacement expiry clears its overlap grant", async t => {
-  const f = fixture(t);
+for (const jsonFile of [false, true]) test(`offer --id CLI normalizes replacement slots: jsonFile=${jsonFile}`, async t => {
+  const f = fixture(t, "chat-one");
   await calendarAction("r_one", { action: "book", start }, f.options);
   const booked = f.read().booked;
-  const allowOverlap = [{ account, id: "private-conflict" }];
-  await calendarAction("r_one", { action: "offer", request: { ...f.offer, allowOverlap } }, { ...f.options, overlapApproved: true });
-  assert.deepEqual(f.read().allowOverlap, allowOverlap);
-  await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
-  assert.deepEqual(f.read().allowOverlap, []);
-  assert.deepEqual(f.read().booked, booked);
+  const { durationMin, chatUid, ...input } = f.offer;
+  const request = { ...input, chatUid, ...(jsonFile ? {} : { durationMin }), offered: [
+    { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z" },
+    { start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z" },
+  ] };
+  const hook = join(f.home, "bridge.mjs"), calls = join(f.home, "calls.json");
+  fs.writeFileSync(hook, `
+    import { fakeCalendar } from ${JSON.stringify(new URL("./helpers.ts", import.meta.url).href)};
+    import { writeFileSync } from "node:fs";
+    const calendar = fakeCalendar(${JSON.stringify([...f.events.values()])});
+    Date.now = () => ${now};
+    globalThis.fetch = async (_url, init) => {
+      const { params } = JSON.parse(init.body);
+      const result = await calendar.command(params.arguments);
+      writeFileSync(${JSON.stringify(calls)}, JSON.stringify(calendar.calls));
+      return Response.json({ result: { content: [{ type: "text", text: JSON.stringify({ exit_code: 0, output: result.output }) }] } });
+    };
+  `);
+  const inputFile = join(f.home, "offer.json");
+  writeJson(inputFile, request);
+  const result = cli("calendar.ts", ["offer", "--id", "r_one", ...(jsonFile ? ["--json-file", inputFile] : ["--json", JSON.stringify(request)])],
+    { MEETLY_HOME: f.home, PLOW_MCP_BRIDGE_TOKEN: "fixture", NODE_OPTIONS: `--import=${hook}` });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.json.request.id, "r_one");
+  assert.equal(result.json.request.bookedReplacement, true);
+  assert.deepEqual(result.json.request.booked, booked);
+  assert.equal(result.json.request.chatUid, chatUid);
+  assert.equal(result.json.request.durationMin, durationMin);
+  assert.equal(result.json.request.offered.length, 2);
+  assert.ok(result.json.request.offered.every((slot: { account: string; holdId: string }) => slot.account === account && slot.holdId));
+  assert.equal(readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] }).requests.length, 1);
+  assert.deepEqual(readJson<string[][]>(calls, []).filter(c => ["create", "update", "delete"].includes(c[2]!)).map(c => c[2]), ["create", "create"]);
+  t.diagnostic(JSON.stringify(result.json));
 });
