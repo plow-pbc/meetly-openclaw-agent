@@ -286,7 +286,7 @@ test("raw busy CLI output without coverage cannot make unread dates available", 
   const normalized = cli("busy.ts", ["--in", raw], env);
   assert.equal(normalized.status, 0, normalized.stderr);
   writeFileSync(busy, normalized.stdout);
-  const args = ["--in", busy, "--now", new Date(NOW).toISOString()];
+  const args = ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busy, "--now", new Date(NOW).toISOString()];
   const search = cli("slots.ts", [...args, "--from", "2026-10-29", "--to", "2026-10-29"], env);
   assert.equal(search.status, 0, search.stderr);
   assert.deepEqual(search.json.slots, []);
@@ -351,7 +351,7 @@ test("CLI next week replaces saved date bounds and retains non-date policy", () 
     status: "asked", origin: "owner", handle: "+15550107812", topic: "call", durationMin: 45, offered: [],
     constraints: { from: "2026-10-12", to: "2026-10-18", days: ["tue", "thu"], after: "13:00", before: "15:00", startTime: "13:15" },
   }, NOW, "saved-week"));
-  const result = cli("slots.ts", ["--in", join(home, "busy.json"), "--request", "saved-week", "--week", "next", "--now", "2026-10-02T08:00:00Z"], { MEETLY_HOME: home });
+  const result = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", join(home, "busy.json"), "--request", "saved-week", "--week", "next", "--now", "2026-10-02T08:00:00Z"], { MEETLY_HOME: home });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.json.resolvedConstraints, { from: "2026-10-05", to: "2026-10-11", days: ["tue", "thu"], after: "13:00", before: "15:00", startTime: "13:15" });
   assert.deepEqual(result.json.slots.map((s: { start: string }) => s.start), ["2026-10-06T13:15:00+00:00", "2026-10-08T13:15:00+00:00"]);
@@ -378,7 +378,7 @@ test("request CLI re-offers retain saved excluded weekdays", () => {
     origin: "owner", status: "asked", handle: "+15550107812", topic: "Call", durationMin: 30,
     constraints: { days: ["mon", "tue"] }, excludedDays: ["mon"], offered: [],
   }, NOW, "excluded"));
-  const result = cli("slots.ts", ["--in", join(home, "busy.json"), "--request", "excluded", "--now", new Date(NOW).toISOString()], { MEETLY_HOME: home });
+  const result = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", join(home, "busy.json"), "--request", "excluded", "--now", new Date(NOW).toISOString()], { MEETLY_HOME: home });
   assert.equal(result.status, 0, result.stderr);
   assert.ok(result.json.slots.length);
   assert.ok(result.json.slots.every((s: { dayOfWeek: string }) => s.dayOfWeek === "tue"), JSON.stringify(result.json));
@@ -406,13 +406,13 @@ test("slots --request ignores its booked travel, preserves minutes, and conceals
     travelEvents: [{ holdId: "private-travel", account: "owner@example.com" }], offered: [] };
   writeJson(join(home, "ledger.json"), { requests: [request] });
   const busyFile = join(home, "busy.json");
-  writeJson(busyFile, { busy: [{ id: "private-travel", account: "owner@example.com", start: "2026-09-28T08:30:00-03:00", end: "2026-09-28T09:00:00-03:00" }], degraded: [] });
+  writeJson(busyFile, { coverage, busy: [{ id: "private-travel", account: "owner@example.com", start: "2026-09-28T08:30:00-03:00", end: "2026-09-28T09:00:00-03:00" }], degraded: [] });
   const args = ["--request", "travel", "--in", busyFile, "--at", "2026-09-28T09:00:00-03:00", "--now", new Date(NOW - 86400000).toISOString()];
   const own = cli("slots.ts", args, { MEETLY_HOME: home });
   assert.equal(own.status, 0, own.stderr);
   assert.equal(own.json.free, true);
   assert.doesNotMatch(own.stdout, /private-travel|beforeMin|owner@example/);
-  writeJson(busyFile, { busy: [{ id: "other", account: "owner@example.com", start: "2026-09-28T08:30:00-03:00", end: "2026-09-28T09:00:00-03:00" }], degraded: [] });
+  writeJson(busyFile, { coverage, busy: [{ id: "other", account: "owner@example.com", start: "2026-09-28T08:30:00-03:00", end: "2026-09-28T09:00:00-03:00" }], degraded: [] });
   const other = cli("slots.ts", args, { MEETLY_HOME: home });
   assert.equal(other.json.reason, "busy");
 });
@@ -423,7 +423,7 @@ test("replacement search honors an explicit format change with its travel estima
   writeJson(join(home, "ledger.json"), {requests: [{id: "change", status: "booked", format: "meet", durationMin: 30,
     travel: {beforeMin: 0, afterMin: 0}, offered: []}]});
   const busyFile = join(home, "busy.json");
-  writeJson(busyFile, {busy: [{start: "2026-09-28T09:45:00-03:00", end: "2026-09-28T10:00:00-03:00"}], degraded: []});
+  writeJson(busyFile, {coverage, busy: [{start: "2026-09-28T09:45:00-03:00", end: "2026-09-28T10:00:00-03:00"}], degraded: []});
   const result = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--request", "change", "--in", busyFile, "--now", new Date(NOW).toISOString(),
     "--at", "2026-09-28T10:00:00-03:00", "--format", "in_person", "--travel", '{"beforeMin":25,"afterMin":25}'], {MEETLY_HOME: home});
   assert.equal(result.status, 0, result.stderr);
