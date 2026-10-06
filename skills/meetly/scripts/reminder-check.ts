@@ -29,7 +29,7 @@ export type Options = { expectedStart: string; leadMin: number; tz: string; grac
 const MIN = 60_000;
 
 function timeLabel(ms: number, locale: string, tz: string): string {
-  return new Intl.DateTimeFormat(locale, { timeZone: tz, hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
+  return `${new Intl.DateTimeFormat(locale, { timeZone: tz, hour: "2-digit", minute: "2-digit" }).format(new Date(ms))} (${tz})`;
 }
 
 export function checkReminder(request: Request, event: EventInfo, now: number, opts: Options): Decision {

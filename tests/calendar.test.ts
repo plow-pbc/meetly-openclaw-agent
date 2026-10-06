@@ -535,7 +535,7 @@ test("raw ledger mutations cannot bypass DM overlap authorization", t => {
   const f = fixture(t), before = f.read();
   for (const action of ["add", "save", "update"]) {
     const args = action === "update" ? {} : { ...f.offer, handle: "+15557654321" };
-    const result = cli("ledger.ts", [action, "--id", "r_one", "--json",
+    const result = cli("ledger.ts", [action, ...(action === "update" ? ["--id", "r_one"] : []), "--json",
       JSON.stringify({ ...args, allowOverlap: [{ account, id: "busy" }] })], { MEETLY_HOME: f.home });
     assert.equal(result.status, 1, action);
     assert.match(result.stderr, /owner DM|managed by calendar/);
@@ -1308,7 +1308,7 @@ test("calendar CLI delivers travel privately and returns no travel data to its c
   })], { ...f.options, sendOwner: async text => { sent.push(text); } });
   assert.doesNotMatch(JSON.stringify(result), /beforeMin|afterMin|ownerTravelNote|travelEvents|Held 10|say if/);
   assert.equal(result.ownerNotified, true);
-  assert.equal(result.ownerReply, undefined, "format changes still need their meeting confirmation");
+  assert.equal((result.ownerReply as any)?.action, "already_notified", "format changes still need their guest-facing confirmation without a repeated owner note");
   assert.equal(sent.length, 1);
   assert.match(sent[0]!, /Held 10 min travel before and 10 min after/);
   assert.deepEqual(f.read().travel, { beforeMin: 10, afterMin: 10 });
@@ -1515,4 +1515,62 @@ for (const change of ["start", "end"] as const) test(`travel correction rejects 
   assert.deepEqual([...f.events], events);
   assert.ok(f.calls.every(argv => !["create", "update", "delete"].includes(argv[2]!)));
   assert.deepEqual(pendingCalendarWrites(), []);
+});
+
+for (const status of ["offered", "booked"] as const) test(`writer rejects guest-excluded weekday on ${status} offer before calendar effects`, async t => {
+ const f=fixture(t,"chat"); if(status==="booked") await calendarAction("r_one",{action:"book",start},f.options);
+ writeJson(f.path,{requests:[{...f.read(),excludedDays:["mon"]}]}); const before=f.read(); f.calls.length=0;
+ await assert.rejects(calendarAction("r_one",{action:"offer",request:{...f.offer,excludedDays:[],offered:[{start,end,account}]}},f.options),/guest-excluded/);
+ assert.deepEqual(f.calls,[]); assert.deepEqual(f.read(),before);
+});
+test("identical format location and effective travel skips all calendar writes", async t=>{
+ const f=fixture(t,"chat"); await calendarAction("r_one",{action:"book",start},f.options); f.calls.length=0; const before=f.read();
+ const result=await calendarAction("r_one",{action:"format",format:before.format,location:before.location,travel:before.travel},f.options);
+ assert.equal("unchanged" in result && result.unchanged,true); assert.deepEqual(f.calls,[]); assert.deepEqual(f.read(),before);
+});
+
+for(const action of ["format","travel"] as const) test(`owner ${action} delivery uses current writer and suppresses duplicate owner finals`,async t=>{
+ const {changeOwnerMeeting}=await import("../skills/meetly/scripts/owner-change.ts");
+ const f=fixture(t,"chat"); await calendarAction("r_one",{action:"book",start},f.options);
+ const owner:string[]=[], guest:string[]=[];
+ const ctx={messageChannel:"plow",agentAccountId:"chat",senderIsOwner:true,requesterSenderId:"+15555550100",sessionKey:"agent:main:main",nativeChannelId:"dm"};
+ const args={requestId:"r_one",action,format:"in_person" as const,location:"Library",travel:{beforeMin:15,afterMin:15},confirmation:"Alex will meet you at the Library."};
+ const send=async(to:string,text:string)=>{assert.equal(to,"chat"); guest.push(text);};
+ const output=await changeOwnerMeeting(ctx,args,send,async text=>{owner.push(text);},f.options);
+ assert.equal(output.silent,true,JSON.stringify(output)); assert.deepEqual(output.effectiveTravel,{beforeMin:15,afterMin:15,...(action==="travel"?{override:true}:{})});
+ assert.equal(owner.length,1); assert.equal(guest.length,action==="format"?1:0);
+ const calls=f.calls.length; const again=await changeOwnerMeeting(ctx,args,send,async text=>{owner.push(text);},f.options);
+ assert.equal(again.unchanged,true); assert.equal(again.silent,true); assert.equal(owner.length,1); assert.equal(guest.length,action==="format"?1:0); assert.equal(f.calls.length,calls);
+});
+
+for (const failed of [false, true]) test(`owner format confirmation clears its pending question only after delivery: failed=${failed}`, async t => {
+  const { changeOwnerMeeting } = await import("../skills/meetly/scripts/owner-change.ts");
+  const f = fixture(t, "chat");
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  writeJson(f.path, { requests: [{ ...f.read(), pendingOwner: { question: "Which entrance?", askedAt: new Date(now).toISOString() } }] });
+  const ctx = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "plow-owner", sessionKey: "agent:main:main", nativeChannelId: "dm" };
+  let sends = 0;
+  const output = await changeOwnerMeeting(ctx, { requestId: "r_one", action: "format", format: "in_person", location: "Library", travel: { beforeMin: 15, afterMin: 15 }, confirmation: "Alex will meet you at the Library." }, async () => {
+    sends++;
+    assert.equal(f.read().location, "Library");
+    assert.ok(f.read().pendingOwner?.answerAttemptedAt);
+    if (failed) throw new Error("unknown delivery");
+  }, async () => {}, f.options);
+  assert.equal(sends, 1);
+  assert.equal(output.silent, failed ? undefined : true);
+  assert.equal(!!f.read().pendingOwner, failed);
+});
+
+test("owner email format delivery keeps the thread route and suppresses the duplicate private final", async t => {
+  const { changeOwnerMeeting } = await import("../skills/meetly/scripts/owner-change.ts");
+  const f = fixture(t, "email-thread");
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  writeJson(f.path, { requests: [{ ...f.read(), channel: "email", handle: "guest@example.net" }] });
+  const ctx = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "plow-owner", sessionKey: "agent:main:main", nativeChannelId: "dm" };
+  let notices = 0;
+  const output = await changeOwnerMeeting(ctx, { requestId: "r_one", action: "format", format: "in_person", location: "Library", travel: { beforeMin: 15, afterMin: 15 }, confirmation: "Alex will meet you at the Library." },
+    async () => { throw new Error("Email must not use the text transport"); }, async () => { notices++; }, f.options);
+  assert.equal(notices, 1);
+  assert.equal(output.silent, true);
+  assert.deepEqual(output.guestConfirmation, { delivered: false, tool: "plow_send_email", to: "email-thread", body: "Alex will meet you at the Library." });
 });

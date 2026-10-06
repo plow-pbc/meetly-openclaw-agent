@@ -7,10 +7,10 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
-import { holdHours, loadConfig, SLOT_COUNT } from "./config.ts";
+import { holdHours, loadConfig, SLOT_COUNT, DAYS } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
 import { ContactConfirmationRequired, checkContact, addRequest, requestEvents, requestHolds, sameHandle, expiredRequests, findOpenByHandle, meetingDuration, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
@@ -49,6 +49,11 @@ const holds = requestHolds;
 // Its slots change; the confirmed event and meeting details remain in place.
 function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledger {
   const request = l.requests.find(r => r.id === id);
+  input = { ...input, excludedDays: request?.excludedDays ?? input.excludedDays };
+  if (input.offered.some(slot => !withinConstraints(Date.parse(slot.start), Date.parse(slot.end), loadConfig().timezone,
+    { days: DAYS.filter(day => !input.excludedDays?.includes(day)) }))) {
+    throw new Error("Offered time falls on a guest-excluded weekday.");
+  }
   const startTime = input.constraints === undefined ? request?.constraints?.startTime : input.constraints.startTime;
   if (startTime) {
     if (input.offered.some(slot => !withinConstraints(Date.parse(slot.start), Date.parse(slot.end), loadConfig().timezone, { startTime }))) throw new Error("Offered time does not match the owner’s exact start.");
@@ -62,6 +67,7 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
   if (validated.status !== "offered") throw new Error("replacement needs offered times");
   return updateRequest(l, id, {
     replacement: { format: validated.format, location: validated.location, travel: validated.travel },
+    excludedDays: validated.excludedDays,
     offered: validated.offered, bookedReplacement: true, allowOverlap: validated.allowOverlap ?? [], constraints: validated.constraints ?? {},
     holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
   }, now);
@@ -237,6 +243,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
         const format = input.action === "format" ? input.format : request.format;
         input.travel = request.travel?.override && !input.travel.override && format !== "meet" && format !== "phone" ? request.travel : input.travel;
         travelFor({ format, travel: input.travel });
+        if (["offered", "booked"].includes(request.status) && isDeepStrictEqual(request.travel, input.travel)
+          && (input.action === "travel" || (request.format === input.format && (request.location ?? "") === (input.location ?? "")))) return { request, unchanged: true };
       }
       if ((input.action === "format" || input.action === "travel") && request.status === "offered") {
         patch({ ...(input.action === "format" ? { format: input.format, location: input.location ?? "" } : {}),

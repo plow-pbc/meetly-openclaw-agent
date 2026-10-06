@@ -6,6 +6,7 @@
 //
 // Plain JavaScript on purpose: the image ships it as is, with no build step,
 // and preboot copies it into the state volume's plugin root on every boot.
+import { registerOwnerChangeTools } from "./owner-change.js";
 import { registerPipelineHooks } from "./pipeline.js";
 import { calendarPolicy } from "./calendar-policy.js";
 import { execFile } from "node:child_process";
@@ -110,6 +111,8 @@ export default {
     registerOwnerDmTool(api);
     registerContactTools(api);
     registerAttendeeTool(api);
+    registerOwnerChangeTools(api);
+    api.on("before_tool_call", guestTurns.beforeTool);
     api.on("before_tool_call", calendarPolicy);
     api.on("agent_end", guestTurns.end);
     api.on("before_prompt_build", async (_event, ctx) => {

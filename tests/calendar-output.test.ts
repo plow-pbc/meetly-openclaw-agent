@@ -10,7 +10,7 @@ test("batch and failure results retain only delivery status, never private trave
   const sent: string[] = [];
   const output = await calendarOutput({ results: [result, { request: result.request }] }, async text => { sent.push(text); });
   assert.deepEqual(sent, [note]);
-  assert.deepEqual(output, { results: [{ request: { id: "r", reoffer: {} }, ownerNotified: true }, { request: { id: "r", reoffer: {} } }] });
+  assert.deepEqual(output, { results: [{ request: { id: "r", reoffer: {} }, ownerNotified: true, ownerReply: { action: "already_notified", message: "The private travel note was delivered. Confirm only the guest-facing meeting change; do not repeat the owner DM." } }, { request: { id: "r", reoffer: {} } }] });
   const failed = await calendarOutput(result, async () => { throw new Error(note); });
   assert.equal(failed.ownerNotified, false);
   assert.equal(failed.ownerNotificationWarning, "owner-notification-unconfirmed");
@@ -40,4 +40,9 @@ for (const mode of ["sent", "missing", "ambiguous", "unknown", "error"] as const
   } });
   if (mode === "sent") await send(); else await assert.rejects(send);
   assert.equal(posts.length, ["missing", "ambiguous"].includes(mode) ? 0 : 1, "never retry an unknown send or choose a group");
+});
+
+test("a delivered format travel note tells the owner not to repeat the private DM",async()=>{
+ const output=await calendarOutput({...result,travelOnly:false},async()=>{});
+ assert.equal((output.ownerReply as any)?.action,"already_notified");
 });

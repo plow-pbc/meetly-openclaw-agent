@@ -78,6 +78,12 @@ When the owner changes the duration, update any duration wording in `topic`
 and save it with the replacement offer. For example, "30-minute call" becomes
 "60-minute call" when changed to an hour.
 
+When the owner only extends dates, run `ledger.ts widen-dates --id <saved id>
+--from <first additional date> --to <last additional date>` before searching with
+`slots.ts --request <same id>`. Pass only the additional dates; this keeps that
+request's other conditions and guest-excluded weekdays. Never copy conditions
+from another meeting or rebuild them from chat history.
+
 When the owner replaces saved hard conditions in a group, pass the complete replacement
 as `constraints`; an empty object clears them. Omission preserves the saved policy.
 For a DM search, run `ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
@@ -85,6 +91,9 @@ before searching, keeping any hard conditions they did not change.
 
 1. In the current group, call `meetly_offer_owner_group` with `topic`, required `durationMin`, `travel`, `introduction: "needed"|"already_introduced"`, `meal`, `constraints`,
    `proposed`, `name` as given by the owner in this thread, `format`, `location` and `locale` as known.
+   For rescheduling an existing booking in this group, also pass its saved `requestId`.
+   For a separate meeting in an already-booked group, omit it: the tool coordinates
+   privately before calendar access. On `silent: true`, finish `NO_REPLY`.
    It resolves the guest and chat, searches within the owner's conditions and
    holds times itself using your chosen duration; never supply `offered` intervals.
    Choose the duration from the meeting context, honoring an explicit owner length.

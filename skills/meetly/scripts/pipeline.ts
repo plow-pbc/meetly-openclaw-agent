@@ -46,7 +46,7 @@ export function pipeline(ledger: Ledger, now: number, unresolved: readonly strin
       }
     } else if (request.status === "asked" && !blocked) {
       state = "waiting_on_owner"; reason = "owner-decision"; since = request.createdAt;
-      detail = "Want me to offer times?";
+      detail = "Want me to offer times?"; nudge = request.origin === "inbound";
     } else {
       const offeredAt = currentOffers(request).length ? request.offeredAt : undefined;
       if (!offeredAt) return [];
