@@ -24,26 +24,26 @@ thread. For a message to the owner with no meeting thread, use
    **Reminders** come first, before any messages are read, so a slow batch
    never delays a link:
    1. Run `ledger.ts reminders`. None: go to step 2.
-   2. For each request, read its event:
+   2. Keep each request's `booked.start` from that list as the snapshot, then read its event:
       `plow-gog calendar event primary <eventId> --account <booked.account> --json`.
       Save the whole output with the `write` tool to
       `/var/lib/plow/meetly/tmp/reminder-<id>.json`. If the read fails, skip
       this request: the next poll tries again while the window lasts.
-   3. Run `reminder-check.ts --id <id> --event-file <that file>`. It
-      compares the event with the ledger, saves any change, and prints
+   3. Run `reminder-check.ts --id <id> --expected-start <snapshot booked.start> --event-file <that file>`. It
+      checks the snapshot inside the ledger update, saves any current event change, and prints
       `action`:
       - `send`: send one message to `send.chatUid` (when it is `null`, to
         the owner's DM instead). Write it in `send.locale`, third person,
         using `send.name` and `ownerName`: the meeting starts in
         `send.minutesToStart` minutes (at `send.time`), with `send.meetUrl`.
         Use that URL exactly as printed; never any other link. Then run
-        `reminder-check.ts --id <id> --sent`. If delivery is unknown, still
-        mark it sent: never resend.
+        `reminder-check.ts --id <id> --expected-start <send.start> --sent`. If delivery is unknown, still
+        mark that exact `send.start` sent: never resend. A moved booking is left unmarked.
       - `wait`: the meeting moved; nothing now.
       - `cancelled`: the event was deleted; send nothing.
       - `no-link`: the Meet was removed from the event. Tell the meeting
         thread in one line that no link went out for <name>'s meeting.
-      - `skip`: already handled.
+      - `skip`: already handled or the booking changed since the snapshot; send nothing.
 2. Run `cursor.ts get`. If `rowid` is `null`: run `plow-messages search
    --order desc --limit 1`, then `cursor.ts set <that rowid, or 0>`, and go to step 6.
    Never scan history.
@@ -90,8 +90,14 @@ thread. For a message to the owner with no meeting thread, use
      that request's other mutations and report it to the owner.
    - For each request from `ledger.ts expired`, run `calendar.ts expire --id <id>`.
      The writer rechecks expiry while holding the request lock. If it prints
-     `skipped`, do not announce expiry. Otherwise, if its returned request has
-     a `chatUid`, tell the group the offer expired; if `holdCleanup` is not empty,
+     `skipped`, do not announce expiry. If `groupNotice` is present, immediately send
+     its `text` to `groupNotice.chatUid` with `message` (action `send`, channel
+     `plow`, accountId `chat`), in the guest's language. This is required even
+     though the request remains `booked`: the replacement times were released,
+     not the booking. Do not finish silently or wait for a guest reply. Do not
+     send a second expiry message for that request. Otherwise, if its returned request has
+     a `chatUid`, tell the group the offer expired. If its status is still `booked`,
+     say only the replacement offer expired and the original booking remains; if `holdCleanup` is not empty,
      say some holds still need cleanup. An `asked` request has no holds or group.
    - For each request from `ledger.ts asked --unnotified`, run `ledger.ts
      delivery --id <id> --kind notify --action begin`. If it fails, skip

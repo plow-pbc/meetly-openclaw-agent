@@ -1,4 +1,4 @@
-import { recordDelivery, updateRequest, type Constraints, type Ledger } from "./ledger.ts";
+import { requestEvents, recordDelivery, updateRequest, type Constraints, type Ledger } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
@@ -7,7 +7,7 @@ import { calendarAction } from "./calendar.ts";
 import { DAYS, loadConfig } from "./config.ts";
 import { findSlots, localeFormatter, searchCoverage } from "./slots.ts";
 
-type Args = { requestId?: string; askedAt?: string; text?: string; declineAlternatives?: boolean; constraints?: Constraints };
+type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change" | "decline_alternatives"; constraints?: Constraints };
 
 export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: string, text: string) => Promise<void>): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -15,6 +15,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     return { error: "Only the owner's own Plow turn can answer a meeting question." };
   }
   if (typeof args.text !== "string" || !args.text.trim()) return { error: "Provide the owner's answer." };
+  if (!["answer", "calendar_change", "decline_alternatives"].includes(args.outcome ?? "")) return { error: "Choose outcome: answer, calendar_change after a successful calendar write, or decline_alternatives for a refused alternative search." };
   const path = file("ledger.json");
   const ledger = readJson<Ledger>(path, { requests: [] });
   const saved = ledger.requests.find(r => r.id === args.requestId);
@@ -28,18 +29,20 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     return { error: "Answer from the owner's main DM or this request's group." };
   }
   const alternatives = "question" in pending ? pending.alternatives : undefined;
-  if (alternatives && args.declineAlternatives !== true) {
+  const declined = args.outcome === "decline_alternatives";
+  if (declined && !alternatives) return { error: "No alternative search is pending." };
+  if (alternatives && !declined) {
     if (pending.answerAttemptedAt) return { error: "Answer delivery already attempted. Do not repeat the search or send without the owner's explicit retry authorization." };
     try {
       const config = loadConfig(), now = Date.now();
-      if (config.paused || request.status !== "offered") throw new Error("Scheduling is paused or this offer is no longer open.");
+      if (config.paused || !["offered", "booked"].includes(request.status)) throw new Error("Scheduling is paused or this offer is no longer open.");
       const constraints = { ...request.constraints, ...args.constraints };
       const query = { ...constraints, now, config, busy: [], meal: request.meal, durationMin: request.durationMin,
-        locale: request.locale, allowOverlap: request.allowOverlap, exclude: alternatives.previousStarts,
+        locale: request.locale, allowOverlap: request.status === "booked" ? [] : request.allowOverlap, exclude: alternatives.previousStarts,
         days: (constraints.days ?? DAYS).filter(day => !request.excludedDays?.includes(day)) };
       const busy = await fetchBusy(config, searchCoverage(query));
       if (busy.degraded.length) throw new Error("Calendar unavailable. The alternative-search decision remains pending.");
-      busy.busy = busy.busy.filter(b => !request.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
+      busy.busy = busy.busy.filter(b => !requestEvents(request).some(o => o.holdId === b.id && o.account === b.account));
       const { slots } = findSlots({ ...query, ...busy });
       if (!slots.length) throw new Error("No new times are available in the checked calendar range. The alternative-search decision remains pending.");
       const before = request;
@@ -60,7 +63,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
       return { error: error instanceof Error ? error.message : "Alternative search failed. The decision remains pending." };
     }
   }
-  const alreadyVisible = inGroup && "question" in pending && (!alternatives || args.declineAlternatives === true);
+  const alreadyVisible = inGroup && "question" in pending && ((args.outcome === "answer" && !alternatives) || declined);
   if (!alreadyVisible) {
     try {
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {
@@ -75,7 +78,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     }
   }
   try {
-    // A question answer is already visible in the group; a time decision still needs its booking result.
+    // The owner's words may be visible, but a calendar change still needs its result delivered.
     if (!alreadyVisible) await send(request.chatUid!, text);
   } catch {
     return { error: "Answer delivery is unknown. The question remains pending; do not resend automatically." };

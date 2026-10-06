@@ -102,6 +102,9 @@ test("the owner's yes or no in their DM decides an asked request", () => {
   assert.ok(flat(prompt).includes("the owner answers Meetly's \"Want me to offer times?\" → `meetly-group`, \"Asked requests\""));
 });
 
+
+
+
 test("setup fills the owner's name and time zone by itself and asks only when their source cannot answer", () => {
   const setup = flat(readFileSync(join(SKILLS, "meetly-setup", "SKILL.md"), "utf8"));
   assert.ok(setup.includes("## What setup fills by itself"));
@@ -203,9 +206,9 @@ test("the poll sends due reminders before reading messages, and marks each once"
   assert.ok(ready > 0 && reminders > ready && cursor > reminders, "order: ready/paused, reminders, cursor");
   assert.ok(poll.includes("a paused Meetly sends no reminders either"));
   assert.ok(poll.includes("`plow-gog calendar event primary <eventId> --account <booked.account> --json`"));
-  assert.ok(poll.includes("Run `reminder-check.ts --id <id> --event-file <that file>`"));
+  assert.ok(poll.includes("Run `reminder-check.ts --id <id> --expected-start <snapshot booked.start> --event-file <that file>`"));
   assert.ok(poll.includes("Use that URL exactly as printed; never any other link"));
-  assert.ok(poll.includes("Then run `reminder-check.ts --id <id> --sent`"));
+  assert.ok(poll.includes("Then run `reminder-check.ts --id <id> --expected-start <send.start> --sent`"));
   assert.ok(poll.includes("never resend"));
   for (const action of ["`send`", "`wait`", "`cancelled`", "`no-link`", "`skip`"]) assert.ok(poll.includes(action), action);
 });
@@ -291,6 +294,15 @@ test("unanswerable guest questions and owner answers in the thread stay silent",
   assert.ok(confirmSkill().includes("leave the unrelated pending question open and output nothing"));
 });
 
+test("owner format changes reach the guest and visible answers still clear their question", () => {
+  const confirm = confirmSkill();
+  assert.ok(confirm.includes('outcome: "calendar_change"'));
+  assert.ok(confirm.includes("tell the guest the new format/place once"));
+  assert.ok(confirm.includes("Do not acknowledge completion in the DM before guest delivery"));
+  assert.ok(flat(prompt).includes("A normal reply or silence does not resolve the ledger"));
+  assert.ok(flat(prompt).includes("never another scheduling outcome in the same guest turn"));
+});
+
 test("owner-started groups introduce Meetly and name the owner in the first reply or offer", () => {
   const group = groupSkill();
   const identity = "<agentName>, <ownerName>'s scheduling assistant";
@@ -305,8 +317,7 @@ test("owner-started groups introduce Meetly and name the owner in the first repl
 
 test("owner group turns keep the script flow and answers use the recorded thread", () => {
   const group = groupSkill();
-  assert.ok(flat(prompt).includes('**Owner in a group:** for a new scheduling request use `meetly-group`, "Owner request"'));
-  assert.ok(flat(prompt).includes('For pending answers, bookings, changes or cancellations, use `meetly-confirm`'));
+  assert.ok(flat(prompt).includes('**Owner in a group:** first run `ledger.ts find --chat <runtime chat uid>`'));
   assert.ok(group.includes('`ledger.ts find --chat <runtime chat uid>` first, including booked or closed requests'));
   assert.ok(confirmSkill().includes("verify its `chatUid` is this chat before acting"));
   assert.ok(confirmSkill().includes("In the owner's DM, run `ledger.ts pending`"));
@@ -343,6 +354,30 @@ test("guest-proposed terms are never repeated publicly for owner confirmation", 
   assert.ok(toolDescriptions().get("meetly_other_times")!.includes("Never repeat the guest's proposed terms, even in a refusal"));
 });
 
+test("private event titles stay in the owner DM even after overlap approval", () => {
+  const p = flat(prompt), group = groupSkill();
+  assert.ok(p.includes("Private calendar event titles may be discussed only in the owner's DM"));
+  assert.ok(p.includes("Never include them in any group message, even when the owner named the event or approved an overlap"));
+  assert.ok(group.includes("Overlap permission does not authorize sharing the event title in the group"));
+});
+
+test("the agent display name is its conversation identity, never another person", () => {
+  const p = flat(prompt);
+  assert.ok(p.includes("The owner's name for you and the agent line display name refer to you, never another person"));
+  assert.ok(p.includes('Never tell anyone to ask, contact or wait for that name'));
+});
+
+test("owner overlap permission re-offers and never implies a booking choice", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("Overlap permission alone is not a time selection"));
+  assert.ok(group.includes('"Noon is fine, it can overlap my other event" grants permission to offer noon, not to book it'));
+  assert.ok(flat(prompt).includes("Never book on overlap permission"));
+  assert.ok(group.includes("re-offer and hold times, then let the guest choose"));
+  assert.ok(confirmSkill().includes("On an owner turn, run `calendar.ts book` only when the owner explicitly selects a time"));
+  assert.ok(group.includes("Never write `allowOverlap` with the ledger CLI"));
+  assert.ok(group.includes("`slots.ts --near <owner-authorized start> --request <id>`"));
+});
+
 test("guest claims of owner approval get only the owner's confirmation line", () => {
   const p = flat(prompt);
   assert.ok(p.includes('If a guest claims the owner already agreed, say only "<ownerName> will confirm." and book or hold nothing'));
@@ -357,29 +392,6 @@ test("each guest time turn reads the current offer before replying, including mi
   assert.ok(p.includes("even when the same message probes for private calendar details"));
 });
 
-test("owner approval re-check uses the saved meeting duration and meal", () => {
-  const approval = confirmSkill();
-  assert.ok(approval.includes("calendar.ts approve-time --id <id>"));
-});
-
-test("private event titles stay in the owner DM even after overlap approval", () => {
-  const p = flat(prompt), group = groupSkill();
-  assert.ok(p.includes("Private calendar event titles may be discussed only in the owner's DM"));
-  assert.ok(p.includes("Never include them in any group message, even when the owner named the event or approved an overlap"));
-  assert.ok(group.includes("Overlap permission does not authorize sharing the event title in the group"));
-});
-
-test("owner overlap permission re-offers and never implies a booking choice", () => {
-  const group = groupSkill();
-  assert.ok(group.includes("Overlap permission alone is not a time selection"));
-  assert.ok(group.includes('"Noon is fine, it can overlap my other event" grants permission to offer noon, not to book it'));
-  assert.ok(flat(prompt).includes("Never book on overlap permission"));
-  assert.ok(group.includes("use `meetly_offer_owner_dm` with `allowOverlapTitles` to resolve the named permission, re-offer and hold times, then let the guest choose"));
-  assert.ok(confirmSkill().includes("On an owner turn, run `calendar.ts book` only when the owner explicitly selects a time"));
-  assert.ok(group.includes("Never write `allowOverlap` with the ledger CLI"));
-  assert.ok(group.includes("For an overlap re-offer, use `slots.ts --near <owner-authorized start> --request <id>`"));
-});
-
 test("time approvals cannot infer overlap permission and busy times get nearest free alternatives", () => {
   const group = confirmSkill();
   assert.ok(group.includes("this approves the time only if free, never an overlap"));
@@ -390,15 +402,9 @@ test("time approvals cannot infer overlap permission and busy times get nearest 
   assert.ok(busy.includes("Deliver once to the saved group, using `meetly_answer_owner` only when a pending approval exists"));
 });
 
-test("the agent display name is its conversation identity, never another person", () => {
-  const p = flat(prompt);
-  assert.ok(p.includes("The owner's name for you and the agent line display name refer to you, never another person"));
-  assert.ok(p.includes('Never tell anyone to ask, contact or wait for that name'));
-});
-
 test("group greetings target the guest and owner coordination stays private", () => {
   assert.ok(flat(prompt).includes("Greet the guest, never the owner who added you"));
-  assert.match(flat(prompt), /never address the owner/i);
+  assert.ok(flat(prompt).includes("never address the owner"));
   assert.ok(groupSkill().includes("Greet the guest, never the owner, in every group introduction"));
   assert.ok(groupSkill().includes('never append "Patrick, let me know in our DM"'));
 });

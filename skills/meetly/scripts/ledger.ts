@@ -71,6 +71,8 @@ export type Request = {
   allowOverlap?: EventRef[];
   askDetails?: boolean;
   offered: Offer[];
+  // Only committed replacement holds are actionable on a booked request.
+  bookedReplacement?: boolean;
   status: Status;
   eventId?: string;
   holdCleanup?: HoldCleanup[];
@@ -91,14 +93,22 @@ export type Request = {
   updatedAt: string;
 };
 
+export const currentOffers = (request: Request): Offer[] => request.status === "offered" || (request.status === "booked" && request.bookedReplacement === true) ? request.offered : [];
+export const requestHolds = (request: Request): HoldRef[] => currentOffers(request)
+  .flatMap(o => o.holdId ? [{ holdId: o.holdId, account: o.account }] : []);
+export const requestEvents = (request: Request): HoldRef[] => [
+  ...requestHolds(request),
+  ...(request.status === "booked" && request.eventId && request.booked ? [{ holdId: request.eventId, account: request.booked.account }] : []),
+];
+
 export type Ledger = { requests: Request[] };
 
 export type NewRequest = Omit<Request,
-  "id" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "meetUrl" | "reminder"
+  "id" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "bookedReplacement" | "meetUrl" | "reminder"
   | "notifyAttemptedAt" | "notifiedAt" | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
-  "status" | "chatUid" | "eventId" | "offered" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "excludedDays" | "topic" | "format" | "locale">> & {
+  "status" | "chatUid" | "eventId" | "offered" | "bookedReplacement" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "excludedDays" | "topic" | "format" | "locale">> & {
   pendingOwner?: PendingOwner | null;
   booked?: Booked | null;
   meetUrl?: string | null;
@@ -110,7 +120,7 @@ const OPEN: readonly Status[] = ["asked", "offered"];
 const FORMATS: readonly Format[] = ["meet", "in_person", "phone", "unknown"];
 const OUTCOMES: readonly Reminder["outcome"][] = ["sent", "cancelled", "no-link"];
 const PATCH_KEYS = [
-  "status", "chatUid", "eventId", "offered", "holdCleanup", "name", "location", "allowOverlap", "constraints", "excludedDays", "topic", "pendingOwner",
+  "status", "chatUid", "eventId", "offered", "bookedReplacement", "holdCleanup", "name", "location", "allowOverlap", "constraints", "excludedDays", "topic", "pendingOwner",
   "format", "locale", "booked", "meetUrl", "reminder",
 ];
 // Keys a patch can clear with null.
@@ -189,8 +199,8 @@ function checkExcludedDays(days: unknown): void {
   if (!Array.isArray(days) || days.some(day => !DAYS.includes(day))) throw new Error("excludedDays must contain weekdays mon–sun");
 }
 
-function checkOffers(offered: unknown): Offer[] {
-  if (!Array.isArray(offered) || offered.length === 0) throw new Error("offered must be a non-empty list");
+function checkOffers(offered: unknown, allowEmpty = false): Offer[] {
+  if (!Array.isArray(offered) || (!allowEmpty && offered.length === 0)) throw new Error("offered must be a non-empty list");
   for (const o of offered as Offer[]) {
     if (!o || Number.isNaN(Date.parse(o.start)) || Number.isNaN(Date.parse(o.end))) {
       throw new Error(`each offer needs a valid start and end: ${JSON.stringify(o)}`);
@@ -229,7 +239,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   const at = new Date(now).toISOString();
   // A new offer is never booked: a booking, its link and its reminder are
   // only ever set through update, where they are validated.
-  const { booked: _b, meetUrl: _m, reminder: _r, ...fields } = input as NewRequest & Partial<Pick<Request, "booked" | "meetUrl" | "reminder">>;
+  const { booked: _b, bookedReplacement: _br, meetUrl: _m, reminder: _r, ...fields } = input as NewRequest & Partial<Pick<Request, "booked" | "bookedReplacement" | "meetUrl" | "reminder">>;
   const request: Request = status === "asked"
     ? { ...fields, offered: [], format, id, status, createdAt: at, updatedAt: at }
     : { ...fields, format, id, status, offeredAt: at, createdAt: at, updatedAt: at };
@@ -282,9 +292,10 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   for (const key of Object.keys(patch)) {
     if (!PATCH_KEYS.includes(key)) throw new Error(`unknown key: ${key} (allowed: ${PATCH_KEYS.join(", ")})`);
   }
+  if (patch.bookedReplacement !== undefined && typeof patch.bookedReplacement !== "boolean") throw new Error("bookedReplacement must be boolean");
   if (patch.excludedDays !== undefined) checkExcludedDays(patch.excludedDays);
   if (patch.status !== undefined && !STATUSES.includes(patch.status)) throw new Error(`bad status: ${patch.status}`);
-  if (patch.offered !== undefined) checkOffers(patch.offered);
+  if (patch.offered !== undefined) checkOffers(patch.offered, (patch.status ?? ledger.requests.find(r => r.id === id)?.status) !== "offered");
   const pending = patch.pendingOwner;
   if (pending) {
     if ("question" in pending && pending.alternatives !== undefined
@@ -362,10 +373,10 @@ export function recordDelivery(ledger: Ledger, id: string, kind: string, action:
   return { requests: ledger.requests.map((r) => r.id === id ? updated : r) };
 }
 
-// Open requests past the hold window: an `offered` one from its offer, an
-// `asked` one from when it was saved.
+// Age offers and booked replacement offers from their own hold timestamps;
+// an unanswered request ages from when it was saved.
 export function expiredRequests(ledger: Ledger, hours: number, now: number): Request[] {
-  return ledger.requests.filter((r) => OPEN.includes(r.status)
+  return ledger.requests.filter((r) => (OPEN.includes(r.status) || (r.status === "booked" && currentOffers(r).length))
     && now - Date.parse(r.status === "asked" ? r.createdAt : r.offeredAt!) >= hours * 3600_000);
 }
 
@@ -465,7 +476,7 @@ if (isMain(import.meta.url)) {
       case "update": {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
         const patch = jsonArg(values);
-        for (const key of ["status", "eventId", "offered", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location", "durationMin", "allowOverlap"]) {
+        for (const key of ["status", "eventId", "offered", "bookedReplacement", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location", "durationMin", "allowOverlap"]) {
           if (key in patch) throw new Error(`${key} is managed by calendar.ts or reminder-check.ts`);
         }
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => updateRequest(l, values.id!, patch, now));
@@ -488,6 +499,8 @@ if (isMain(import.meta.url)) {
             : { state: "completed", sendNow: false, instruction: "The send outcome is recorded. Do not send again. Link the returned chat uid if known; unknown delivery must not be retried automatically." };
         return { request, delivery };
       }
+      case "booked":
+        return { requests: readJson<Ledger>(path, EMPTY).requests.filter(r => r.status === "booked") };
       case "asked":
         return { requests: askedList(readJson<Ledger>(path, EMPTY), values.unnotified) };
       case "pending":
@@ -500,7 +513,7 @@ if (isMain(import.meta.url)) {
         return { requests: dueReminders(readJson<Ledger>(path, EMPTY), now, lead) };
       }
       default:
-        throw new Error("usage: ledger.ts find | add | save | update | delivery | expired | asked | pending | cleanup | reminders");
+        throw new Error("usage: ledger.ts find | add | save | update | delivery | expired | asked | booked | pending | cleanup | reminders");
     }
   });
 }

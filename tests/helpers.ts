@@ -29,7 +29,7 @@ export function cli(script: string, args: string[], env: Record<string, string>,
   return { status: proc.status, stdout: proc.stdout, stderr: proc.stderr, json };
 }
 
-export type CalendarEvent = { id: string; summary?: string; status: string; start: { dateTime: string }; end: { dateTime: string }; hangoutLink?: string; location?: string; extendedProperties?: { private: { meetlyOperation: string } } };
+export type CalendarEvent = { id: string; summary?: string; status: string; start: { dateTime: string }; end: { dateTime: string }; attendees?: { email: string; organizer?: boolean; self?: boolean }[]; hangoutLink?: string; location?: string; extendedProperties?: { private: { meetlyOperation: string } } };
 export const calendarEvent = (id: string, start: string, end: string): CalendarEvent => ({ id, summary: "PRIVATE CALENDAR TITLE", status: "confirmed", start: { dateTime: start }, end: { dateTime: end } });
 
 export function fakeCalendar(initial: CalendarEvent[]) {
@@ -64,6 +64,7 @@ export function fakeCalendar(initial: CalendarEvent[]) {
         if (flag("--to") !== undefined) event.end.dateTime = flag("--to")!;
         if (argv.includes("--with-meet")) event.hangoutLink = "https://meet.google.com/abc-defg-hij";
         if (flag("--location") !== undefined) event.location = flag("--location");
+        if (flag("--attendees") !== undefined) event.attendees = flag("--attendees")!.split(",").map(email => ({ email }));
         if (flag("--private-prop")) event.extendedProperties = { private: { meetlyOperation: flag("--private-prop")!.split("=")[1]! } };
         event.status = "confirmed"; events.set(id, event);
         return { output: JSON.stringify({ event }) };

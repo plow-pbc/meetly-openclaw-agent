@@ -14,7 +14,7 @@ import { calendarEvent, cli, fakeCalendar, tmpHome } from "./helpers.ts";
 
 const ctx = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "plow-owner",
   sessionKey: "agent:main:main", nativeChannelId: "owner-dm", config: {} };
-const args = { requestId: "mia", askedAt: "2026-10-03T16:00:00Z", text: "Patrick says, please bring the Q3 budget numbers." };
+const args = { outcome: "answer" as const, requestId: "mia", askedAt: "2026-10-03T16:00:00Z", text: "Patrick says, please bring the Q3 budget numbers." };
 const timeApproval = { askedAt: args.askedAt, start: "2026-10-05T20:00:00Z", end: "2026-10-05T20:30:00Z" };
 
 function fixture(t: TestContext) {
@@ -177,6 +177,32 @@ test("concurrent sends and stale clears cannot consume another question", async 
   assert.deepEqual(f.read().requests[0]!.pendingOwner, newer);
 });
 
+test("an applied calendar change is delivered in the group before its question clears", async t => {
+  const f = fixture(t);
+  let sends = 0;
+  const result = await answerOwner({ ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" },
+    { ...args, outcome: "calendar_change", text: "Updated the meeting to the library." }, async (to, text) => {
+      sends++;
+      assert.equal(to, "group-mia");
+      assert.match(text, /library/);
+      assert.ok(f.read().requests[0]!.pendingOwner);
+    });
+  assert.equal(sends, 1);
+  assert.deepEqual(result, { answered: true, sent: true, requestId: "mia", silent: true });
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+});
+
+test("an answer needs an explicit outcome before clearing or sending", async t => {
+  const f = fixture(t);
+  let sends = 0;
+  for (const outcome of [undefined, "guess", "decline_alternatives"]) {
+    const result = await answerOwner(ctx, { ...args, outcome } as any, async () => { sends++; });
+    assert.equal(sends, 0);
+    assert.ok("error" in result);
+    assert.ok(f.read().requests[0]!.pendingOwner);
+  }
+});
+
 function alternativesFixture(t: TestContext, mixed = false) {
   const f = fixture(t);
   t.mock.method(Date, "now", () => Date.parse("2026-10-03T08:00:00Z"));
@@ -234,7 +260,7 @@ test("exhausted-search approval cannot reserve a question replaced during its ca
   t.mock.method(globalThis, "fetch", async (url: any, init: RequestInit) => {
     if (!replacement && JSON.parse(String(init.body)).params.arguments.argv[2] === "create") {
       const refusal = await answerOwner({ ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" },
-        { ...args, declineAlternatives: true }, async () => assert.fail("refusal is already visible"));
+        { ...args, outcome: "decline_alternatives" }, async () => assert.fail("refusal is already visible"));
       assert.equal("error" in refusal, false);
       await guestAction({ messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "group-mia", requesterSenderId: "mia@example.com" },
         "ask_owner", { question: "Which entrance?" }, async () => {});
@@ -299,7 +325,7 @@ for (const decline of [false, true]) test(`exhausted-search owner decision appli
   const f = alternativesFixture(t);
   const deliveries: string[] = [];
   const { tool } = ownerTool(async input => { deliveries.push(input.payloads[0].text); return { status: "sent" }; });
-  const result = await tool.execute("decision", { ...args, text: "Patrick cannot offer another time.", declineAlternatives: decline,
+  const result = await tool.execute("decision", { ...args, text: "Patrick cannot offer another time.", outcome: decline ? "decline_alternatives" : "answer",
     constraints: { from: "2026-10-07", to: "2026-10-07", days: ["wed"] } });
   assert.equal(result.isError, false, JSON.stringify(result.details));
   assert.equal(f.read().requests[0]!.pendingOwner, undefined);
@@ -314,4 +340,38 @@ for (const decline of [false, true]) test(`exhausted-search owner decision appli
     assert.match(deliveries[0]!, /10:00|10:30|11:00/);
     assert.doesNotMatch(deliveries[0]!, /cannot offer/);
   }
+});
+
+for (const inGroup of [false, true]) test(`decline alternatives is an exclusive owner outcome: inGroup=${inGroup}`, async t => {
+  const f = fixture(t);
+  const context = inGroup ? { ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" } : ctx;
+  const pendingOwner = { question: "May I search again?", askedAt: args.askedAt, alternatives: { previousStarts: f.ledger.requests[0]!.offered.map(o => o.start) } };
+  writeJson(f.path, updateRequest(f.ledger, "mia", { pendingOwner }, Date.now()));
+  const sends: string[] = [];
+  const result = await answerOwner(context, { ...args, outcome: "decline_alternatives", text: "Keep the current times." },
+    async (_to, text) => { sends.push(text); });
+  assert.equal("error" in result, false, JSON.stringify(result));
+  assert.equal(sends.length, inGroup ? 0 : 1);
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+  assert.deepEqual(f.read().requests[0]!.offered, f.ledger.requests[0]!.offered);
+});
+
+for (const inGroup of [false, true]) test(`booked exhausted-search approval holds replacements without moving the event: group=${inGroup}`, async t => {
+  const f = alternativesFixture(t);
+  const booked = { start: "2026-10-05T10:00:00Z", end: "2026-10-05T11:00:00Z", account: "owner@example.com" };
+  f.cal.events.set("booked", calendarEvent("booked", booked.start, booked.end));
+  writeJson(f.path, updateRequest(f.read(), "mia", { status: "booked", booked, eventId: "booked", bookedReplacement: true }, Date.now()));
+  const deliveries: string[] = [];
+  const result = await answerOwner(inGroup ? { ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" } : ctx,
+    { ...args, outcome: "calendar_change", text: "Yes" }, async (_to, text) => { deliveries.push(text); });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  const saved = f.read().requests[0]!;
+  assert.equal(saved.status, "booked");
+  assert.deepEqual(saved.booked, booked);
+  assert.equal(saved.bookedReplacement, true);
+  assert.ok(saved.offered.some(o => Date.parse(o.start) === Date.parse("2026-10-05T10:30:00Z")));
+  assert.equal(saved.pendingOwner, undefined);
+  assert.equal(deliveries.length, 1);
+  assert.match(deliveries[0]!, /10:30/);
+  assert.ok(f.cal.calls.every(c => c[2] !== "update" && !(c[2] === "delete" && c[4] === "booked")));
 });
