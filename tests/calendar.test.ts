@@ -89,7 +89,7 @@ test("expiry wins before a later booking and leaves no bookable stale holds", as
   assert.ok([...f.events.values()].every(e => e.status === "cancelled"));
 });
 
-test("a ledger commit failure after the calendar update resumes without repeating the write", async t => {
+for (const revoked of [false, true]) test(`a ledger commit failure after the calendar update resumes without repeating the write: revoked=${revoked}`, async t => {
   const f = fixture(t);
   const rename = fs.renameSync;
   let fail = true;
@@ -103,8 +103,10 @@ test("a ledger commit failure after the calendar update resumes without repeatin
   assert.equal(f.read().status, "offered");
   assert.ok(f.events.get("hold-one")!.extendedProperties!.private.meetlyOperation);
   fail = false;
+  if (revoked) f.blockContact();
   await calendarAction("r_one", { action: "resume" }, f.options);
   assert.equal(f.read().status, "booked");
+  assert.equal(doNotContact(readJson<Ledger>(f.path, { requests: [] }), f.input.handle), revoked);
   assert.equal(f.calls.filter(c => c[2] === "update").length, 1);
 });
 
@@ -898,6 +900,40 @@ test("failed contact confirmation cannot authorize the previous offer", async t 
   assert.equal(f.read().pendingOwner, undefined);
   await calendarAction("r_one", { action: "book", start: proposed[0]!.start }, f.options);
   assert.equal(f.read().status, "booked");
+});
+
+for (const response of ["success", "lost", "pending"] as const) test(`contact revocation reconciles a sent booking update: ${response}`, async t => {
+  const f = fixture(t);
+  let sent!: MacCommand, writes = 0;
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] !== "update") return f.command(cmd);
+    sent = cmd; writes++;
+    f.blockContact();
+    if (response === "pending") return undefined;
+    const result = await f.command(cmd);
+    return response === "lost" ? undefined : result;
+  };
+  const options = { ...f.options, command };
+  const booking = calendarAction("r_one", { action: "book", start }, options);
+  if (response === "pending") {
+    await assert.rejects(booking, /unresolved/);
+    await assert.rejects(calendarAction("r_one", { action: "resume" }, options), /unresolved/);
+    assert.deepEqual(pendingCalendarWrites(), ["r_one"]);
+    await assert.rejects(calendarAction("r_one", { action: "expire" }, options), /unresolved/);
+    assert.ok(f.calls.every(c => c[2] !== "delete"));
+    await f.command(sent);
+    await calendarAction("r_one", { action: "resume" }, options);
+  } else await booking;
+  assert.equal(f.read().status, "booked");
+  assert.equal(f.read().eventId, "hold-one");
+  assert.equal(f.read().contactApproved, undefined);
+  assert.equal(doNotContact(readJson<Ledger>(f.path, { requests: [] }), f.input.handle), true);
+  assert.deepEqual(pendingCalendarWrites(), []);
+  assert.equal(writes, 1);
+  await calendarAction("r_one", { action: "expire" }, options);
+  assert.equal(f.events.get("hold-one")!.status, "confirmed");
+  assert.equal(f.events.get("hold-two")!.status, "cancelled");
+  await assert.rejects(calendarAction("r_one", { action: "book", start }, options), /Confirm in the owner's DM/);
 });
 
 for (const revokeAt of ["unresolved", "availability", "last-create"] as const) test(`contact revocation wins at ${revokeAt} and cleans the replacement`, async t => {
