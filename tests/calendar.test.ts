@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
-import { calendarAction, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
+import { approveTime, calendarAction, offerRequest, pendingCalendarWrites, resumePending, type CalendarOptions } from "../skills/meetly/scripts/calendar.ts";
 import { addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { macOutcome, type MacCommand, type MacOutcome } from "../skills/meetly/scripts/mac.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
@@ -573,4 +573,152 @@ test("an offer waiting for the lock cannot overwrite a newer saved duration", as
   assert.equal(f.read().durationMin, 60);
   assert.equal(f.read().offered[0]!.end, "2026-10-05T11:00:00Z");
   assert.equal(f.calls.filter(cmd => cmd[2] === "create").length, 1);
+});
+
+for (const approval of [false, true]) test(`pending approval does not change explicit booking mode: timeApproval=${approval}`, async t => {
+  const f = fixture(t);
+  const ledger = readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] });
+  ledger.requests[0]!.pendingOwner = { askedAt: new Date(now).toISOString(), start, end };
+  ledger.requests[0]!.allowOverlap = [{ account, id: "conflict" }];
+  writeJson(join(f.home, "ledger.json"), ledger);
+  f.events.set("conflict", calendarEvent("conflict", start, end));
+  if (approval) {
+    const result = await approveTime("r_one", {}, f.options);
+    assert.equal("approved" in result && result.approved, false);
+    assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
+    assert.equal(f.read().status, "offered");
+    assert.ok(f.read().pendingOwner);
+    assert.equal(f.calls.some(c => ["create", "update"].includes(c[2]!)), false);
+  } else {
+    const result = await calendarAction("r_one", { action: "book", start }, f.options);
+    assert.equal(result.request.status, "booked");
+    assert.deepEqual(result.request.allowOverlap, [{ account, id: "conflict" }]);
+  }
+});
+
+for (const busy of [false, true]) test(`time approval without a pending ask ${busy ? "refuses busy time" : "books a free time"}`, async t => {
+  const f = fixture(t);
+  const approvedStart = "2026-10-05T20:00:00Z", approvedEnd = "2026-10-05T20:30:00Z";
+  const ledger = readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] });
+  ledger.requests[0]!.allowOverlap = [{ account, id: "conflict" }];
+  writeJson(join(f.home, "ledger.json"), ledger);
+  if (busy) f.events.set("conflict", calendarEvent("conflict", approvedStart, approvedEnd));
+  const result = await approveTime("r_one", { start: approvedStart }, f.options);
+  assert.equal("approved" in result && result.approved, !busy);
+  if (busy) {
+    assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
+    assert.equal("near" in result && Date.parse(result.near!), Date.parse(approvedStart));
+    assert.equal(f.read().status, "offered");
+    assert.deepEqual(f.read().offered, f.input.offered);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE CALENDAR TITLE/);
+  } else {
+    assert.equal(f.read().status, "booked");
+    assert.equal(Date.parse(f.read().booked!.end), Date.parse(approvedEnd));
+  }
+  t.diagnostic(JSON.stringify({ approved: "approved" in result && result.approved, ...("code" in result ? { code: result.code, near: result.near, recovery: result.recovery } : {}) }));
+});
+
+test("a time approval reports a conflict that appears after its calendar read", async t => {
+  const f = fixture(t);
+  const command = async (cmd: MacCommand) => cmd.argv[2] === "update"
+    ? { error: "Calendar slot is busy", code: "calendar-conflict" as const } : f.command(cmd);
+  const result = await approveTime("r_one", { start }, { ...f.options, command });
+  assert.equal("approved" in result && result.approved, false);
+  assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
+  assert.equal(f.read().status, "offered");
+  assert.deepEqual(pendingCalendarWrites(), []);
+});
+
+
+test("a time approval never sends a conflict override even across its own hold", async t => {
+  const f = fixture(t);
+  const writes: string[][] = [];
+  const command = async (cmd: MacCommand) => {
+    if (cmd.argv[2] !== "create") return f.command(cmd);
+    writes.push(cmd.argv);
+    return { error: "Calendar slot is busy", code: "calendar-conflict" as const };
+  };
+  const result = await approveTime("r_one", { start: "2026-10-05T10:15:00Z" }, { ...f.options, command });
+  assert.equal("approved" in result && result.approved, false);
+  assert.equal(writes.length, 1);
+  assert.equal(writes.some(c => c.includes("--confirm-conflict")), false);
+});
+
+
+test("time approval uses the duration committed while it waits for the calendar lock", async t => {
+  const f = fixture(t);
+  let entered!: () => void, release!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const replacement = calendarAction("r_one", { action: "duration", durationMin: 60, topic: "Hour",
+    offered: [{ start: "2026-10-07T10:00:00Z", end: "2026-10-07T11:00:00Z" }] }, { ...f.options,
+    command: async cmd => { if (cmd.argv[2] === "create") { entered(); await gate; } return f.command(cmd); } });
+  await waiting;
+  const approval = approveTime("r_one", { start }, f.options);
+  release();
+  await replacement;
+  const result = await approval;
+  assert.equal("approved" in result && result.approved, true);
+  assert.equal(f.read().durationMin, 60);
+  assert.equal(Date.parse(f.read().booked!.end) - Date.parse(f.read().booked!.start), 60 * 60_000);
+  t.diagnostic(JSON.stringify({ durationMin: f.read().durationMin, booked: f.read().booked }));
+});
+
+for (const batch of [false, true]) test(`deferred time approval preserves structured busy recovery on resume: batch=${batch}`, async t => {
+  const f = fixture(t);
+  const options = { ...f.options,
+    command: async (cmd: MacCommand) => cmd.argv[2] === "update" ? { handle: "approval" } : f.command(cmd),
+    poll: async () => ({ handle: "approval" }) };
+  await assert.rejects(approveTime("r_one", { start }, options), /unresolved/);
+  const resumed = { ...options, poll: async () => ({ error: "PRIVATE CONFLICT DETAILS", code: "calendar-conflict" as const }) };
+  const result = batch ? (await resumePending(resumed)).results[0]! : await calendarAction("r_one", { action: "resume" }, resumed);
+  assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
+  assert.equal("approved" in result && result.approved, false);
+  assert.equal("near" in result && Date.parse(result.near as string), Date.parse(start));
+  assert.deepEqual("recovery" in result && result.recovery, { action: "find_nearest", allowOverlap: false });
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE CONFLICT/);
+  assert.equal(f.read().status, "offered");
+  assert.deepEqual(pendingCalendarWrites(), []);
+  t.diagnostic(JSON.stringify(result));
+});
+
+for (const scenario of [
+  { format: "unknown", link: false, approval: true, attendees: undefined },
+  { format: "meet", link: false, approval: true, attendees: "guest@example.net" },
+  { format: "meet", link: true, approval: false, attendees: "guest@example.net" },
+] as const) for (const batch of [false, true]) test(`booking completion matches post-commit recovery: ${JSON.stringify(scenario)}, batch=${batch}`, async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "format", format: scenario.format }, f.options);
+  let completed: Awaited<ReturnType<typeof f.command>>;
+  const options = { ...f.options,
+    command: async (cmd: MacCommand) => {
+      if (cmd.argv[2] !== "update") return f.command(cmd);
+      completed = await f.command(cmd);
+      if (!scenario.link) {
+        const event = JSON.parse(completed.output!);
+        delete event.event.hangoutLink;
+        completed = { output: JSON.stringify(event) };
+      }
+      return { handle: "approval" };
+    }, poll: async () => ({ handle: "approval" }) };
+  await assert.rejects(calendarAction("r_one", { action: "book", start,
+    timeApproval: scenario.approval, attendees: scenario.attendees }, options), /unresolved/);
+  const journal = join(f.home, "calendar/r_one.json");
+  const intent = readJson(journal, {});
+  const resumed = { ...options, poll: async () => completed };
+  const result = batch ? (await resumePending(resumed)).results[0]! : await calendarAction("r_one", { action: "resume" }, resumed);
+  assert.equal("approved" in result && result.approved, scenario.approval);
+  assert.equal("meetUrl" in result && result.meetUrl, scenario.link ? "https://meet.google.com/abc-defg-hij" : null);
+  assert.equal("invitationSent" in result && result.invitationSent, !!scenario.attendees);
+  assert.equal("warning" in result ? result.warning : undefined, scenario.format === "meet" && !scenario.link ? "no-meet-link" : undefined);
+  assert.equal(f.read().status, "booked");
+  assert.deepEqual(pendingCalendarWrites(), []);
+  t.diagnostic(JSON.stringify(result));
+  writeJson(journal, intent);
+  const calls = f.calls.length;
+  const recovered = batch ? (await resumePending(resumed)).results[0]! : await calendarAction("r_one", { action: "resume" }, resumed);
+  assert.deepEqual(recovered, result);
+  assert.equal(f.calls.length, calls, "post-commit recovery does not repeat calendar writes");
+  assert.deepEqual(pendingCalendarWrites(), []);
+  t.diagnostic(JSON.stringify({ recovered }));
 });

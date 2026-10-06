@@ -247,6 +247,14 @@ test("replacement slot search keeps saved and newly resolved overlap authorizati
   assert.equal(checked.status, 0, checked.stderr);
   assert.equal(checked.json.free, true);
   assert.equal(checked.json.slot.end, end);
+  const approval = cli("slots.ts", [...args, "--no-overlap"], env);
+  assert.equal(approval.status, 0, approval.stderr);
+  assert.equal(approval.json.free, false);
+  assert.equal(approval.json.reason, "busy");
+  const alternatives = cli("slots.ts", ["--request", "r_one", "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--near", start, "--no-overlap"], env);
+  assert.equal(alternatives.status, 0, alternatives.stderr);
+  assert.equal(alternatives.json.slots[0].start, end);
+
   assert.doesNotMatch(checked.stdout, /saved|new|own-hold|allowOverlap/);
   writeJson(busyFile, { coverage, busy: [{ id: "saved", start, end, account: "other@example.com" }] });
   const blocked = cli("slots.ts", args, env);

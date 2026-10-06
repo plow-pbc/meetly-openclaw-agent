@@ -74,7 +74,7 @@ test("a finished setup is passed along, and output that is not a status adds not
 test("the plugin registers one before_prompt_build hook that skips other turns", async () => {
   const hooks: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
   gate.register({ registerTool() {}, on: (name: string, fn: (event: unknown, ctx: unknown) => unknown) => { hooks[name] = fn; }, logger: { info() {} } });
-  assert.deepEqual(Object.keys(hooks), ["agent_end", "before_prompt_build"]);
+  assert.deepEqual(Object.keys(hooks), ["before_tool_call", "agent_end", "before_prompt_build"]);
   assert.equal(await hooks.before_prompt_build!({}, { channel: "plow", sessionKey: "agent:main:plow:group:x" }), undefined);
 });
 
