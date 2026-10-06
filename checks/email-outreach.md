@@ -1,15 +1,18 @@
 # Email outreach: local validation
 
-The pinned production base includes email guest-tool support. Both integration
+The pinned production base includes email guest-tool support. All four integration
 scenarios pass through its real channel, policy pipeline, email sender,
 Meetly guest tools and calendar writer. Network access is disabled; Plow and
 calendar services are fixtures and model choices are scripted. No live email
 or live-model run was performed.
 
-[Recorded fixture threads](email-outreach.html) show this run's messages. The two channel scenarios
-verify confirmed and uncertain opener receipts, first-reply thread recovery,
+[Recorded fixture threads](email-outreach.html) show this run's messages. The four channel scenarios
+verify confirmed, uncertain, refused and lost-transport opener receipts, rejection
+of unlinked threads even when their participants match,
 booking by a CC assistant without inviting that assistant, invitation delivery,
-release of unused holds, private owner questions and confirmed email answers.
+release of unused holds, awaited private owner questions, suppressed finals and
+confirmed email answers. Definite failures release all three holds; uncertain
+receipts remain reserved and unlinked without repeating the opener.
 The base emitted a nonfatal SQLite maintenance warning; both scenarios passed.
 
 Two migration regressions failed before the fix: old text ledger records lack a

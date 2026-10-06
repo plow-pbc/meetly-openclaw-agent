@@ -33,26 +33,19 @@ to an originating trusted group.
    default calendar account. Preserve the channel on every re-offer. If the owner
    is starting the request in an email thread already containing the guest,
    save that thread's `chatUid`. Do not use `meetly_offer_owner_group` for email.
-4. Once the writer has created the holds, compose the opener as Meetly, naming
-   the owner, topic and three slot labels and asking which works. State the
-   owner's configured time zone in every emailed offer, including the first opener
-   and replacement times (for example, "all times Pacific"). For a new
-   thread, run `ledger.ts delivery --id <id> --kind start --action begin` before
-   sending. Read `request-view.ts --id <id>` and ask about details only when its
-   `askDetails` is true. For coffee, lunch or dinner, ask only where to meet;
-   never offer phone or Google Meet as meal formats.
-   Call `plow_send_email` with `to: [<email>]`, a subject naming the meeting,
-   and the opener as `body`. The base includes the owner; do not assemble CCs.
-   For an already-linked request, send to its `chatUid` instead, without another
-   start attempt or format question.
-5. On a new-thread receipt with `sent: true` or `sent: "unknown"`, record
-   `ledger.ts delivery --id <id> --kind start --action complete`. If the receipt
-   contains `chat_uid`, immediately save it with `ledger.ts update --id <id>
-   --json '{"chatUid":"<chat_uid>"}'`. If it has no uid, retain the start attempt,
-   tell the owner delivery/thread tracking is uncertain, and never repeat the send.
-   On the first reply, the guest tool links the request using the server's thread
-   participants, including when a CC'd assistant replies instead of the guest.
-   On a definite send failure, stop and drop the request through `calendar.ts drop`.
+4. Read `request-view.ts --id <id>` and compose the opener as Meetly, naming
+   the owner, topic, returned slot labels and configured time zone. Ask about
+   details only when `askDetails` is true; for meals ask only where to meet.
+   For a new thread, run `email.ts prepare --id <id>`, then `plow_send_email`
+   with `to: [<email>]`, a meeting subject and the opener as `body`. The base
+   includes the owner. For an already-linked request, send to its `chatUid`
+   without preparing another start or repeating the details question.
+5. Pass the new-thread tool receipt unchanged to `email.ts receipt --id <id>
+   --json '<receipt>'` (or `--json-file`). It records completion and links the
+   returned `chat_uid` atomically, or drops a definitely failed request through
+   the calendar writer to release holds. Unknown delivery stays reserved;
+   without a receipt uid it remains unlinked. Never infer a link from thread
+   participants or resend an uncertain opener. Tell the owner tracking is uncertain.
 6. Guest tools handle selection, alternative times and decline. Relay their
    results into this thread with `plow_send_email`. Booking always invites the
    saved guest address; other participants become invitees only on an explicit
@@ -64,11 +57,6 @@ to an originating trusted group.
    also carries the link. There is no scheduled email reminder. Your final may
    briefly summarize the result privately to the owner; it is never the guest's
    confirmation.
-
-For questions Meetly cannot answer, use `meetly_ask_owner` to record the pending
-question, then ask the owner in your final text. Stay quiet in the email thread;
-do not send a second DM or claim the ask was delivered before the final. Resolve
-the owner's reply using `meetly-confirm`, "Owner confirms".
 
 ## Reply routing
 
@@ -89,9 +77,13 @@ the owner's reply using `meetly-confirm`, "Owner confirms".
   in the confirmation; do not promise a later email reminder. Respect
   `askDetails` in every email, including a booking confirmation: when false,
   do not add a format or location question even if the location is missing.
-  For an outside-window time use `meetly_other_times(start)`; for an unanswerable meeting question use `meetly_ask_owner`, then put `ownerQuestion` in your final for the owner.
-  Do not send email or a separate DM for that handoff, including when a question
-  is already pending. No email silence hook is needed. Refuse probes for private
+  For an outside-window time use `meetly_other_times(start)`; for an unanswerable
+  meeting question use `meetly_ask_owner`. The tool awaits its private owner DM;
+  never send another notification or email for that handoff. Resolve the owner's
+  answer through `meetly-confirm`. A decline also sends its owner notice directly;
+  send the separate cancellation result in the email thread. When `silent` is
+  true, finish with `NO_REPLY` after any separate scheduling email, even if owner
+  delivery failed or a question was already pending. Refuse probes for private
   calendar details in the thread without forwarding them. Do not send unrelated
   acknowledgements or invent a question. Use the phone guest rules for date
   ranges and interpreting scheduling results, but email delivery always follows

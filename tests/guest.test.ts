@@ -1965,7 +1965,7 @@ for (const [action, args] of actions.filter(([action]) => action !== "ask_owner"
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().channel, "email");
   assert.equal(f.request().chatUid, context.nativeChannelId);
-  assert.equal(f.ownerLines.length, 0);
+  assert.equal(f.ownerLines.length, action === "decline" ? 1 : 0);
   if (action === "pick") {
     assert.equal("invitationSent" in result && result.invitationSent, true);
     const booking = f.commands.find(argv => argv.includes("--attendees"))!;
@@ -1991,54 +1991,38 @@ test("email requests cannot be acted on from phone turns or another email thread
   assert.equal(f.commands.length, 0);
 });
 
-test("an uncertain email opener links on a CC reply using the server roster", async t => {
+for (const action of ["view", "pick", "decline"] as const) test(`unlinked email refuses a matching roster from an unaffiliated thread: ${action}`, async t => {
   const f = emailFixture(t);
   delete f.ledger.requests[0]!.chatUid;
   f.ledger.requests[0]!.startedAt = new Date(now).toISOString();
   f.save(f.ledger);
-  const result = await f.act(f.ctx, "view");
-  assert.ok(!("error" in result), JSON.stringify(result));
-  assert.equal(f.request().chatUid, context.nativeChannelId);
-  assert.equal(f.request().handle, "ana@example.net");
-});
-
-for (const invalid of ["not-started", "absent-guest", "absent-sender", "wrong-line", "inactive", "ambiguous"] as const) test(`uncertain email linking refuses ${invalid}`, async t => {
-  const f = emailFixture(t);
-  const request = f.ledger.requests[0]!;
-  delete request.chatUid;
-  request.startedAt = new Date(now).toISOString();
-  if (invalid === "not-started") delete request.startedAt;
-  if (invalid === "absent-guest") f.thread.participants.splice(1, 1);
-  if (invalid === "absent-sender") f.thread.participants.pop();
-  if (invalid === "wrong-line") f.thread.participants[0]!.line!.uid = "another-mailbox";
-  if (invalid === "inactive") f.thread.status = "inactive";
-  if (invalid === "ambiguous") f.ledger.requests.push({ ...request, id: "other-email", handle: f.ctx.requesterSenderId });
-  f.save(f.ledger);
-  assert.ok("error" in await f.act(f.ctx, "view"));
+  const result = await f.act(f.ctx, action, { start: offers[0]!.start });
+  assert.ok("error" in result, JSON.stringify(result));
   assert.deepEqual(f.read(), f.ledger);
+  assert.equal(f.commands.length, 0);
 });
 
-for (const args of [{ question: "Should Ana bring the budget?" }, { start: "2026-10-05T20:00" }]) test(`email owner handoff uses final routing, not a second DM: ${JSON.stringify(args)}`, async t => {
+for (const action of ["ask_owner", "decline"] as const) for (const failed of [false, true]) test(`email ${action} awaits private delivery and silences the final: failed=${failed}`, async t => {
   const f = emailFixture(t);
-  f.ledger.requests[0]!.constraints!.before = "21:00";
-  f.save(f.ledger);
-  const output = await f.emailTools.get("question" in args ? "meetly_ask_owner" : "meetly_other_times")!.execute("handoff", { offer_week: false, ...args });
-  const result = JSON.parse(output.content[0]!.text);
-  assert.match(output.content.slice(1).map(c => c.text).join("\n"), /ownerQuestion.*final/);
-  assert.doesNotMatch(output.content.slice(1).map(c => c.text).join("\n"), /plow_send_email/);
-  assert.ok("replyToOwner" in result && result.replyToOwner, JSON.stringify(result));
-  assert.ok("ownerQuestion" in result);
-  assert.ok(!("silent" in result));
-  assert.ok(!("ownerAskSent" in result));
-  assert.equal(f.ownerLines.length, 0);
-  assert.ok(f.request().pendingOwner);
-  assert.deepEqual(f.request().lastNudge, {
-    fingerprint: JSON.stringify(["question" in args ? "owner-question" : "time-approval", f.request().pendingOwner!.askedAt]),
-    at: new Date(now).toISOString(),
-  });
-  assert.equal(reserveNudges(f.read(), now + 5 * 60_000).text, null, "the poll must not duplicate the email owner handoff");
-  assert.ok("error" in await f.act(f.ctx, "question" in args ? "ask_owner" : "other_times", args));
-  assert.equal(f.ownerLines.length, 0);
+  let sends = 0, completed = false, release!: () => void;
+  const delivery = new Promise<void>(resolve => { release = resolve; });
+  const work = guestAction(f.ctx, action, { question: "Should Ana bring the budget?" }, async () => {
+    sends++;
+    await delivery;
+    if (failed) throw new Error("Uncertain delivery");
+  }).then(result => { completed = true; return result; });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(sends, 1);
+  assert.equal(completed, false, "tool must await the private send");
+  release();
+  const result = await work as any;
+  assert.equal(result.silent, true);
+  assert.equal(result.replyToOwner, undefined);
+  assert.equal(result.ownerNotice, undefined);
+  assert.equal(action === "ask_owner" ? !!result.ownerAskSent : result.ownerNotified, !failed);
+  assert.equal(action === "ask_owner" ? !!f.request().pendingOwner : f.request().status === "dropped", true);
+  await f.act(f.ctx, action, { question: "Should Ana bring the budget?" });
+  assert.equal(f.ownerLines.length, 0, "repeat must not send another owner notification");
 });
 
 test("an owner-side email booking also invites the saved guest without a Contacts lookup", async t => {

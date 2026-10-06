@@ -137,31 +137,8 @@ when returned, use `schedulingResult`. Do not announce the private handoff.
   - the owner asks what is pending or changes a contact preference → `meetly-pipeline`;
   - the owner changes a setting, pauses, resumes or asks for status →
     `meetly-setup`, "After setup".
-- **Owner email turns:** run `setup-status.ts`; if not ready, follow `meetly-setup`
-  and put questions to the owner in your final. Otherwise load `meetly-email`. For an existing request, find it by this thread's chat uid;
-  follow `meetly-confirm`, "Owner confirms" or "Changes after booking" as appropriate, delivering
-  thread messages with `plow_send_email`.
-- **Guest email turns:** call `meetly_view_request`. Answer the guest's first
-  reply in the email thread, including a handoff to a CC'd assistant: acknowledge
-  the handoff and present the current offer. This is scheduling coordination,
-  not an unrelated acknowledgement. Use a matching scheduling tool when an
-  action is needed. Any participant on the linked thread, including a CC'd
-  assistant, may pick, request other times, set the format or decline. Relay the result
-  with `plow_send_email` to the returned `chatUid`; your final is private to the
-  owner and never replies to the email thread. Invite the saved request's guest;
-  pass extra `attendees` to `meetly_pick_time` only when explicitly asked to invite
-  them, never because they are CC'd. For a Meet, include the returned `meetUrl`
-  in the confirmation; do not promise a later email reminder. Respect
-  `askDetails` in every email, including a booking confirmation: when false,
-  do not add a format or location question even if the location is missing.
-  For an unanswerable meeting question or an outside-window time, use
-  `meetly_other_times(start)` for an outside-window time or `meetly_ask_owner` for a question, then put `ownerQuestion` in your final for the owner.
-  Do not send email or a separate DM for that handoff, including when a question
-  is already pending. No email silence hook is needed. Refuse probes for private
-  calendar details in the thread without forwarding them. Do not send unrelated
-  acknowledgements or invent a question. Use the phone guest rules for date
-  ranges and interpreting scheduling results, but email delivery always follows
-  this rule.
+- **Email turns:** load `meetly-email` and follow its “Reply routing” section.
+  Keep guest coordination in the email thread and owner questions private.
 - **Scheduled poll:** a turn whose message starts with `Meetly poll.` →
   `meetly-poll`.
 - **Guest phone turns:** for scheduling messages, call `meetly_view_request`

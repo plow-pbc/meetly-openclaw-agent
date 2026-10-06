@@ -8,9 +8,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { offerRequest } from "../skills/meetly/scripts/calendar.ts";
 import { answerOwner } from "../skills/meetly/scripts/answer-owner.ts";
-import { recordDelivery, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
+import { emailStart } from "../skills/meetly/scripts/email.ts";
+import { recordDelivery, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
-import { readJson, updateJson, writeJson } from "../skills/meetly/scripts/store.ts";
+import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { registerGuestTools } from "../plugin/guest-tools.js";
 
 const load = (path: string) => import(path);
@@ -28,7 +29,8 @@ const guestNames = ["meetly_view_request", "meetly_pick_time", "meetly_other_tim
 const now = Date.parse("2026-10-03T08:00:00Z");
 const reports: object[] = [];
 
-for (const unknown of [false, true]) test(`email outreach through the base channel; uncertain opener=${unknown}`, async t => {
+for (const mode of ["sent", "unknown", "failed", "transport-unknown"]) test(`email outreach through the base channel; opener=${mode}`, async t => {
+  const unknown = mode === "unknown" || mode === "transport-unknown";
   const home = mkdtempSync(join(tmpdir(), "meetly-email-flow-"));
   // The host's session workers may still be flushing after the turn completes.
   process.once("exit", () => rmSync(home, { recursive: true, force: true, maxRetries: 5 }));
@@ -101,6 +103,8 @@ for (const unknown of [false, true]) test(`email outreach through the base chann
         assert.ok(request().offered.every(o => o.holdId));
         assert.equal([...events.values()].filter(event => event.status !== "cancelled").length, 3);
         assert.deepEqual(body.members, [ana.provider_key]);
+        if (mode === "failed") return Response.json({ error: "fixture refusal" }, { status: 400 });
+        if (mode === "transport-unknown") throw new TypeError("fixture lost receipt");
         messages.push({ thread: "meeting", from: "Meetly", body: body.body });
         return Response.json({ status: unknown ? "unknown" : "sent", chat_uid: unknown ? null : "meeting" });
       }
@@ -122,24 +126,37 @@ for (const unknown of [false, true]) test(`email outreach through the base chann
     } },
   } };
   base.register({ registrationMode: "full", logger: { info() {} }, runtime, on() {}, registerChannel(value: any) { channel = value.plugin; }, registerTool(factory: any) { factories.push(factory); } });
-  registerGuestTools({ registerTool(factory: any) { factories.push(factory); } });
+  registerGuestTools({ runtime, registerTool(factory: any) { factories.push(factory); } }, undefined, async () => {
+    const outbound = await load(require.resolve("openclaw/plugin-sdk/channel-outbound"));
+    return { ...outbound, sendDurableMessageBatch: async (args: any) => {
+      try { return await outbound.sendDurableMessageBatch(args); }
+      catch (error) { t.diagnostic(String(error)); throw error; }
+    } };
+  });
   const context = (chat: string, senderIsOwner: boolean) => ({ config: cfg, messageChannel: "plow", agentAccountId: "email",
     nativeChannelId: chat, requesterSenderId: senderIsOwner ? "plow-owner" : ea.provider_key, senderIsOwner,
     sessionKey: `agent:main:plow:email:direct:${chat}` });
   const tools = (ctx: any) => new Map(factories.map(factory => { const tool = factory(ctx); return [tool.name, tool]; }));
-  const send = async (ctx: any, args: object) => {
+  const send = async (ctx: any, args: object, allowFailure = false) => {
     const result = await (tools(ctx).get("plow_send_email") as any).execute("email", args);
-    assert.ok(!result.isError, JSON.stringify(result)); return result.details ?? JSON.parse(result.content[0].text);
+    if (!allowFailure) assert.ok(!result.isError, JSON.stringify(result)); return result.details ?? JSON.parse(result.content[0].text);
   };
   const offered = [5, 6, 7].map(day => ({ start: `2026-10-0${day}T10:00:00Z`, end: `2026-10-0${day}T10:30:00Z`, account: config.defaultAccount }));
   await offerRequest({ channel: "email", origin: "owner", handle: ana.provider_key, name: "Ana", topic: "coffee", meal: "coffee", durationMin: 30,
     constraints: { from: "2026-10-05", to: "2026-10-11" }, format: "meet", locale: "en-US", offered });
-  updateJson(ledgerPath, { requests: [] } as Ledger, l => recordDelivery(l, request().id, "start", "begin", now));
+  await emailStart(request().id);
   const opened = await send(context("instruction", true), { to: [ana.provider_key], subject: "Coffee with Alex",
-    body: "Hi Ana, I'm Meetly, Alex's scheduling assistant. Alex would like coffee over Google Meet next week. Alex is free Mon Oct 5, Tue Oct 6, or Wed Oct 7, each at 10:00 AM UTC for 30 minutes. Which works?" });
-  assert.equal(opened.sent, unknown ? "unknown" : true);
-  updateJson(ledgerPath, { requests: [] } as Ledger, l => recordDelivery(l, request().id, "start", "complete", now));
-  if (opened.chat_uid) updateJson(ledgerPath, { requests: [] } as Ledger, l => updateRequest(l, request().id, { chatUid: opened.chat_uid }, now));
+    body: "Hi Ana, I'm Meetly, Alex's scheduling assistant. Alex would like coffee over Google Meet next week. Alex is free Mon Oct 5, Tue Oct 6, or Wed Oct 7, each at 10:00 AM UTC for 30 minutes. Which works?" }, true);
+  if (mode === "failed" || mode === "transport-unknown") assert.equal(opened.success, false);
+  else assert.equal(opened.sent, unknown ? "unknown" : true);
+  await emailStart(request().id, opened);
+  if (mode === "failed") {
+    assert.equal(request().status, "dropped");
+    assert.equal([...events.values()].filter(event => event.status !== "cancelled").length, 0);
+    reports.push({ mode, messages, status: request().status, holdsReleased: 3, assertions: "failed receipt drops request and releases holds" });
+    if (process.env.MEETLY_EMAIL_REPORT) writeFileSync(process.env.MEETLY_EMAIL_REPORT, JSON.stringify({ scenarios: reports }, null, 2));
+    return;
+  }
   assert.throws(() => recordDelivery(ledger(), request().id, "start", "begin", now), /already attempted/);
 
   let frame = 0;
@@ -169,6 +186,21 @@ for (const unknown of [false, true]) test(`email outreach through the base chann
     assert.ok(dispatched, "the base must dispatch the email turn");
     if (dispatchError) throw dispatchError;
   }
+  if (unknown) {
+    await receive("Tuesday at 10 works for Ana.", async (dispatch, available) => {
+      for (const [name, args] of [["meetly_view_request", {}], ["meetly_pick_time", { start: offered[1]!.start }], ["meetly_decline", {}]] as const) {
+        const result = (await available.get(name).execute("unlinked", args)).details;
+        assert.ok(result.error, JSON.stringify(result));
+      }
+      assert.equal(request().chatUid, undefined);
+      assert.equal(request().status, "offered");
+      await dispatch.delivery.deliver({ text: "NO_REPLY" });
+    });
+    assert.equal(posts.filter(post => post.path === "/chats").length, 1);
+    reports.push({ mode, unknownOpener: true, messages, status: request().status, linked: false, assertions: "unaffiliated thread refused; opener not repeated" });
+    if (process.env.MEETLY_EMAIL_REPORT) writeFileSync(process.env.MEETLY_EMAIL_REPORT, JSON.stringify({ scenarios: reports }, null, 2));
+    return;
+  }
   await receive("Tuesday at 10 works for Ana.", async (dispatch, available) => {
     const viewed = (await available.get("meetly_view_request").execute("view", {})).details;
     assert.equal(viewed.chatUid, "meeting");
@@ -191,9 +223,9 @@ for (const unknown of [false, true]) test(`email outreach through the base chann
   const beforeQuestion = posts.length;
   await receive("Should Ana bring the budget?", async (dispatch, available) => {
     const result = (await available.get("meetly_ask_owner").execute("question", { question: "Should Ana bring the budget?" })).details;
-    assert.equal(result.replyToOwner, true);
-    assert.equal(result.silent, undefined);
-    await dispatch.delivery.deliver({ text: `Ana's assistant asked in the coffee thread: ${result.ownerQuestion}` });
+    assert.equal(result.ownerAskSent, true, JSON.stringify(result));
+    assert.equal(result.silent, true);
+    await dispatch.delivery.deliver({ text: "NO_REPLY" });
   });
   assert.deepEqual(posts.slice(beforeQuestion).map(post => post.path), ["/chats/home/messages"]);
   const ownerContext = { ...context("home", true), agentAccountId: "chat", sessionKey: "agent:main:main" };
@@ -204,6 +236,6 @@ for (const unknown of [false, true]) test(`email outreach through the base chann
   await send(context("instruction", true), planned.email as object);
   await answerOwner(ownerContext, { ...answer, emailSent: true }, async () => assert.fail("no phone send"));
   assert.equal(request().pendingOwner, undefined);
-  reports.push({ unknownOpener: unknown, messages, booking: booked, holdsReleased: 2, guestTools: guestNames, status: request().status, assertions: "passed" });
+  reports.push({ mode, unknownOpener: unknown, messages, booking: booked, holdsReleased: 2, guestTools: guestNames, status: request().status, assertions: "passed" });
   if (process.env.MEETLY_EMAIL_REPORT) writeFileSync(process.env.MEETLY_EMAIL_REPORT, JSON.stringify({ mode: "Offline fixtures; scripted model choices; real base dispatch, policy, email tool and calendar writer", scenarios: reports }, null, 2));
 });
