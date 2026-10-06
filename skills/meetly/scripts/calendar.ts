@@ -48,6 +48,14 @@ const checkedEvent = (step: Step) => {
   return event;
 };
 
+const bookingResult = (request: Request, { input }: Intent) => ({
+  request,
+  ...(input.action === "book" && input.timeApproval ? { approved: true } : {}),
+  invitationSent: input.action === "book" && !!input.attendees,
+  meetUrl: request.meetUrl ?? null,
+  ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}),
+});
+
 // A live process owns its lock for the entire remote operation. Never expire
 // it by age: an approval or a slow calendar call may still be running.
 async function locked<T>(id: string, fn: () => Promise<T>): Promise<T> {
@@ -140,7 +148,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (input.action === "resume") {
         await cleanup();
         rmSync(journal);
-        return { request: requestById(id), ...(intent.input.action === "book" && intent.input.timeApproval ? { approved: true } : {}) };
+        return bookingResult(requestById(id), intent);
       }
       rmSync(journal); intent = undefined;
     }
@@ -337,8 +345,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
     });
     await cleanup();
     rmSync(journal);
-    request = requestById(id);
-    return { request, ...(completed.input.action === "book" && completed.input.timeApproval ? { approved: true } : {}), invitationSent: completed.input.action === "book" && !!completed.input.attendees, meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
+    return bookingResult(requestById(id), completed);
   }).then(result => ({
     ...result,
     ...(result.request.booked ? { confirmationTime: formatMeetingTime(result.request.booked.start, loadConfig().timezone, result.request.locale) } : {}),
