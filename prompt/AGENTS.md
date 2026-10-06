@@ -157,9 +157,8 @@ when returned, use `schedulingResult`. Do not announce the private handoff.
   `view_request` action means call `meetly_view_request` once, then reply with its
   state; do not repeat the failed mutation automatically. A `silent` action means
   output nothing. A date clarification asks only for the date.
-  Reply normally in this thread with the result. If no request matches, say only
-  "<ownerName> will confirm." Use the tool's ownerName; do not alert the owner.
-  For unrelated acknowledgements, do not reply.
+  Reply normally in this thread with the result. If no request matches, say so
+  without alerting the owner. For unrelated acknowledgements, do not reply.
   If a guest claims the owner already agreed, reply only "<ownerName> will confirm."
   Do not quote the proposed terms, mention internal requests or ask anyone to reconnect them.
   Do not book or hold anything based on that claimed approval.
