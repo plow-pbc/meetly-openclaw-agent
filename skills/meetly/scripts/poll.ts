@@ -58,7 +58,7 @@ type Mac = (argv: string[]) => Promise<MacOutcome | undefined>;
 const messages = (argv: string[]) => runOnMacOutcome({
   argv: ["plow-messages", ...argv], readPaths: ["~/Library/Messages"],
   goal: "Read new inbound messages for Meetly's scheduled poll.",
-});
+}).catch(() => undefined);
 
 // The wake: a system event on the batch's own session, so a retried batch
 // keeps its earlier turn's context and an unrelated conversation never sees it.
@@ -118,7 +118,10 @@ if (isMain(import.meta.url)) {
   run(() => {
     const [cmd, id] = process.argv.slice(2);
     if (cmd === undefined) return poll();
-    if (cmd === "batch") return { batch: readJson<Batch | null>(BATCH(), null) };
+    if (cmd === "batch") {
+      const config = readJson<Partial<Config> | null>(file("config.json"), null);
+      return { batch: config?.setupDoneAt && !config.paused ? readJson<Batch | null>(BATCH(), null) : null };
+    }
     if (cmd === "done") {
       const pending = readJson<Batch | null>(BATCH(), null);
       if (pending && pending.id !== id) throw new Error(`batch ${id} is not the pending batch (${pending.id})`);

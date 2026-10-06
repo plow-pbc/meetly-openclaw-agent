@@ -5,7 +5,7 @@ import { poll, TURN_MS, type Batch } from "../skills/meetly/scripts/poll.ts";
 import type { Proc } from "../skills/meetly/scripts/cron-backend.ts";
 import type { Cursor } from "../skills/meetly/scripts/cursor.ts";
 import type { MacOutcome } from "../skills/meetly/scripts/mac.ts";
-import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
+import { readJson, removeFile, writeJson } from "../skills/meetly/scripts/store.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
 const T0 = Date.parse("2026-10-05T12:00:00Z");
@@ -177,4 +177,53 @@ test("done refuses a batch that is not the pending one", async () => {
   const res = cli("poll.ts", ["done", "123"], { MEETLY_HOME: f.home });
   assert.notEqual(res.status, 0);
   assert.ok(f.batch());
+});
+
+for (const error of [new DOMException("relay timed out", "TimeoutError"), new TypeError("fetch failed")])
+test(`relay transport failure still tracks warnings and dispatches maintenance: ${error.name}`, async t => {
+  const f = fixture();
+  const token = process.env.PLOW_MCP_BRIDGE_TOKEN;
+  process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture-token";
+  t.after(() => { if (token === undefined) delete process.env.PLOW_MCP_BRIDGE_TOKEN; else process.env.PLOW_MCP_BRIDGE_TOKEN = token; });
+  t.mock.method(globalThis, "fetch", async () => { throw error; });
+  const wakes: string[][] = [];
+  const run = (now: number) => poll({ now, runner: argv => { wakes.push(argv); return { status: 0, stdout: "{}", stderr: "" }; } });
+  assert.deepEqual(await run(T0), { woke: false });
+  assert.equal(f.cursor().failingSince, new Date(T0).toISOString());
+  writeJson(join(f.home, "ledger.json"), { requests: [{
+    id: "r_due", status: "booked", format: "meet", meetUrl: "https://meet.google.com/abc-defg-hij", handle: "+15550001111", topic: "sync",
+    booked: { start: new Date(T0 + 6 * 60_000).toISOString(), end: new Date(T0 + 36 * 60_000).toISOString(), account: "owner@example.com" },
+    createdAt: new Date(T0).toISOString(), updatedAt: new Date(T0).toISOString(),
+  }] });
+  assert.equal((await run(T0 + 60_000)).woke, true);
+  assert.ok(f.batch()!.reasons.includes("reminders"));
+  assert.equal(cli("poll.ts", ["done", f.batch()!.id], { MEETLY_HOME: f.home }).status, 0);
+  assert.equal((await run(T0 + 31 * 60_000)).woke, true);
+  assert.equal(f.batch()!.readFailure, "not-connected");
+  assert.ok(f.batch()!.reasons.includes("read-failure"));
+  assert.ok(f.cursor().warnedAt);
+  assert.equal(f.cursor().rowid, 100);
+  assert.equal(wakes.length, 2);
+});
+
+test("batch consumption hides queued work while paused or not ready and preserves it for resume", async () => {
+  const f = fixture([row(101)]);
+  await f.run();
+  const batch = f.batch();
+  const configPath = join(f.home, "config.json");
+  const ready = readJson(configPath, {});
+  const read = () => {
+    const result = cli("poll.ts", ["batch"], { MEETLY_HOME: f.home });
+    assert.equal(result.status, 0, result.stderr);
+    return result.json;
+  };
+  assert.deepEqual(read(), { batch });
+  for (const config of [{ ...ready, paused: true }, {}, null]) {
+    if (config === null) removeFile(configPath);
+    else writeJson(configPath, config);
+    assert.deepEqual(read(), { batch: null });
+    assert.deepEqual(f.batch(), batch);
+  }
+  writeJson(configPath, ready);
+  assert.deepEqual(read(), { batch });
 });
