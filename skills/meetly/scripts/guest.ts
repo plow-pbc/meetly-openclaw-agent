@@ -7,7 +7,7 @@ import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findByChat
 import { file } from "./paths.ts";
 import { checkTime, findPreferredSlots, preferredSearchCoverage, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
-import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, type WeekdayTime } from "./time.ts";
+import { DAYS, localIso, nextWeek, offerDateWindow, parseStart, resolveWeekday, WeekdayDateRequired, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
 
 export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
@@ -128,6 +128,20 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     const message = "For that week, keep offer_week: true and omit next_week entirely. Retain excludedDays and any preferred weekday. next_week is only for a new week relative to a source timestamp, with offer_week: false. No search or holds were made; retry using only the intended scope.";
     return { error: message, code: "DATE_SCOPE_CONFLICT", recovery: { action: "retry", message } };
   }
+  try {
+    if (typeof args.start === "string") parseStart(args.start, config.timezone);
+    if (args.start !== undefined && typeof args.start !== "string") {
+      resolveWeekday(args.start!, referenceTimes(request), config.timezone);
+    }
+  } catch (error) {
+    if (error instanceof WeekdayDateRequired) throw error;
+    if (typeof args.start === "string") {
+      const message = "That date or time is invalid. Please correct the date and time you'd like to meet.";
+      return { error: message, code: "INVALID_START", recovery: { action: "reply", message } };
+    }
+    const message = 'Provide a nested weekday object, for example arguments {"start":{"weekday":"thu"}} for Thursday. Allowed weekday values: mon, tue, wed, thu, fri, sat, sun. Optional time must be HH:MM; omit it for a day-only preference. Do not quote the object as a JSON string or pass a bare weekday. Only for an explicitly dated time, start may be an ISO string YYYY-MM-DDTHH:MM[:SS[.sss]][Z|±HH:MM]. Never invent a clock time to repair a weekday-only request.';
+    return { error: message, code: "INVALID_START", recovery: { action: "retry", message } };
+  }
   const preferred = preferences(args, config.timezone);
   const newlyExcluded = preferences({ days: args.excludedDays }, config.timezone).days ?? [];
   const restored = preferences({ days: args.restoredDays }, config.timezone).days ?? [];
@@ -194,7 +208,6 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
 async function askOwner(request: Request, config: Config, args: GuestArgs, sendOwner: SendOwner | undefined, purpose: "guest-question" | "scheduling") {
   args = { ...args,
     start: typeof args.start === "string" ? args.start.trim() || undefined : args.start,
-    question: typeof args.question === "string" ? args.question.trim() || undefined : args.question,
   };
   if (request.pendingOwner) return { error: "A question is already open with the owner. Wait for their answer." };
   if ((args.question === undefined) === (args.start === undefined)) return { error: "Provide either a question or a start time, not both." };
@@ -204,8 +217,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   const askedAt = new Date(Date.now()).toISOString();
   if (args.question !== undefined) {
     if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
-    question = args.question.replace(/\s+/g, " ").trim();
-    question = question.slice(0, OWNER_QUESTION_LIMIT);
+    if (args.question.length > OWNER_QUESTION_LIMIT) return { error: `Provide a question of ${OWNER_QUESTION_LIMIT} characters or fewer; received ${args.question.length}. Nothing was sent.` };
+    question = args.question;
     pendingOwner = { question, askedAt, ...(purpose === "scheduling"
       ? { alternatives: { previousStarts: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] } } : {}) };
   } else {

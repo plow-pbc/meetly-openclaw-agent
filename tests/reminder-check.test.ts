@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { addRequest, updateRequest, type Ledger, type NewRequest, type Patch, type Request } from "../skills/meetly/scripts/ledger.ts";
+import { addRequest, dueReminders, updateRequest, type Ledger, type NewRequest, type Patch, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { parseEvent, type EventInfo } from "../skills/meetly/scripts/event.ts";
 import { checkReminder, markSent } from "../skills/meetly/scripts/reminder-check.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
@@ -32,14 +32,14 @@ function bookedMeet(over: Patch = {}, add: Record<string, unknown> = {}): Reques
   return l.requests[0]!;
 }
 const event = (over: Partial<EventInfo> = {}): EventInfo => ({ ...parseEvent(fixture("event-meet")), ...over });
-const check = (r: Request, e: EventInfo, now: number) => checkReminder(r, e, now, { leadMin: 10, tz: TZ });
+const check = (r: Request, e: EventInfo, now: number, expectedStart = r.booked!.start) => checkReminder(r, e, now, { leadMin: 10, tz: TZ, expectedStart });
 
 test("in the window, the link is sent to the group with the time in the person's language", () => {
   const out = check(bookedMeet(), event(), START - 8 * MIN);
   assert.equal(out.action, "send");
   assert.deepEqual(out.patch, {});
   assert.deepEqual(out.send, {
-    chatUid: "c1", meetUrl: MEET, name: "Patrick", locale: "pt-BR", time: "04:00", minutesToStart: 8,
+    chatUid: "c1", meetUrl: MEET, name: "Patrick", locale: "pt-BR", time: "04:00", start: event().start, minutesToStart: 8,
   });
 });
 
@@ -97,6 +97,7 @@ test("a meeting moved a little: sent now, for the new time", () => {
   const out = check(bookedMeet(), event(moved), START - 3 * MIN);
   assert.equal(out.action, "send");
   assert.equal(out.send!.time, "04:05");
+  assert.equal(out.send!.start, moved.start);
   assert.equal(out.send!.minutesToStart, 8);
   assert.deepEqual(out.patch.booked, { ...moved, account: ACCOUNT });
 });
@@ -126,14 +127,15 @@ test("the event file must be this request's event", () => {
 
 test("markSent records the send once; a second mark is refused", () => {
   let l: Ledger = { requests: [bookedMeet()] };
-  l = markSent(l, "r_1", START - 5 * MIN);
+  l = markSent(l, "r_1", START - 5 * MIN, offer.start);
   assert.deepEqual(l.requests[0]!.reminder, { at: new Date(START - 5 * MIN).toISOString(), outcome: "sent" });
-  assert.throws(() => markSent(l, "r_1", START), /already/);
-  assert.throws(() => markSent(l, "nope", START), /no request/);
+  assert.throws(() => markSent(l, "r_1", START, offer.start), /already/);
+  assert.throws(() => markSent(l, "nope", START, offer.start), /no request/);
 });
 
 // From a booked fixture, list, send and mark the reminder through the CLIs.
-test("CLI: the poll's full reminder sequence", () => {
+for (const movedAt of [undefined, "before-check", "before-sent"])
+test(`CLI: the poll's full reminder sequence, move=${movedAt}`, () => {
   const home = tmpHome();
   const env = { MEETLY_HOME: home };
   writeJson(join(home, "config.json"), {
@@ -154,19 +156,44 @@ test("CLI: the poll's full reminder sequence", () => {
 
   const due = cli("ledger.ts", ["reminders"], env);
   assert.deepEqual(due.json.requests.map((r: { id: string }) => r.id), [id]);
-  const decided = cli("reminder-check.ts", ["--id", id, "--event-file", eventFile], env);
+  const tomorrow = { ...parseEvent(JSON.stringify(raw)), start: iso(start + 24 * 60 * MIN), end: iso(start + (24 * 60 + 30) * MIN) };
+  const move = () => {
+    const ledger = recordBooking(readJson<Ledger>(join(home, "ledger.json"), { requests: [] }), id, tomorrow, ACCOUNT, Date.now()).ledger;
+    writeJson(join(home, "ledger.json"), ledger);
+    return ledger;
+  };
+  const checkUnmarked = (expected: Ledger) => {
+    const current = readJson<Ledger>(join(home, "ledger.json"), { requests: [] });
+    assert.deepEqual(current, expected);
+    assert.equal(current.requests[0]!.reminder, undefined);
+    assert.deepEqual(dueReminders(current, Date.parse(tomorrow.start) - 5 * MIN, 10).map(r => r.id), [id]);
+  };
+  const movedBeforeCheck = movedAt === "before-check" ? move() : undefined;
+  const decided = cli("reminder-check.ts", ["--id", id, "--expected-start", iso(start), "--event-file", eventFile], env);
+  if (movedBeforeCheck) {
+    assert.equal(decided.status, 0, decided.stderr);
+    assert.deepEqual(decided.json, { action: "skip" });
+    checkUnmarked(movedBeforeCheck);
+    return;
+  }
   assert.equal(decided.status, 0, decided.stderr);
   assert.equal(decided.json.action, "send");
   assert.equal(decided.json.send.meetUrl, MEET);
   assert.equal(decided.json.send.chatUid, "c1");
   assert.ok(decided.json.send.minutesToStart >= 4 && decided.json.send.minutesToStart <= 5);
 
-  const marked = cli("reminder-check.ts", ["--id", id, "--sent"], env);
+  const movedBeforeSent = movedAt === "before-sent" ? move() : undefined;
+  const marked = cli("reminder-check.ts", ["--id", id, "--expected-start", decided.json.send.start, "--sent"], env);
+  if (movedBeforeSent) {
+    assert.equal(marked.status, 0, marked.stderr);
+    checkUnmarked(movedBeforeSent);
+    return;
+  }
   assert.equal(marked.status, 0, marked.stderr);
   assert.equal(marked.json.request.reminder.outcome, "sent");
   assert.deepEqual(cli("ledger.ts", ["reminders"], env).json, { requests: [] });
-  assert.equal(cli("reminder-check.ts", ["--id", id, "--event-file", eventFile], env).json.action, "skip");
-  assert.equal(cli("reminder-check.ts", ["--id", id, "--sent"], env).status, 1);
+  assert.equal(cli("reminder-check.ts", ["--id", id, "--expected-start", iso(start), "--event-file", eventFile], env).json.action, "skip");
+  assert.equal(cli("reminder-check.ts", ["--id", id, "--expected-start", decided.json.send.start, "--sent"], env).status, 1);
 
   const usage = cli("reminder-check.ts", ["--id", id], env);
   assert.equal(usage.status, 1);
@@ -185,7 +212,16 @@ test("CLI: a cancelled event is written to the ledger so the next poll skips it"
   writeFileSync(eventFile, fixture("event-meet"));
   writeJson(join(home, "ledger.json"), recordBooking(readJson<Ledger>(join(home, "ledger.json"), { requests: [] }), id, event(), ACCOUNT, T0).ledger);
   writeFileSync(eventFile, fixture("event-cancelled"));
-  const out = cli("reminder-check.ts", ["--id", id, "--event-file", eventFile], env);
+  const out = cli("reminder-check.ts", ["--id", id, "--expected-start", offer.start, "--event-file", eventFile], env);
   assert.equal(out.json.action, "cancelled");
   assert.equal(cli("ledger.ts", ["find", "--chat", "c1"], env).json.request.reminder.outcome, "cancelled");
+});
+
+for (const staleEvent of [event({ status: "cancelled" }), event({ meetUrl: null })])
+test(`stale reminder fetch cannot overwrite a moved booking: ${staleEvent.status}/${staleEvent.meetUrl}`, () => {
+  const tomorrow = event({ start: "2026-10-11T04:00:00-03:00", end: "2026-10-11T04:30:00-03:00" });
+  const moved = recordBooking({ requests: [bookedMeet()] }, "r_1", tomorrow, ACCOUNT, START).ledger;
+  const result = check(moved.requests[0]!, staleEvent, START - 5 * MIN, offer.start);
+  assert.deepEqual(result, { action: "skip", patch: {} });
+  assert.deepEqual(dueReminders(moved, Date.parse(tomorrow.start) - 5 * MIN, 10).map(r => r.id), ["r_1"]);
 });

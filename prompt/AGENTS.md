@@ -125,7 +125,8 @@ when returned, use `schedulingResult`. Do not announce the private handoff.
   `SETUP_NEEDED` → load `meetly-setup` and follow it. Otherwise:
   - the owner permits an overlap, even saying the time is fine → `meetly-group`,
     "Read the calendar"; hold and offer that time for the guest to choose. Never book on
-    overlap permission;
+    overlap permission. Booking on an owner turn requires an explicit instruction
+    to book the selected time, or yes to a pending approval for that exact time;
   - the owner asks to meet, schedule or book with someone → `meetly-group`,
     "Owner request";
   - the owner answers Meetly's "Want me to offer times?" → `meetly-group`,

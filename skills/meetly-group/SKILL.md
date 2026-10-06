@@ -26,20 +26,25 @@ writes and delivery; never invent or retype an id from memory or a session slug.
 
 ## Read the calendar
 
-Run `busy.ts --fetch`. Only in the owner's DM, for events they explicitly allowed
-overlapping, add `--allow-overlap-title <owner-supplied event name>` for each name.
-It checks every configured calendar on the Mac, writes
-`/var/lib/plow/meetly/tmp/busy.json` and prints only `{file, busy, degraded, unknownAfter?}`.
-Never run `plow-gog calendar events` yourself or copy a calendar listing into a file.
-Never claim the owner is free on an account in `degraded`.
-
-**Overlap permission.** The busy file keeps the allowed events' references for slot
-search without exposing them. Overlap permission alone is not a time selection.
-"Noon is fine, it can overlap my other event" grants permission to offer noon, not to book it:
-use `meetly_offer_owner_dm` with the selected `requestId` for an existing meeting and `allowOverlapTitles` to resolve the named permission,
-re-offer and hold times, then let the guest choose. Use `slots.ts --near <owner-authorized start> --request <id>` for nearest alternatives. Never write
-`allowOverlap` with the ledger CLI. Only an explicit booking instruction such as "book noon"
-selects it (`meetly-confirm`, "Book the event"). Overlap permission does not authorize sharing the event title in the group.
+Run `busy.ts --fetch`. Only in the owner's DM, for events they explicitly allowed overlapping, add
+`--allow-overlap-title <owner-supplied event name>` for each name. Matching `{account, id}` references stay in the busy file; slot search uses them without exposing them.
+Overlap permission does not authorize sharing the event title in the group. Keep
+private titles in the owner's DM; group offers and confirmations give only meeting times.
+Overlap permission alone is not a time selection. "Noon is fine, it can overlap my
+other event" grants permission to offer noon, not to book it. In the owner's DM,
+use `meetly_offer_owner_dm` with the selected `requestId` for an existing meeting and `allowOverlapTitles` to resolve the named
+permission, re-offer and hold times, then let the guest choose. Never write
+`allowOverlap` with the ledger CLI. Only an explicit booking instruction such as "book noon" selects it
+on the owner's behalf (`meetly-confirm`, "Book the event").
+For an overlap re-offer, use `slots.ts --near <owner-authorized start> --request <id>`
+with the fresh busy file and its resolved overlap permissions. Offer the returned
+slots in order, including the authorized time when available and the nearest
+alternatives, while keeping the request's hard conditions.
+The reader checks every calendar in the config on the Mac itself and writes `/var/lib/plow/meetly/tmp/busy.json`; it prints only
+`{file, busy, degraded, unknownAfter?}`. Never run `plow-gog calendar events`
+yourself or copy a calendar listing into a file. An account in `degraded`
+could not be read: `slots.ts` reports it, and you never claim the owner is
+free there.
 
 ## Offer times
 
