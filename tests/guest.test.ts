@@ -9,7 +9,7 @@ import { registerOwnerGroupTool, registerOwnerDmTool, registerContactTools } fro
 import { confirmContactOffer, contactPreference } from "../skills/meetly/scripts/contact-policy.ts";
 import { pipeline, reserveNudges } from "../skills/meetly/scripts/pipeline.ts";
 import plugin from "../plugin/index.js";
-import { approveTime, calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.ts";
+import { approveTime, calendarAction, offerRequest, widenRequestDates } from "../skills/meetly/scripts/calendar.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
 import { doNotContact, pendingOwnerList, expiredRequests, addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
@@ -1506,6 +1506,26 @@ test("owner-group re-offers respect saved excluded weekdays", async t => {
   assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-06")), JSON.stringify(f.request().offered));
 });
 
+test("owner-group rejects a stale search after the owner widens its saved dates", async t => {
+  const f = fixture(t);
+  let widened: Ledger | undefined;
+  f.hooks.before = async argv => {
+    if (argv[2] !== "events") return;
+    f.hooks.before = undefined;
+    await widenRequestDates("request-one", "2026-10-05", "2026-10-31", now);
+    widened = f.read();
+    f.ledger.requests[0]!.constraints = widened.requests[0]!.constraints;
+    assert.equal(widened.requests[0]!.constraints!.to, "2026-10-31");
+  };
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { travel: { beforeMin: 0, afterMin: 0 }, topic: "Call", durationMin: 30 });
+  assert.ok(widened, "widening completed while the calendar read was pending");
+  assert.ok("error" in result, JSON.stringify(result));
+  assert.deepEqual(f.read(), widened);
+  assert.ok(f.commands.every(argv => argv[2] === "events"), JSON.stringify(f.commands));
+  t.diagnostic(JSON.stringify({ rejected: "error" in result, savedThrough: f.request().constraints!.to, calendarWrites: 0 }));
+});
+
 test("owner DM rejects four offered times before calendar or ledger effects", async t => {
   const f = fixture(t), before = f.read();
   let tool: any;
@@ -2345,4 +2365,10 @@ for (const time of [undefined, "11:00"]) test(`booked weekday replacements use t
   assert.ok(f.commands.slice(before).every(c => c[2] !== "update" && c[2] !== "delete"));
   assert.equal(f.ownerLines.length, 0);
   t.diagnostic(JSON.stringify(result));
+});
+
+test("direct pick restores only guest-explicit weekdays before booking",async t=>{
+ const f=fixture(t); f.save({requests:[{...f.request(),excludedDays:["mon","tue"]}]});
+ const result=await f.act(context,"pick",{start:offers[0]!.start,restoredDays:["mon"]}) as any;
+ assert.equal(result.status,"booked",JSON.stringify(result)); assert.deepEqual(f.request().excludedDays,["tue"]);
 });

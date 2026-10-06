@@ -78,6 +78,12 @@ When the owner changes the duration, update any duration wording in `topic`
 and save it with the replacement offer. For example, "30-minute call" becomes
 "60-minute call" when changed to an hour.
 
+When the owner only extends dates, run `ledger.ts widen-dates --id <saved id>
+--from <first additional date> --to <last additional date>` before searching with
+`slots.ts --request <same id>`. Pass only the additional dates; this keeps that
+request's other conditions and guest-excluded weekdays. Never copy conditions
+from another meeting or rebuild them from chat history.
+
 When the owner replaces saved hard conditions in a group, pass the complete replacement
 as `constraints`; an empty object clears them. Omission preserves the saved policy.
 For a DM search, run `ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
