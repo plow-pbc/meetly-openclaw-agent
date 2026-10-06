@@ -32,10 +32,11 @@ export function contactQuery(handle: string): string {
     "union all select 'E', e.ZOWNER, e.ZADDRESS, '', '' from ZABCDEMAILADDRESS e where e.ZOWNER in m;";
 }
 
-// The Mac's region from its AppleLocale ("en_US", or "en_US@rg=gbzzzz" when the
-// region is set apart from the language); undefined when it names none.
+// The Mac's region from its AppleLocale ("en_US", "zh_Hans_CN" with a script, or
+// "en_US@rg=gbzzzz" when the region is set apart from the language); undefined
+// when it names none.
 export function localeRegion(locale: string): string | undefined {
-  const region = /@rg=([a-z]{2})/i.exec(locale)?.[1] ?? /^[a-z]{2,3}[_-]([a-z]{2})(?![a-z])/i.exec(locale)?.[1];
+  const region = /@rg=([a-z]{2})/i.exec(locale)?.[1] ?? /^[a-z]{2,3}(?:[_-][a-z]{4})?[_-]([a-z]{2})(?![a-z])/i.exec(locale)?.[1];
   return region?.toUpperCase();
 }
 
