@@ -358,7 +358,10 @@ if (isMain(import.meta.url)) {
       for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "start-time", "week", "asap"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
-      const result = checkTime({ ...q, start: values.at });
+      const start = checkTime({ ...q, travel: { beforeMin: 0, afterMin: 0 }, start: values.at }).slot.start;
+      if (request?.status === "booked" && request.bookedReplacement && request.replacement
+        && request.offered.some(slot => Date.parse(slot.start) === Date.parse(start))) Object.assign(q, request.replacement);
+      const result = checkTime({ ...q, start });
       const next = result.reason === "unknown" ? { read: "Fetch busy.ts --fetch --from ISO --to ISO covering the meeting and all travel, then check again. Unread time is not free. Never use a calendar write to test availability." } : undefined;
       return { ...result, degraded, ...(next ? { next } : {}) };
     }
