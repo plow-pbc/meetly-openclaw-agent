@@ -57,6 +57,23 @@ test("a booking confirmation cannot cross sessions", async t => {
   assert.equal(result.details.schedulingResult, undefined);
 });
 
+test("guest booking receives the host turn boundary across prompt rebuilds", async t => {
+  const turn = { runId: "booking-boundary", sessionKey: "group-booking" };
+  let now = Date.parse("2026-10-05T12:00:00Z");
+  const startedAt = now;
+  t.mock.method(Date, "now", () => now);
+  guestTurns.begin(turn);
+  t.after(() => guestTurns.end({}, turn));
+  const tools = new Map<string, any>();
+  let received: any;
+  registerGuestTools({ registerTool(factory: any) { const tool = factory({ sessionKey: turn.sessionKey }); tools.set(tool.name, tool); } },
+    async (ctx: unknown) => { received = ctx; return { status: "booked" }; });
+  now += 60_000;
+  guestTurns.begin(turn);
+  await tools.get("meetly_pick_time").execute("book", {});
+  assert.equal(received.turnStartedAt, startedAt);
+});
+
 for (const action of ["pick", "other_times", "format", "decline"]) test(`successful ${action} explicitly clears an earlier silent handoff`, () => {
   const turn = { sessionKey: "ask-first", runId: action };
   guestTurns.begin(turn);

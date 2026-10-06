@@ -6,14 +6,15 @@
 //
 // Plain JavaScript on purpose: the image ships it as is, with no build step,
 // and preboot copies it into the state volume's plugin root on every boot.
+import { registerPipelineHooks } from "./pipeline.js";
 import { calendarPolicy } from "./calendar-policy.js";
 import { sendPolicy } from "./send-policy.js";
 import { movablePolicy } from "./movable-policy.js";
 import { silentRuns } from "./silent-runs.js";
-import { guestTurns } from "./guest-turn.js";
 import { execFile } from "node:child_process";
+import { guestTurns } from "./guest-turn.js";
 import { registerGuestTools } from "./guest-tools.js";
-import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool } from "./owner-tools.js";
+import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool, registerContactTools } from "./owner-tools.js";
 
 export const OWNER_DM_SESSION = "agent:main:main";
 export const SETUP_STATUS = "/opt/plow/skills/meetly/scripts/setup-status.ts";
@@ -105,10 +106,12 @@ export default {
   name: "Meetly",
   description: "Guest scheduling tools and the owner DM setup check.",
   register(api) {
+    registerPipelineHooks(api);
     registerGuestTools(api);
     registerOwnerTools(api);
     registerOwnerGroupTool(api);
     registerOwnerDmTool(api);
+    registerContactTools(api);
     api.on("before_tool_call", (event, ctx) => calendarPolicy(event) ?? sendPolicy(event, ctx) ?? movablePolicy(event));
     api.on("reply_payload_sending", event => silentRuns.sending(event) ?? plainFailure(event));
     api.on("agent_end", (event, ctx) => {
