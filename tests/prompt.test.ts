@@ -40,11 +40,11 @@ test("AGENTS.md renders the conversation identity and keeps the base's tool and 
   const base = flat(readFileSync(join(ROOT, "tests", "fixtures", "base-AGENTS.md"), "utf8"));
   for (const rule of BASE_CONTRACT) assert.ok(base.includes(rule), `the base no longer says: ${rule}`);
   assert.ok(prompt.includes("Meetly poll: batch"));
-  assert.ok(flat(prompt).includes("Guest scheduling tools support Plow chat only; they are unavailable to email guests."));
+  assert.ok(flat(prompt).includes("Email participants may act on that thread's scheduling request with guest tools;"));
 });
 
-test("the six Meetly skills exist", () => {
-  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-group", "meetly-pipeline", "meetly-poll", "meetly-setup"]);
+test("the seven Meetly skills exist", () => {
+  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-email", "meetly-group", "meetly-pipeline", "meetly-poll", "meetly-setup"]);
 });
 
 test("every skill has frontmatter naming its directory and a description", () => {

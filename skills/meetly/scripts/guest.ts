@@ -3,27 +3,25 @@ import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
-import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findByChat, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findGuestRequest, intersectConstraints, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { checkTime, findPreferredSlots, preferredSearchCoverage, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
 import { DAYS, localIso, nextWeek, offerDateWindow, parseStart, resolveWeekday, WeekdayDateRequired, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
 
-export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
+export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string; senderIsOwner?: boolean; config?: { channels?: { plow?: { apiBase?: string; emailLineUid?: string } } } };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
-export type GuestArgs = Omit<Constraints, "startTime"> & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string };
+export type GuestArgs = Omit<Constraints, "startTime"> & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string; attendees?: string[] };
 type SendOwner = (text: string) => Promise<void>;
 const EMPTY: Ledger = { requests: [] };
 
 const chatId = (ctx: GuestContext) => ctx.nativeChannelId ?? ctx.deliveryContext?.to?.replace(/^plow:/, "");
 
-function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
-  const chat = chatId(ctx);
-  const sender = ctx.requesterSenderId;
-  if (ctx.messageChannel !== "plow" || ctx.agentAccountId !== "chat" || !chat || !sender) return;
-  const request = findByChat(ledger, chat);
-  return request && sameHandle(request.handle, sender) ? request : undefined;
+function resolveRequest(ctx: GuestContext): Request | undefined {
+  const chat = chatId(ctx), sender = ctx.requesterSenderId;
+  if (ctx.messageChannel !== "plow" || (ctx.agentAccountId !== "chat" && ctx.agentAccountId !== "email") || !chat || !sender) return;
+  return findGuestRequest(readJson<Ledger>(file("ledger.json"), EMPTY), ctx.agentAccountId, chat, sender, ctx.senderIsOwner);
 }
 
 function patch(request: Request, change: Patch): Request {
@@ -95,7 +93,9 @@ async function notifyOwner(request: Request, config: Config, change: "moved" | "
   }
 }
 
-async function pick(request: Request, config: Config, start: string, sendOwner?: SendOwner, turnStartedAt?: number) {
+async function pick(request: Request, config: Config, start: string, attendees?: string[], sendOwner?: SendOwner, turnStartedAt?: number) {
+  if (attendees !== undefined && (!Array.isArray(attendees) || (attendees.length > 0 && (request.channel !== "email" || request.status === "booked"
+    || attendees.some(email => typeof email !== "string" || !/^[^\s@,]+@[^\s@,]+$/.test(email)))))) return { error: "Additional invitees need email addresses on an unbooked email request." };
   const requested = checkTime({ now: Date.now(), config, busy: [], start,
     meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin }).slot.start;
   const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(requested));
@@ -113,10 +113,10 @@ async function pick(request: Request, config: Config, start: string, sendOwner?:
     return { ...view(request, config), invitationUpdated: "invitationUpdated" in result && result.invitationUpdated === true,
       overlappedWithOwnerApproval: checked.overlap, ...await notifyOwner(request, config, "moved", sendOwner) };
   }
-  const contact = await lookupContact(request.handle);
-  const email = request.handle.includes("@") ? request.handle : contact.found && contact.matches === 1 ? contact.emails[0] : undefined;
-  request = (await write(request, { action: "book", start: offer.start, attendees: email })).request;
-  return { ...view(request, config), invitationSent: !!email, overlappedWithOwnerApproval: checked.overlap };
+  const contact = request.handle.includes("@") ? undefined : await lookupContact(request.handle);
+  const email = request.channel === "email" ? undefined : request.handle.includes("@") ? request.handle : contact?.found && contact.matches === 1 ? contact.emails[0] : undefined;
+  const result = await write(request, { action: "book", start: offer.start, attendees: [email, ...attendees ?? []].filter(Boolean).join(",") || undefined });
+  return { ...view(result.request, config), invitationSent: "invitationSent" in result && result.invitationSent === true, overlappedWithOwnerApproval: checked.overlap };
 }
 
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
@@ -197,9 +197,9 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
         : "Those times don't work. I can't confirm another time yet.",
       recovery: { action: "wait", retry: false } };
   }
-  const { origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
+  const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {
-    origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
+    channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
     offered: slots.map(slot => ({ start: slot.start, end: slot.end, account: config.defaultAccount })),
   } })).request;
   return { ...view(request, config), preferencesUnavailable };
@@ -232,7 +232,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     question = `Can we meet ${localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(checked.slot.start))} (${config.timezone}), outside the meeting window?`;
   }
   // Save the question and its notification together so the poll cannot send a
-  // second owner ask while this DM is in flight or its delivery is uncertain.
+  // second owner ask while the notification is in flight or its delivery is uncertain.
   updateJson<Ledger>(file("ledger.json"), EMPTY, ledger => {
     unchanged(request, ledger.requests.find(r => r.id === request.id)!);
     const next = updateRequest(ledger, request.id, { pendingOwner }, Date.now());
@@ -244,7 +244,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   // Keep the slot on an uncertain send so another turn cannot duplicate it.
   try {
     const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
-    await sendOwner(purpose === "scheduling" && "question" in pendingOwner
+    await sendOwner!(purpose === "scheduling" && "question" in pendingOwner
       ? `Scheduling ${label(request.topic)} with ${label(request.name ?? request.handle)} needs your decision. ${question}`
       : "question" in pendingOwner
       ? `${label(request.name ?? "Your guest")} asked in your ${label(request.topic)} thread. Guest question: ${JSON.stringify(question)}. Reply there, or tell me what to say.`
@@ -253,12 +253,12 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
   }
   return { ownerName: config.ownerName, ownerAskSent: true, askDetails: false,
-    ...(purpose === "guest-question" ? { silent: true } : { message: `I've asked ${config.ownerName} and will get back to you here when ${config.ownerName} replies.` }) };
+    ...(purpose === "guest-question" || request.channel === "email" ? { silent: true } : { message: `I've asked ${config.ownerName} and will get back to you here when ${config.ownerName} replies.` }) };
 }
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
   try {
-    let request = current(readJson<Ledger>(file("ledger.json"), EMPTY), ctx);
+    let request = resolveRequest(ctx);
     if (!request) return { error: "No scheduling request matches you in this conversation." };
     const config = loadConfig();
     if (action === "view") return view(request, config);
@@ -281,11 +281,12 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
       const booked = request.status === "booked";
       request = (await write(request, { action: request.status === "booked" ? "cancel" : "drop" })).request;
       return { ...view(request, config), ...await notifyOwner(request, config, booked ? "cancelled" : "declined", sendOwner),
+        ...(request.channel === "email" ? { silent: true } : {}),
         ...(!booked ? { message: "I've cancelled this scheduling request." } : {}) };
     }
     if (action === "other_times") return await otherTimes(request, config, args, sendOwner);
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
-    return await pick(request, config, args.start, sendOwner, ctx.turnStartedAt);
+    return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt);
   } catch (error) {
     if (error instanceof WeekdayDateRequired) return { error: error.message, code: "DATE_REQUIRED",
       recovery: { action: "ask_date" } };

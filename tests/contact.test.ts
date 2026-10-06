@@ -16,7 +16,7 @@ test("the query filters on the handle's last four digits and never reads notes o
   assert.ok("5551234".endsWith(suffix), suffix);
   assert.doesNotMatch(q, /ZNOTE|ZABCDPOSTALADDRESS/);
   assert.match(contactQuery(" Ana@Example.com "), /lower\(e\.ZADDRESS\) = 'ana@example\.com'/);
-  assert.match(contactQuery("o'brien@example.com"), /lower\(e\.ZADDRESS\) = 'o''brien@example\.com'/);
+  assert.throws(() => contactQuery("o'brien@example.com"), /handle/);
 });
 
 test("phone candidates match only the full canonical handle across stores", () => {

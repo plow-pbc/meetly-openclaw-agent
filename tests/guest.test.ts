@@ -9,7 +9,7 @@ import { registerOwnerGroupTool, registerOwnerDmTool, registerContactTools } fro
 import { confirmContactOffer, contactPreference } from "../skills/meetly/scripts/contact-policy.ts";
 import { pipeline, reserveNudges } from "../skills/meetly/scripts/pipeline.ts";
 import plugin from "../plugin/index.js";
-import { calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.ts";
+import { approveTime, calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
 import { doNotContact, pendingOwnerList, expiredRequests, addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
@@ -1898,6 +1898,151 @@ test("an existing owner-group offer still respects a do-not-contact flag", async
   assert.ok(pending && "contact" in pending);
   assert.equal(pending.contact.topic, "Lunch");
   assert.equal(f.commands.some(c => ["create", "update", "delete"].includes(c[2]!)), false);
+});
+
+function emailFixture(t: TestContext) {
+  const f = fixture(t);
+  const request = f.ledger.requests[0]!;
+  request.channel = "email";
+  request.handle = "ana@example.net";
+  request.name = "Ana";
+  f.save(f.ledger);
+  const ctx = { ...context, agentAccountId: "email", requesterSenderId: "ea@example.net", senderIsOwner: false };
+  const emailTools = new Map<string, { execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
+  registerGuestTools({ registerTool(factory: (context: GuestContext) => { name: string; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }) {
+    const tool = factory(ctx); emailTools.set(tool.name, tool);
+  } }, guestAction);
+  return { ...f, ctx, emailTools };
+}
+
+test("the first email reply and CC booking carry thread delivery and details instructions", async t => {
+  const f = emailFixture(t);
+  f.ledger.requests[0]!.detailsAskedAt = new Date(now).toISOString();
+  f.save(f.ledger);
+  const view = await f.emailTools.get("meetly_view_request")!.execute("first-reply", {});
+  const instructions = view.content.slice(1).map(c => c.text).join("\n");
+  assert.match(instructions, /plow_send_email/);
+  assert.ok(instructions.includes(JSON.stringify(f.ctx.nativeChannelId)));
+  assert.match(instructions, /first reply.*CC/i);
+  assert.match(instructions, /final.*private.*owner/i);
+  await f.emailTools.get("meetly_set_format")!.execute("format", { format: "in_person" });
+  const booked = await f.emailTools.get("meetly_pick_time")!.execute("pick", { start: offers[0]!.start });
+  assert.equal(JSON.parse(booked.content[0]!.text).askDetails, false);
+  assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /do not ask how or where to meet.*missing/i);
+  assert.match(booked.content.slice(1).map(c => c.text).join("\n"), /plow_send_email/);
+  assert.equal(f.ownerLines.length, 0);
+});
+
+
+for (const [action, args] of actions.filter(([action]) => action !== "ask_owner")) test(`a CC'd participant can ${action} in the email thread`, async t => {
+  const f = emailFixture(t);
+  const result = await f.act(f.ctx, action, args);
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().channel, "email");
+  assert.equal(f.request().chatUid, context.nativeChannelId);
+  assert.equal(f.ownerLines.length, action === "decline" ? 1 : 0);
+  if (action === "pick") {
+    assert.equal("invitationSent" in result && result.invitationSent, true);
+    const booking = f.commands.find(argv => argv.includes("--attendees"))!;
+    assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net");
+    assert.ok(f.commands.every(argv => argv[0] !== "/bin/sh"), "an email guest does not need Contacts");
+  }
+});
+
+test("an explicit additional email invitee is included without replacing the guest", async t => {
+  const f = emailFixture(t);
+  const result = await f.act(f.ctx, "pick", { start: offers[0]!.start, attendees: ["ea@example.net"] });
+  assert.ok(!("error" in result));
+  const booking = f.commands.find(argv => argv.includes("--attendees"))!;
+  assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net,ea@example.net");
+});
+
+test("email requests cannot be acted on from phone turns or another email thread", async t => {
+  const f = emailFixture(t);
+  for (const ctx of [context, { ...f.ctx, nativeChannelId: "other-thread", config: {} }, { ...f.ctx, senderIsOwner: true }, { ...f.ctx, requesterSenderId: "plow-owner", senderIsOwner: false }]) {
+    assert.ok("error" in await f.act(ctx, "pick", { start: offers[0]!.start }));
+  }
+  assert.deepEqual(f.read(), f.ledger);
+  assert.equal(f.commands.length, 0);
+});
+
+for (const action of ["view", "pick", "decline"] as const) test(`unlinked email refuses actions from an unaffiliated thread: ${action}`, async t => {
+  const f = emailFixture(t);
+  delete f.ledger.requests[0]!.chatUid;
+  f.ledger.requests[0]!.startedAt = new Date(now).toISOString();
+  f.save(f.ledger);
+  const result = await f.act(f.ctx, action, { start: offers[0]!.start });
+  assert.ok("error" in result, JSON.stringify(result));
+  assert.deepEqual(f.read(), f.ledger);
+  assert.equal(f.commands.length, 0);
+});
+
+for (const action of ["ask_owner", "decline", "cancel"] as const) for (const failed of [false, true]) test(`email ${action} awaits private delivery and silences the final: failed=${failed}`, async t => {
+  const f = emailFixture(t);
+  if (action === "cancel") await f.act(f.ctx, "pick", { start: offers[0]!.start });
+  let sends = 0, completed = false, release!: () => void, entered!: () => void;
+  const delivery = new Promise<void>(resolve => { release = resolve; });
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const sendOwner = async () => {
+    sends++;
+    entered();
+    await delivery;
+    if (failed) throw new Error("Uncertain delivery");
+  };
+  let tool: any;
+  registerGuestTools({ registerTool(factory: (ctx: GuestContext) => any) {
+    const candidate = factory(f.ctx);
+    if (candidate.name === (action === "ask_owner" ? "meetly_ask_owner" : "meetly_decline")) tool = candidate;
+  } }, (ctx, operation, args) => guestAction(ctx, operation, args, sendOwner));
+  const work = tool.execute("private-notice", { question: "Should Ana bring the budget?" })
+    .then((result: any) => { completed = true; return result; });
+  await waiting;
+  assert.equal(sends, 1);
+  assert.equal(completed, false, "tool must await the private send");
+  release();
+  const reply = await work;
+  const result = reply.details;
+  assert.equal(result.silent, true);
+  assert.match(reply.content.slice(1).map((c: { text: string }) => c.text).join("\n"), /Finish with NO_REPLY/);
+  assert.equal(result.replyToOwner, undefined);
+  assert.equal(result.ownerNotice, undefined);
+  assert.equal(action === "ask_owner" ? !!result.ownerAskSent : result.ownerNotified, !failed);
+  assert.equal(action === "ask_owner" ? !!f.request().pendingOwner : f.request().status === "dropped", true);
+  await f.act(f.ctx, action === "cancel" ? "decline" : action, { question: "Should Ana bring the budget?" });
+  assert.equal(f.ownerLines.length, 0, "repeat must not send another owner notification");
+});
+
+for (const approval of [false, true]) test(`an owner-side email booking invites the saved guest: approval=${approval}`, async t => {
+  const f = emailFixture(t);
+  const result = approval ? await approveTime(f.request().id, { start: offers[0]!.start })
+    : await calendarAction(f.request().id, { action: "book", start: offers[0]!.start });
+  assert.equal("invitationSent" in result && result.invitationSent, true);
+  const booking = f.commands.find(argv => argv.includes("--attendees"))!;
+  assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net");
+});
+
+test("an unused empty attendee list does not block a phone booking", async t => {
+  const f = fixture(t);
+  const result = await f.act(context, "pick", { start: offers[0]!.start, attendees: [] });
+  assert.ok(!("error" in result), JSON.stringify(result));
+  assert.equal(f.request().status, "booked");
+});
+
+for (const action of ["view", "replace"] as const) test(`pre-email text requests retain their channel: ${action}`, async t => {
+  const f = fixture(t);
+  delete (f.ledger.requests[0] as Partial<Request>).channel;
+  f.save(f.ledger);
+  if (action === "view") {
+    const result = await f.act(context, "view");
+    assert.ok(!("error" in result), JSON.stringify(result));
+  } else {
+    const request = f.ledger.requests[0]!;
+    const { origin, handle, name, chatUid, topic, durationMin, constraints } = request;
+    const result = await offerRequest({ channel: "text", origin, handle, name, chatUid, topic, durationMin, constraints,
+      offered: [{ start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z" }] });
+    assert.equal(result.request.channel, "text");
+    assert.equal(result.request.id, request.id);
+  }
 });
 
 test("contact tools deny group and guest callers; private confirmation resumes the exact saved group request", async t => {
