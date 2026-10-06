@@ -45,7 +45,7 @@ test("waiting states are derived; only unanswered offers reach stale at exactly 
   const ledger = mixed();
   assert.deepEqual(pipeline(ledger, T0 + STALE_OFFER_MS - 1).map(item => item.reason), ["offer", "owner-decision", "owner-question"]);
   assert.deepEqual(pipeline(ledger, T0 + STALE_OFFER_MS).map(item => item.reason), ["stale-offer", "owner-decision", "owner-question"]);
-  const replied = recordGuestReply(ledger, "Chat-A", "+1 (555) 123-4567", T0 + HOUR);
+  const replied = recordGuestReply(ledger, "Chat-A", "+1 (555) 123-4567", T0 + HOUR, "chat");
   const state = pipeline(replied, T0 + 25 * HOUR)[0]!;
   assert.equal(state.reason, "offer");
   assert.equal(state.nudge, false);
@@ -90,7 +90,7 @@ test("unresolved calendar writes appear in the view but only reconciliation owns
 });
 
 test("a booked replacement ages from its own offer and prior guest replies do not suppress it", () => {
-  let ledger = recordGuestReply(offered(), "Chat-A", input.handle, T0 + HOUR);
+  let ledger = recordGuestReply(offered(), "Chat-A", input.handle, T0 + HOUR, "chat");
   ledger = updateRequest(ledger, "offer", { status: "booked", offered: [], booked: { ...offer } }, T0 + HOUR);
   assert.deepEqual(pipeline(ledger, T0 + 30 * HOUR), []);
   ledger = updateRequest(ledger, "offer", { offered: [offer] }, T0 + 30 * HOUR);
@@ -116,10 +116,10 @@ for (const [accountId, senderId] of [["chat", input.handle], ["email", "alex@exa
   let handler!: (event: any, ctx: any) => Promise<void>;
   const errors: string[] = [];
   registerPipelineHooks({ on(name: string, callback: typeof handler) { assert.equal(name, "message_received"); handler = callback; }, logger: { info(text: string) { errors.push(text); } } }, async (event, ctx) => {
-    ledger = recordGuestReply(ledger, ctx.conversationId, ctx.senderId ?? event.senderId ?? event.from, event.timestamp);
+    ledger = recordGuestReply(ledger, ctx.conversationId, ctx.senderId ?? event.senderId ?? event.from, event.timestamp, ctx.accountId);
   });
   const ctx = { channelId: "plow", accountId, conversationId: "Chat-A", senderId };
-  for (const context of [{ ...ctx, channelId: "other" }, { ...ctx, accountId: "other" }, { ...ctx, conversationId: "" }, { ...ctx, conversationId: "chat-a" }, { ...ctx, senderId: "plow-owner" }, { ...ctx, senderId: "" },
+  for (const context of [{ ...ctx, channelId: "other" }, { ...ctx, accountId: "other" }, { ...ctx, accountId: accountId === "email" ? "chat" : "email" }, { ...ctx, conversationId: "" }, { ...ctx, conversationId: "chat-a" }, { ...ctx, senderId: "plow-owner" }, { ...ctx, senderId: "" },
     ...(accountId === "chat" ? [{ ...ctx, senderId: "+15557654321" }] : [])]) {
     await handler({ content: "Thanks!", timestamp: T0 + HOUR }, context);
     assert.equal(request(ledger).lastGuestReplyAt, undefined);

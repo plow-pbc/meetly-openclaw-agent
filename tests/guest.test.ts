@@ -1973,7 +1973,7 @@ test("an explicit additional email invitee is included without replacing the gue
 
 test("email requests cannot be acted on from phone turns or another email thread", async t => {
   const f = emailFixture(t);
-  for (const ctx of [context, { ...f.ctx, nativeChannelId: "other-thread", config: {} }, { ...f.ctx, senderIsOwner: true }]) {
+  for (const ctx of [context, { ...f.ctx, nativeChannelId: "other-thread", config: {} }, { ...f.ctx, senderIsOwner: true }, { ...f.ctx, requesterSenderId: "plow-owner", senderIsOwner: false }]) {
     assert.ok("error" in await f.act(ctx, "pick", { start: offers[0]!.start }));
   }
   assert.deepEqual(f.read(), f.ledger);

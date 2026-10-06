@@ -3,7 +3,7 @@ import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config } from "./config.ts";
 import { lookupContact } from "./contact.ts";
 import { calendarAction, type CalendarAction } from "./calendar.ts";
-import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findByChat, intersectConstraints, sameHandle, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
+import { nudgeFingerprint, sameRequest, currentOffers, requestEvents, findGuestRequest, intersectConstraints, OWNER_QUESTION_LIMIT, updateRequest, type Constraints, type Format, type Ledger, type Patch, type PendingOwner, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { checkTime, findPreferredSlots, preferredSearchCoverage, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -18,22 +18,10 @@ const EMPTY: Ledger = { requests: [] };
 
 const chatId = (ctx: GuestContext) => ctx.nativeChannelId ?? ctx.deliveryContext?.to?.replace(/^plow:/, "");
 
-function current(ledger: Ledger, ctx: GuestContext): Request | undefined {
-  const chat = chatId(ctx);
-  const sender = ctx.requesterSenderId;
-  if (ctx.messageChannel !== "plow" || ctx.agentAccountId !== "chat" || !chat || !sender) return;
-  const texts = { requests: ledger.requests.filter(r => r.channel !== "email") };
-  const request = findByChat(texts, chat);
-  return request && sameHandle(request.handle, sender) ? request : undefined;
-}
-
-async function resolveRequest(ctx: GuestContext): Promise<Request | undefined> {
-  if (ctx.messageChannel === "plow" && ctx.agentAccountId === "email" && chatId(ctx) && ctx.requesterSenderId && ctx.senderIsOwner !== true) {
-    const chat = chatId(ctx)!;
-    const emails = (ledger: Ledger) => ({ requests: ledger.requests.filter(r => r.channel === "email") });
-    return findByChat(emails(readJson<Ledger>(file("ledger.json"), EMPTY)), chat);
-  }
-  return current(readJson<Ledger>(file("ledger.json"), EMPTY), ctx);
+function resolveRequest(ctx: GuestContext): Request | undefined {
+  const chat = chatId(ctx), sender = ctx.requesterSenderId;
+  if (ctx.messageChannel !== "plow" || (ctx.agentAccountId !== "chat" && ctx.agentAccountId !== "email") || !chat || !sender) return;
+  return findGuestRequest(readJson<Ledger>(file("ledger.json"), EMPTY), ctx.agentAccountId, chat, sender, ctx.senderIsOwner);
 }
 
 function patch(request: Request, change: Patch): Request {
@@ -126,9 +114,9 @@ async function pick(request: Request, config: Config, start: string, attendees?:
       overlappedWithOwnerApproval: checked.overlap, ...await notifyOwner(request, config, "moved", sendOwner) };
   }
   const contact = request.handle.includes("@") ? undefined : await lookupContact(request.handle);
-  const email = request.handle.includes("@") ? request.handle : contact?.found && contact.matches === 1 ? contact.emails[0] : undefined;
-  request = (await write(request, { action: "book", start: offer.start, attendees: [email, ...attendees ?? []].filter(Boolean).join(",") || undefined })).request;
-  return { ...view(request, config), invitationSent: !!email, overlappedWithOwnerApproval: checked.overlap };
+  const email = request.channel === "email" ? undefined : request.handle.includes("@") ? request.handle : contact?.found && contact.matches === 1 ? contact.emails[0] : undefined;
+  const result = await write(request, { action: "book", start: offer.start, attendees: [email, ...attendees ?? []].filter(Boolean).join(",") || undefined });
+  return { ...view(result.request, config), invitationSent: "invitationSent" in result && result.invitationSent === true, overlappedWithOwnerApproval: checked.overlap };
 }
 
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
@@ -263,7 +251,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
   try {
-    let request = await resolveRequest(ctx);
+    let request = resolveRequest(ctx);
     if (!request) return { error: "No scheduling request matches you in this conversation." };
     const config = loadConfig();
     if (action === "view") return view(request, config);

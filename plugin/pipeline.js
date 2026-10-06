@@ -4,7 +4,7 @@ const record = async (event, ctx) => {
   const { updateJson } = await import("/opt/plow/skills/meetly/scripts/store.ts");
   const { file } = await import("/opt/plow/skills/meetly/scripts/paths.ts");
   updateJson(file("ledger.json"), { requests: [] }, ledger => recordGuestReply(
-    ledger, ctx.conversationId, ctx.senderId ?? event.senderId ?? event.from, event.timestamp ?? Date.now(),
+    ledger, ctx.conversationId, ctx.senderId ?? event.senderId ?? event.from, event.timestamp ?? Date.now(), ctx.accountId,
   ));
 };
 

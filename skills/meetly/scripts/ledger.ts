@@ -215,10 +215,19 @@ export function sameRequest(a: Request | undefined, b: Request | undefined): boo
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-export function recordGuestReply(ledger: Ledger, chat: string, sender: string, at: number): Ledger {
+export function findGuestRequest(ledger: Ledger, account: "chat" | "email", chat: string, sender: string, senderIsOwner = false): Request | undefined {
+  if (!sender) return;
+  const email = account === "email";
+  const scoped = { requests: ledger.requests.filter(r => (r.channel === "email") === email) };
+  const request = findByChat(scoped, chat);
+  if (!request || (email ? senderIsOwner || sender === "plow-owner" : !sameHandle(request.handle, sender))) return;
+  return request;
+}
+
+export function recordGuestReply(ledger: Ledger, chat: string, sender: string, at: number, account: "chat" | "email"): Ledger {
   if (!Number.isFinite(at)) return ledger;
-  const request = findByChat(ledger, chat);
-  if (!request || (request.channel === "email" ? !sender || sender === "plow-owner" : !sameHandle(request.handle, sender)) || !["offered", "booked"].includes(request.status)
+  const request = findGuestRequest(ledger, account, chat, sender);
+  if (!request || !["offered", "booked"].includes(request.status)
     || (request.lastGuestReplyAt !== undefined && at <= Date.parse(request.lastGuestReplyAt)) || at < Date.parse(request.offeredAt ?? request.createdAt)) return ledger;
   return { requests: ledger.requests.map(r => r.id === request.id
     ? { ...r, lastGuestReplyAt: new Date(at).toISOString() } : r) };
