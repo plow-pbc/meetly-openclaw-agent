@@ -4,15 +4,15 @@
 //
 //  - the Mac relay's request timeout (mcp.ts), in the config the base renders,
 //    which the base rewrites on every boot and nothing after it could change;
-//  - the setup gate (gate.ts), in plugins.entries, the part of
-//    openclaw.json the base leaves to the owner.
+//  - the setup gate and main-agent repeated-tool-call guard (gate.ts),
+//    in the parts of openclaw.json the base leaves to the owner.
 //
 // The scheduling plugin is required: installation must succeed before boot.
 // The base's steps fail exactly as the base's boot does.
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { applyGate, installGate } from "./gate.ts";
+import { applyGate, guardToolLoops, installGate } from "./gate.ts";
 import { withMacTimeout } from "./mcp.ts";
 
 const CONFIG = "/var/lib/plow/openclaw.json";
@@ -63,6 +63,7 @@ try {
     owner = structuredClone(config);
   }
   applyGate(owner);
+  guardToolLoops(owner);
   await writeFile(`${CONFIG}.tmp`, JSON.stringify(owner, null, 2) + "\n", { mode: 0o600 });
   await rename(`${CONFIG}.tmp`, CONFIG);
 
