@@ -1,4 +1,4 @@
-import { ownerTurns } from "./owner-turn.js";
+import { guestTurns } from "./guest-turn.js";
 import { cleanArgs, constraints as guestConstraints, sendPlowMessage } from "./guest-tools.js";
 
 const constraints = { ...guestConstraints, properties: { ...guestConstraints.properties,
@@ -14,10 +14,11 @@ export function registerOwnerTools(api, execute = run, outbound) {
   const required = ["requestId", "askedAt", "text", "outcome"];
   api.registerTool(context => ({
     name: "meetly_answer_owner", label: "Answer a meeting question",
-    description: "Resolve a pending meeting question or time approval from the owner's own answer. First match ledger.ts pending by person and topic. In a group, read ledger.ts find --chat for this chat and call this tool when the owner answers its pending question, even when their answer is already visible. Never substitute a normal reply or silence for clearing the pending question. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. Choose outcome=answer for words only, or calendar_change after applying a meeting change through calendar.ts. For a question in that same group, outcome=answer clears silently without sending or acknowledging; calendar_change sends its confirmed result once before clearing. When silent is true, output nothing: no group reply, commentary or \"(Silent — …)\" note. For email, send returned email.to/email.body with plow_send_email, then call again with the same requestId, askedAt, outcome and text plus emailSent:true only after confirmed sent:true. An unknown send remains pending. A question already answered by the owner in the email thread clears without another send. Owner only. For time approvals, first run calendar.ts approve-time: a yes never authorizes overlap. If busy, tell the owner privately and offer nearest free alternatives without conflict titles, then call this tool with the result; it sends the result once even in the group and clears the approval.",
+    description: "Resolve a pending meeting question or time approval from the owner's own answer. First match ledger.ts pending by person and topic. In a group, read ledger.ts find --chat for this chat and call this tool when the owner answers its pending question, even when their answer is already visible. Never substitute a normal reply or silence for clearing the pending question. For pendingOwner.alternatives, an owner yes runs a fresh alternative search through meetly-confirm before answering. Preserve saved conditions unless the owner explicitly changes them. Hold new times before relaying the offer; never just relay yes and clear the decision. Set declineAlternatives:true only when the owner refuses new alternatives. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. Choose outcome=answer for words only, or calendar_change after applying a meeting change through calendar.ts. For a question in that same group, outcome=answer clears silently without sending or acknowledging; calendar_change sends its confirmed result once before clearing. When silent is true, output nothing: no group reply, commentary or \"(Silent — …)\" note. For email, send returned email.to/email.body with plow_send_email, then call again with the same requestId, askedAt, outcome and text plus emailSent:true only after confirmed sent:true. An unknown send remains pending. A question already answered by the owner in the email thread clears without another send. Owner only. For time approvals, first run calendar.ts approve-time: a yes never authorizes overlap. If busy, tell the owner privately and offer nearest free alternatives without conflict titles, then call this tool with the result; it sends the result once even in the group and clears the approval.",
     parameters: {
       type: "object", additionalProperties: false, required,
       properties: {
+        declineAlternatives: { type: "boolean", description: "True only when the owner refuses the pending alternative-time search." },
         outcome: { type: "string", enum: ["answer", "calendar_change"], description: "answer for words only; calendar_change after successfully applying a meeting change." },
         requestId: { type: "string", description: "The matched request's id." },
         askedAt: { type: "string", description: "The matched pending question or time approval's askedAt." },
@@ -57,12 +58,12 @@ export function registerOwnerGroupTool(api, execute = runGroup, outbound) {
       location: string, locale: string,
     } },
     async execute(_id, args) {
-      try {
+      {
         const { introduction, ...request } = cleanArgs(args, required);
         if (!["needed", "already_introduced"].includes(introduction)) {
           return { isError: true, content: [{ type: "text", text: "Choose introduction: needed or already_introduced from this conversation's prior replies before offering times." }] };
         }
-        const result = await execute(context, request, text => ownerTurns.sendOnce(context.sessionKey, _id,
+        const result = await execute(context, request, text => guestTurns.sendOnce(context.sessionKey,
           () => sendPlowMessage(api, context, "plow-owner", text, "direct", outbound)));
         return { isError: "error" in result, content: [
           { type: "text", text: JSON.stringify(result) },
@@ -71,7 +72,7 @@ export function registerOwnerGroupTool(api, execute = runGroup, outbound) {
             ? "Do not introduce yourself or repeat your role. You already introduced yourself in this conversation. Reply only with the scheduling offer and selection question."
             : "Introduce yourself once as the owner's scheduling assistant, then present the offer and selection question." }] : []),
         ], details: result };
-      } finally { ownerTurns.finish(_id); }
+      }
     },
   }));
 }
@@ -98,8 +99,7 @@ export function registerOwnerDmTool(api, execute = runDm) {
     } },
     async execute(_id, args) {
       let result;
-      if (context.messageChannel !== "plow" || context.agentAccountId !== "chat" || context.senderIsOwner !== true ||
-        !context.requesterSenderId || context.sessionKey !== "agent:main:main") {
+      if (!isOwnerMainDm(context)) {
         result = { error: "Only the owner's main Plow DM can authorize an overlap offer." };
       } else if ("durationMin" in (args ?? {})) {
         result = { error: "Set durationMin on the saved request, not on meetly_offer_owner_dm." };
@@ -110,4 +110,36 @@ export function registerOwnerDmTool(api, execute = runDm) {
       return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   }));
+}
+
+const runContact = async (action, args) => {
+  const policy = await import("/opt/plow/skills/meetly/scripts/contact-policy.ts");
+  return action === "preference" ? policy.contactPreference(args) : policy.confirmContactOffer(args);
+};
+
+export function registerContactTools(api, execute = runContact) {
+  const string = { type: "string" };
+  for (const [name, action, description, properties, required] of [
+    ["meetly_contact_preference", "preference", "Set or clear a do-not-contact preference only on the owner's explicit main-DM instruction. Resolve the exact handle first. Never use in a group.",
+      { handle: string, blocked: { type: "boolean" }, name: string }, ["handle", "blocked"]],
+    ["meetly_confirm_contact", "confirm", "Offer times for a saved flagged request only after the owner explicitly confirms contact in their main DM. Read the saved pendingContact (or request) and search matching times first. Preserves the contact flag and saved group chat. The confirmation applies only to this request. Never use in a group.",
+      { requestId: string, offered: { type: "array", minItems: 1, maxItems: 3, items: { type: "object", additionalProperties: false, required: ["start", "end"], properties: { start: string, end: string } } } }, ["requestId", "offered"]],
+  ]) api.registerTool(context => ({
+    name, label: name, description,
+    parameters: { type: "object", additionalProperties: false, required, properties },
+    async execute(_id, args) {
+      let result;
+      if (!isOwnerMainDm(context)) result = { error: "Only the owner's main Plow DM can change contact authorization." };
+      else {
+        try { result = await execute(action, cleanArgs(args, required)); }
+        catch (error) { result = { error: error instanceof Error ? error.message : "Contact action failed." }; }
+      }
+      return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  }));
+}
+
+function isOwnerMainDm(context) {
+  return context.messageChannel === "plow" && context.agentAccountId === "chat" && context.senderIsOwner === true &&
+    !!context.requesterSenderId && context.sessionKey === "agent:main:main";
 }

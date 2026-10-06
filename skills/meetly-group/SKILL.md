@@ -154,7 +154,7 @@ closed requests; for a pending question, time approval or booked meeting use `me
 Otherwise follow "Offer times" with the group tool; it resolves the recipient, so do
 not look up Contacts or ask for a phone.
 
-Before DM offers: `pipeline.ts contact --handle <handle>`. Flagged contacts need private confirmation (`meetly-pipeline`), then `--confirm-contact`. In groups, use `meetly_offer_owner_group` for the check and private handoff; never separately read or discuss contact preferences. `silent` means no reply.
+Before DM offers: `pipeline.ts contact --handle <handle>`. Flagged contacts need private confirmation (`meetly-pipeline`), then `meetly_confirm_contact` with the saved request id and searched slots. In groups, use `meetly_offer_owner_group` for the check and private handoff; never separately read or discuss contact preferences. `silent` means no reply.
 
 For email outreach use `meetly-email`; never substitute a phone number.
 

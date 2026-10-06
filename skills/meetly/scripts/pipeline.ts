@@ -7,7 +7,7 @@ import { pendingCalendarWrites } from "./calendar.ts";
 import { loadConfig } from "./config.ts";
 import { localeFormatter } from "./slots.ts";
 import { isMain, run } from "./cli.ts";
-import { nudgeFingerprint, appendLog, doNotContact, setDoNotContact, type Ledger, type Request } from "./ledger.ts";
+import { nudgeFingerprint, doNotContact, type Ledger, type Request } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 
@@ -18,7 +18,6 @@ type Reason = "owner-decision" | "owner-question" | "time-approval" | "answer-de
 export type PipelineItem = {
   id: string; name: string; topic: string; status: Request["status"]; state: State; reason: Reason; since: string;
   detail: string; sinceLabel: string; fingerprint: string; nudge: boolean; doNotContact: boolean;
-  log?: (NonNullable<Request["log"]>[number] & { label: string })[];
 };
 type Display = { timezone: string; locale?: string };
 type Reservation = { id: string; fingerprint: string; at: string };
@@ -49,7 +48,7 @@ export function pipeline(ledger: Ledger, now: number, unresolved: readonly strin
       state = "waiting_on_owner"; reason = "owner-decision"; since = request.createdAt;
       detail = "Want me to offer times?";
     } else {
-      const offeredAt = request.status === "offered" ? request.offeredAt : request.status === "booked" ? request.reoffer?.offeredAt : undefined;
+      const offeredAt = ["offered", "booked"].includes(request.status) && request.offered.length ? request.offeredAt : undefined;
       if (!offeredAt) return [];
       since = offeredAt; state = "waiting_on_them";
       const replied = request.lastGuestReplyAt !== undefined && Date.parse(request.lastGuestReplyAt) >= Date.parse(offeredAt);
@@ -59,8 +58,7 @@ export function pipeline(ledger: Ledger, now: number, unresolved: readonly strin
         : replied ? "Guest replied; waiting for a time choice." : "Waiting for a reply to the offered times.";
     }
     return [{ id: request.id, name: line(request.name ?? request.handle), topic: line(request.topic), status: request.status,
-      state, reason, since, sinceLabel: time(since), detail, fingerprint: nudgeFingerprint(reason, since), nudge, doNotContact: blocked,
-      log: request.log?.map(entry => ({ ...entry, label: time(entry.at) })) }];
+      state, reason, since, sinceLabel: time(since), detail, fingerprint: nudgeFingerprint(reason, since), nudge, doNotContact: blocked }];
   });
 }
 
@@ -77,7 +75,7 @@ export function reserveNudges(ledger: Ledger, now: number, unresolved: readonly 
   return {
     ledger: { requests: ledger.requests.map(request => {
       const item = byId.get(request.id);
-      return item ? appendLog({ ...request, lastNudge: { fingerprint: item.fingerprint, at: new Date(now).toISOString() } }, "Owner nudge reserved", now) : request;
+      return item ? { ...request, lastNudge: { fingerprint: item.fingerprint, at: new Date(now).toISOString() } } : request;
     }) },
     items, text: renderPipeline(items, true),
     reservations: items.map(item => ({ id: item.id, fingerprint: item.fingerprint, at: new Date(now).toISOString() })),
@@ -94,13 +92,13 @@ export function retryFailedNudges(ledger: Ledger, reservations: Reservation[], n
     if (!reservations.some(r => r.id === request.id && r.fingerprint === request.lastNudge?.fingerprint && r.at === request.lastNudge?.at)) return request;
     const { lastNudge, ...rest } = request;
     released.push(request.id);
-    return appendLog(rest, "Owner nudge delivery failed; retry pending", now);
+    return rest;
   }) }, released };
 }
 
 if (isMain(import.meta.url)) run(() => {
   const { positionals, values } = parseArgs({ allowPositionals: true, options: {
-    handle: { type: "string" }, blocked: { type: "string" }, name: { type: "string" }, locale: { type: "string" },
+    handle: { type: "string" }, locale: { type: "string" },
     json: { type: "string" }, "json-file": { type: "string" },
   } });
   const path = file("ledger.json"), now = Date.now();
@@ -130,10 +128,7 @@ if (isMain(import.meta.url)) run(() => {
     return { released };
   }
   if (positionals[0] === "contact" && values.handle) {
-    if (values.blocked !== undefined && !["true", "false"].includes(values.blocked)) throw new Error("--blocked must be true or false");
-    const ledger = values.blocked === undefined ? readJson<Ledger>(path, EMPTY)
-      : updateJson<Ledger>(path, EMPTY, l => setDoNotContact(l, values.handle!, values.blocked === "true", now, values.name));
-    return { doNotContact: doNotContact(ledger, values.handle) };
+    return { doNotContact: doNotContact(readJson<Ledger>(path, EMPTY), values.handle) };
   }
-  throw new Error("usage: pipeline.ts view|nudge [--locale TAG] | retry-failed --json <reservations> | contact --handle H [--blocked true|false] [--name NAME]");
+  throw new Error("usage: pipeline.ts view|nudge [--locale TAG] | retry-failed --json <reservations> | contact --handle H");
 });

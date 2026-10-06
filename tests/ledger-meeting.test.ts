@@ -27,15 +27,6 @@ function bookedMeet(over: Patch = {}): Ledger {
   return updateRequest(l, "r_1", { status: "booked", eventId: "e1", booked, meetUrl: MEET, ...over }, T0);
 }
 
-test("replacement offers require a booked request and cannot outlive its booked status", () => {
-  const reoffer = { offered: [offer], offeredAt: new Date(T0).toISOString() };
-  const open = addRequest(empty(), input(), T0, "r_1");
-  assert.throws(() => updateRequest(open, "r_1", { reoffer }, T0), /reoffer needs a booked request/);
-  const replacement = updateRequest(bookedMeet(), "r_1", { reoffer }, T0);
-  assert.throws(() => updateRequest(replacement, "r_1", { status: "dropped" }, T0), /reoffer needs a booked request/);
-  assert.equal(updateRequest(replacement, "r_1", { status: "dropped", reoffer: null }, T0).requests[0]!.status, "dropped");
-});
-
 test("format defaults to unknown, and is stored when given", () => {
   assert.equal(addRequest(empty(), input(), T0, "r_1").requests[0]!.format, "unknown");
   for (const format of ["meet", "in_person", "phone", "unknown"]) {

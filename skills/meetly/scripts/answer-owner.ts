@@ -3,7 +3,7 @@ import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change"; emailSent?: boolean };
+type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change"; declineAlternatives?: boolean; emailSent?: boolean };
 
 export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: string, text: string) => Promise<void>): Promise<object> {
   const chat = resolveOwnerChat(ctx, ["chat", "email"]);
@@ -22,10 +22,17 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (!(ctx.agentAccountId === "chat" && ctx.sessionKey === "agent:main:main") && !inGroup) {
     return { error: "Answer from the owner's main DM or this request's group." };
   }
-  const alreadyVisible = inGroup && "question" in pending && args.outcome === "answer";
+  const alternatives = "question" in pending ? pending.alternatives : undefined;
+  if (alternatives && args.declineAlternatives !== true && (!request.offered.length
+    || request.offered.some(o => !o.holdId)
+    || !request.offered.some(o => !alternatives.previousStarts.some(start => Date.parse(start) === Date.parse(o.start))))) {
+    return { error: "Run the alternative search and hold new times before answering. Preserve the owner's saved conditions unless explicitly changed. Leave this decision pending if no times fit or the search or write fails." };
+  }
+  const alreadyVisible = inGroup && "question" in pending && args.outcome === "answer" && (!alternatives || args.declineAlternatives === true);
   const emailReceipt = request.channel === "email" && args.emailSent === true;
   if (emailReceipt && !pending.answerAttemptedAt) return { error: "No email answer attempt to confirm." };
   if (!alreadyVisible && !emailReceipt) {
+
     try {
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {
         if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed");
