@@ -8,9 +8,12 @@ test("contact queries accept canonical ledger handles", () => {
   for (const h of ["11 99999-0000", "ana", "x' or 1=1 --@a.b"]) assert.throws(() => contactQuery(h), /E\.164/, h);
 });
 
-test("the query filters on the handle's last eight digits and never reads notes or addresses", () => {
+test("the query filters on the handle's last four digits and never reads notes or addresses", () => {
   const q = contactQuery("+5547992547532");
-  assert.match(q, /like '%92547532'/);
+  assert.match(q, /like '%7532'/);
+  // A complete national number shorter than eight digits (Iceland's 555 1234) stays a candidate.
+  const suffix = /like '%(\d+)'/.exec(contactQuery("+3545551234"))![1]!;
+  assert.ok("5551234".endsWith(suffix), suffix);
   assert.doesNotMatch(q, /ZNOTE|ZABCDPOSTALADDRESS/);
   assert.match(contactQuery(" Ana@Example.com "), /lower\(e\.ZADDRESS\) = 'ana@example\.com'/);
   assert.match(contactQuery("o'brien@example.com"), /lower\(e\.ZADDRESS\) = 'o''brien@example\.com'/);
@@ -66,6 +69,11 @@ const card = (phone: string) => `S|0\nR|4|Ana|Lee|\nP|4|${phone}\nE|4|ana@exampl
 
 for (const [phone, handle, region] of [
   ["555.123.4567", "+15551234567", "US"],
+  ["1-555-123-4567", "+15551234567", "US"],
+  ["07700 900123", "+447700900123", "GB"],
+  ["06 1234 5678", "+390612345678", "IT"],
+  ["555 1234", "+3545551234", "IS"],
+  ["138 0013 8000", "+8613800138000", "CN"],
   ["915.555.0188", "+19155550188", "US"],
   ["(917) 555-0112", "+19175550112", "US"],
   ["020 7946 0958", "+442079460958", "GB"],
@@ -87,6 +95,7 @@ for (const [phone, handle, region] of [
   ["+15551234567junk", "+15551234567", "US"],
   ["+16505550100 ext. 2", "+16505550100", "US"],
   ["020 7946 0958", "+442079460958", "US"],
+  ["7700 900123", "+447700900123", "US"],
   ["(650) 555-0100", "+16505550100", "GB"],
   ["0044 20 7946 0958", "+442079460958", "US"],
 ] as const) test(`card ${phone} cannot match ${handle} in ${region}`, () => {
@@ -94,7 +103,8 @@ for (const [phone, handle, region] of [
 });
 
 test("national cards fail closed without an owner region; international cards still match", () => {
-  assert.deepEqual(parseContacts(card("650.555.0100"), "+16505550100"), []);
+  assert.deepEqual(parseContacts(`L|en_US\n${card("650.555.0100")}`, "+16505550100"), []);
+  assert.equal(parseContacts(`L|en_GB\n${card("650.555.0100")}`, "+16505550100", "US")[0]?.name, "Ana Lee");
   assert.equal(parseContacts(card("+1 (650) 555-0100"), "+16505550100")[0]?.name, "Ana Lee");
 });
 
@@ -154,7 +164,7 @@ test("lookupContact strips nonbreaking spaces before SQL candidate selection", a
     INSERT INTO ZABCDRECORD VALUES (4, 'Ana', 'Lee', '');
     INSERT INTO ZABCDEMAILADDRESS VALUES (4, 'ana@example.com');
   `);
-  const phone = "(650)\u00a0555-0100";
+  const phone = "(650)\u00a0555-01\u00a000";
   db.prepare("INSERT INTO ZABCDPHONENUMBER VALUES (4, ?)").run(phone);
   const fetchSql = (async (url, init) => {
     const call = JSON.parse(String(init?.body));

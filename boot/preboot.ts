@@ -4,7 +4,8 @@
 //
 //  - the Mac relay's request timeout (mcp.ts), in the config the base renders,
 //    which the base rewrites on every boot and nothing after it could change;
-//  - the setup gate (gate.ts), in plugins.entries, the part of
+//  - the setup gate (gate.ts), in plugins.entries, and private heartbeat
+//    finals for the poll's woken turns (quietHeartbeat), in the parts of
 //    openclaw.json the base leaves to the owner.
 //
 // The scheduling plugin is required: installation must succeed before boot.
@@ -12,7 +13,7 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { applyGate, installGate } from "./gate.ts";
+import { applyGate, installGate, quietHeartbeat } from "./gate.ts";
 import { withMacTimeout } from "./mcp.ts";
 
 const CONFIG = "/var/lib/plow/openclaw.json";
@@ -43,7 +44,7 @@ try {
   const identity = await identityFromApi(base, process.env.PLOW_AGENT_TOKEN);
   identity.agent = { ...identity.agent, name: identity.line.display_name?.trim() || identity.agent?.name };
   const config = withMacTimeout(renderConfig(identity, base));
-  config.tools.alsoAllow.push("meetly_answer_owner", "meetly_offer_owner_group", "meetly_offer_owner_dm");
+  config.tools.alsoAllow.push("meetly_answer_owner", "meetly_offer_owner_group", "meetly_offer_owner_dm", "meetly_contact_preference", "meetly_confirm_contact");
   await mkdir("/var/lib/plow/workspace", { recursive: true });
   await writeFile("/var/lib/plow/gateway-password", process.env.OPENCLAW_GATEWAY_PASSWORD + "\n", { mode: 0o600 });
   await chmod("/var/lib/plow/gateway-password", 0o600);
@@ -63,6 +64,7 @@ try {
     owner = structuredClone(config);
   }
   applyGate(owner);
+  quietHeartbeat(owner);
   await writeFile(`${CONFIG}.tmp`, JSON.stringify(owner, null, 2) + "\n", { mode: 0o600 });
   await rename(`${CONFIG}.tmp`, CONFIG);
 

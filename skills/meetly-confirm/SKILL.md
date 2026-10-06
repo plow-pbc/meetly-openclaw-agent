@@ -35,8 +35,14 @@ tell the owner; do not resend. For a pending item, only if the owner explicitly 
   the owner's yes with `outcome:"calendar_change"`; it searches, holds and delivers the new offer. Pass `constraints`
   only for conditions the owner explicitly changed. For a refusal, pass
   `outcome:"decline_alternatives"` and their answer as `text`.
-- **Question (`pendingOwner.question`, without `alternatives`):** `text` is Meetly relaying the owner's answer.
-  Apply any requested calendar change first. On failure or an unresolved write, leave the question pending. For a successful change set `outcome: "calendar_change"`: the tool delivers the confirmed result even in the same group. Otherwise set `outcome: "answer"`; in the same group the tool clears silently without
+- **Question (`pendingOwner.question`, without `alternatives`):** if the owner's answer changes location, format or time,
+  apply it first: use `calendar.ts format` for place/format, or
+  "Book the event" / "Changes after booking" for time changes. Wait until the
+  calendar writer succeeds before calling `meetly_answer_owner` or acknowledging.
+  On a failed or unresolved write, leave the question pending; resume unresolved
+  writes and never claim the change completed. `text` relays the confirmed result,
+  or the owner's answer when no calendar change is needed.
+  For a successful change set `outcome: "calendar_change"`: the tool delivers the confirmed result even in the same group. Otherwise set `outcome: "answer"`; in the same group the tool clears silently without
   sending or acknowledging; after `silent: true`, output nothing. If the owner answers
   a different question already visible in the group, leave the unrelated pending
   question open and output nothing. Never send the answer separately.
@@ -102,6 +108,9 @@ From the owner's DM, run `ledger.ts booked` and match the meeting by person,
 topic and thread context. If multiple meetings fit, ask which before changing
 anything. From the group, use `ledger.ts find --chat <this chat uid>`.
 Use that request's id and recorded `chatUid`; never start another request or group.
+Before owner-requested offers or moves, run `pipeline.ts contact --handle <handle>`.
+Flagged contacts need the private confirmation in `meetly-pipeline`, then
+`meetly_confirm_contact` with that saved request id and searched slots. Cancellation remains allowed.
 
 - **Other times:** read the calendar and search with `slots.ts --request <id>`.
   It keeps the owner's conditions and excludes this request's event and holds

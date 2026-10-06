@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { POLL_MESSAGE } from "../skills/meetly/scripts/register-crons.ts";
 import { registerOwnerTools, registerOwnerGroupTool } from "../plugin/owner-tools.js";
 import { registerGuestTools } from "../plugin/guest-tools.js";
 
@@ -40,12 +39,12 @@ test("AGENTS.md renders the conversation identity and keeps the base's tool and 
   // Every one of them is still in the base it came from, so a base bump that rewords one shows here.
   const base = flat(readFileSync(join(ROOT, "tests", "fixtures", "base-AGENTS.md"), "utf8"));
   for (const rule of BASE_CONTRACT) assert.ok(base.includes(rule), `the base no longer says: ${rule}`);
-  assert.ok(prompt.includes("Meetly poll."));
+  assert.ok(prompt.includes("Meetly poll: batch"));
   assert.ok(flat(prompt).includes("Guest scheduling tools support Plow chat only; they are unavailable to email guests."));
 });
 
-test("the five Meetly skills exist", () => {
-  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-group", "meetly-poll", "meetly-setup"]);
+test("the six Meetly skills exist", () => {
+  assert.deepEqual(skillFiles.map((s) => s.dir).sort(), ["meetly", "meetly-confirm", "meetly-group", "meetly-pipeline", "meetly-poll", "meetly-setup"]);
 });
 
 test("every skill has frontmatter naming its directory and a description", () => {
@@ -70,9 +69,6 @@ test("every script the prompt or a skill names exists", () => {
   }
 });
 
-test("the poll message is what the prompt keys on", () => {
-  assert.ok(POLL_MESSAGE.startsWith("Meetly poll."));
-});
 
 test("the poll never contacts anyone new: it saves the request as asked and asks the owner", () => {
   const poll = pollSkill();
@@ -80,16 +76,20 @@ test("the poll never contacts anyone new: it saves the request as asked and asks
   assert.ok(poll.includes("never contacts anyone new: it opens no group and messages no one who wrote to the owner"));
   assert.ok(poll.includes("`ledger.ts save --json` with `status: \"asked\"`"));
   assert.ok(poll.includes("No holds, no group, no message to them."));
-  assert.ok(poll.includes("Send the owner one line in their DM, in their language: \"<name or handle> asked about <topic> <when>. Want me to offer times?\""));
-  assert.ok(poll.includes("give https://plow.co/download/latch. Go to step 6: it needs no message reads."));
+  assert.ok(poll.includes("Run `pipeline.ts nudge` once"));
+  assert.ok(poll.includes("give https://plow.co/download/latch"));
 });
 
-test("poll maintenance retries unnotified requests and records attempts before sending", () => {
-  const maintenance = pollSkill().split("6. Maintenance:")[1]!;
-  assert.ok(maintenance.includes("`ledger.ts asked --unnotified`"));
-  assert.ok(maintenance.indexOf("--kind notify --action begin") < maintenance.indexOf("Send the owner one line"));
-  assert.ok(maintenance.includes("On success or unknown delivery, run `ledger.ts delivery --id <id> --kind notify --action complete`"));
-  assert.ok(maintenance.includes("On a definite failure, leave it unnotified for the next poll"));
+test("poll maintenance sends only the reserved monitor batch to the owner DM", () => {
+  const maintenance = pollSkill().split("5. Maintenance:")[1]!;
+  assert.ok(maintenance.indexOf("calendar.ts resume-pending") < maintenance.indexOf("pipeline.ts nudge"));
+  assert.ok(maintenance.indexOf("owner-chat.ts") < maintenance.indexOf("pipeline.ts nudge"));
+  assert.ok(maintenance.includes("send exactly that `text` once"));
+  assert.ok(maintenance.includes("If the message tool confirms a definite failure, run `pipeline.ts retry-failed"));
+  assert.ok(maintenance.includes("The next poll retries released items, including asked requests"));
+  assert.ok(maintenance.includes("On success or unknown delivery, keep the reservation and never resend automatically"));
+  assert.ok(!maintenance.includes("ledger.ts asked --unnotified"));
+  assert.ok(pollSkill().includes('If the save prints `skipped: "do-not-contact"`, run `cursor.ts release`'));
 });
 
 test("the owner's yes or no in their DM decides an asked request", () => {
@@ -198,13 +198,13 @@ test("every booking uses the calendar writer instead of recording a separate mut
 });
 
 
-test("the poll sends due reminders before reading messages, and marks each once", () => {
+test("the woken poll sends due reminders before handling messages, and marks each once", () => {
   const poll = pollSkill();
-  const ready = poll.indexOf("If it is not `READY`, or `config.paused` is true, end");
+  const batch = poll.indexOf("Run `poll.ts batch`");
   const reminders = poll.indexOf("Run `ledger.ts reminders`");
-  const cursor = poll.indexOf("Run `cursor.ts get`");
-  assert.ok(ready > 0 && reminders > ready && cursor > reminders, "order: ready/paused, reminders, cursor");
-  assert.ok(poll.includes("a paused Meetly sends no reminders either"));
+  const senders = poll.indexOf("Group `rows` by `sender`");
+  assert.ok(batch > 0 && reminders > batch && senders > reminders, "order: batch, reminders, messages");
+  assert.ok(!poll.includes("cursor.ts get"), "the job, not the turn, reads the cursor and messages");
   assert.ok(poll.includes("`plow-gog calendar event primary <eventId> --account <booked.account> --json`"));
   assert.ok(poll.includes("Run `reminder-check.ts --id <id> --expected-start <snapshot booked.start> --event-file <that file>`"));
   assert.ok(poll.includes("Use that URL exactly as printed; never any other link"));
@@ -301,6 +301,21 @@ test("owner format changes reach the guest and visible answers still clear their
   assert.ok(confirm.includes("Do not acknowledge completion in the DM before guest delivery"));
   assert.ok(flat(prompt).includes("A normal reply or silence does not resolve the ledger"));
   assert.ok(flat(prompt).includes("never another scheduling outcome in the same guest turn"));
+});
+
+test("owner answers apply calendar changes before clearing the question", () => {
+  const question = confirmSkill().split("- **Question (`pendingOwner.question`, without `alternatives`):**")[1]!.split("- **Yes to a time**")[0]!;
+  assert.match(question, /location, format or time/);
+  assert.match(question, /calendar\.ts format/);
+  assert.match(question, /Book the event.*Changes after booking/);
+  assert.match(question, /writer succeeds before calling `meetly_answer_owner` or acknowledging/);
+  assert.match(question, /failed or unresolved write, leave the question pending/);
+  registerOwnerTools({ registerTool(factory: (ctx: object) => { description: string }) {
+    const description = factory({}).description;
+    assert.match(description, /For a question without alternatives, apply any location, format or time change/);
+    assert.match(description, /If the answer requests a calendar change, call only after the calendar writer succeeds/);
+    assert.match(description, /failed or unresolved writes leave the question pending/);
+  } });
 });
 
 test("owner-started groups introduce Meetly and name the owner in the first reply or offer", () => {
