@@ -143,3 +143,33 @@ function isOwnerMainDm(context) {
   return context.messageChannel === "plow" && context.agentAccountId === "chat" && context.senderIsOwner === true &&
     !!context.requesterSenderId && context.sessionKey === "agent:main:main";
 }
+
+const runAttendee = async (context, { requestId, operation, email }) => {
+  const { calendarAction } = await import("/opt/plow/skills/meetly/scripts/calendar.ts");
+  return calendarAction(requestId, { action: "attendee", operation, email }, { validate(request) {
+    if (context.sessionKey !== "agent:main:main" && (request.chatUid !== context.nativeChannelId ||
+      context.agentAccountId !== (request.channel === "email" ? "email" : "chat"))) throw new Error("Use this meeting's thread or the owner's main DM.");
+  } });
+};
+
+export function registerAttendeeTool(api, execute = runAttendee) {
+  const required = ["requestId", "operation", "email"];
+  api.registerTool(context => ({
+    name: "meetly_edit_attendee", label: "Edit a meeting attendee",
+    description: "Owner only. Add or remove one attendee from an existing booked meeting using its requestId and the resolved email address. Updates the invitation without moving the meeting. Confirm only after success, using confirmationTime with its time zone. Never rebook or suggest alternatives for an attendee edit. Removing the last guest requires cancellation instead; never cancel automatically.",
+    parameters: { type: "object", additionalProperties: false, required, properties: {
+      requestId: { type: "string" }, operation: { type: "string", enum: ["add", "remove"] }, email: { type: "string" },
+    } },
+    async execute(_id, args) {
+      let result;
+      if (context.messageChannel !== "plow" || !["chat", "email"].includes(context.agentAccountId) ||
+        context.senderIsOwner !== true || !context.requesterSenderId || !context.nativeChannelId) {
+        result = { error: "Only the owner's own Plow turn can edit attendees." };
+      } else {
+        try { result = await execute(context, cleanArgs(args, required)); }
+        catch (error) { result = { error: error instanceof Error ? error.message : "Attendee change could not be completed." }; }
+      }
+      return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  }));
+}

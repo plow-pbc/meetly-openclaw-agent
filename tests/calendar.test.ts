@@ -1272,7 +1272,7 @@ for (const operation of ["add", "remove"] as const) test(`attendee ${operation} 
   f.calls.length = 0;
   const email = operation === "add" ? "third@example.com" : "second@example.com";
   const result = await calendarAction("r_one", { action: "attendee", operation, email }, f.options);
-  assert.equal(result.invitationUpdated, true);
+  assert.ok("invitationUpdated" in result && result.invitationUpdated);
   assert.deepEqual(f.events.get(before.eventId!)!.attendees?.map(a => a.email), operation === "add"
     ? ["first@example.com", "second@example.com", email] : ["first@example.com"]);
   const { calendarRevision: _revision, ...after } = f.read();
@@ -1290,19 +1290,8 @@ for (const operation of ["add", "remove"] as const) test(`attendee ${operation} 
   for (const flag of ["--from", "--to", "--summary", "--with-meet", "--location"]) assert.ok(!writes[0]!.includes(flag), flag);
   f.calls.length = 0;
   const repeat = await calendarAction("r_one", { action: "attendee", operation, email: email.toUpperCase() }, f.options);
-  assert.equal(repeat.invitationUpdated, false);
+  assert.ok("invitationUpdated" in repeat && !repeat.invitationUpdated);
   assert.ok(f.calls.every(c => c[2] === "event"));
-});
-
-test("last-attendee removal suggests cancellation without writing", async t => {
-  const f = fixture(t);
-  await calendarAction("r_one", { action: "book", start, attendees: "only@example.com" }, f.options);
-  f.calls.length = 0;
-  const before = f.read();
-  await assert.rejects(calendarAction("r_one", { action: "attendee", operation: "remove", email: "only@example.com" }, f.options), /last attendee.*cancel/i);
-  assert.deepEqual(f.read(), before);
-  assert.ok(f.calls.every(c => c[2] === "event"));
-  assert.deepEqual(pendingCalendarWrites(), []);
 });
 
 test("attendee edits reject an unbooked request before writes", async t => {
@@ -1323,7 +1312,8 @@ test("uncertain attendee edits reconcile without sending the update twice", asyn
   };
   await assert.rejects(calendarAction("r_one", { action: "attendee", operation: "add", email: "new@example.com" }, { ...f.options, command }), /unresolved/);
   hide = false;
-  assert.equal((await calendarAction("r_one", { action: "resume" }, { ...f.options, command })).invitationUpdated, true);
+  const resumed = await calendarAction("r_one", { action: "resume" }, { ...f.options, command });
+  assert.ok("invitationUpdated" in resumed && resumed.invitationUpdated);
   assert.equal(f.calls.filter(c => c[2] === "update").length, 1);
   assert.deepEqual(pendingCalendarWrites(), []);
 });
@@ -1340,15 +1330,18 @@ test("concurrent attendee edits read the current guest list under the request lo
   assert.equal(f.calls.filter(c => c[2] === "update").length, 2);
 });
 
-for (const invalid of ["cancelled", "partial", "owner", "invalid-email"] as const) test(`attendee edit refuses ${invalid} before writing`, async t => {
+for (const invalid of ["cancelled", "partial", "owner", "invalid-email", "last-attendee"] as const) test(`attendee edit refuses ${invalid} before writing`, async t => {
   const f = fixture(t);
   await calendarAction("r_one", { action: "book", start, attendees: "first@example.com,second@example.com" }, f.options);
   const event = f.events.get(f.read().eventId!)!;
   if (invalid === "cancelled") event.status = "cancelled";
   if (invalid === "partial") Object.assign(event, { attendeesOmitted: true });
+  if (invalid === "last-attendee") event.attendees = [{ email: "first@example.com" }];
+  const before = f.read();
   f.calls.length = 0;
   await assert.rejects(calendarAction("r_one", { action: "attendee", operation: "remove",
-    email: invalid === "owner" ? account : invalid === "invalid-email" ? "first@example.com,second@example.com" : "first@example.com" }, f.options));
+    email: invalid === "owner" ? account : invalid === "invalid-email" ? "first@example.com,second@example.com" : "first@example.com" }, f.options), invalid === "last-attendee" ? /last attendee.*cancel/i : /./);
+  assert.deepEqual(f.read(), before);
   assert.ok(f.calls.every(c => c[2] === "event"));
   assert.deepEqual(pendingCalendarWrites(), []);
 });

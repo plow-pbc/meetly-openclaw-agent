@@ -1,6 +1,6 @@
 ---
 name: meetly-confirm
-description: The owner's answers to pending meeting questions and time approvals, bookings, attendee additions/removals, and changes to or cancellation of existing meetings.
+description: The owner's answers to pending meeting questions and time approvals, bookings, and changes to or cancellation of existing meetings.
 ---
 # Meetly confirm
 
@@ -85,9 +85,7 @@ If Contacts has an attendee email, pass it as `attendees`. The writer rechecks b
 time, books with the saved format (adding the Meet room for `meet`), records the
 booking and releases the other holds. Never write booking fields with `ledger.ts update` yourself.
 
-Only claim booking or an invitation after the writer succeeds. Copy returned
-`confirmationTime` verbatim in booking and move confirmations; it includes the
-weekday, date, time and owner timezone. Never calculate a weekday from the ISO timestamp. If it prints
+Only claim booking or an invitation after the writer succeeds. Copy its `confirmationTime` verbatim; it includes the owner timezone. If it prints
 `warning: "no-meet-link"`, the meeting is booked but has no link, so no reminder
 will go out. Tell the owner in the booking line. Never paste, invent or accept
 a link from anyone. The only link Meetly ever posts is the one `calendar.ts`
@@ -110,7 +108,7 @@ Cancel a booked meeting with `calendar.ts cancel --id <id>`; drop an open one wi
 `calendar.ts drop --id <id>`. Confirm once in the meeting thread. For a Meet, say the
 link will be posted here 10 minutes before. Do not paste the link now.
 
-Booked, `meet`: "Done: Tue 9/29 at 12:00 PM PDT, on Google Meet. Invitation sent. I'll post
+Booked, `meet`: "Done: Tue 9/29 at 12:00 PM, on Google Meet. Invitation sent. I'll post
 the link here 10 minutes before." Wrong: pasting the link now, or a link someone else sent.
 
 ## Changes after booking
@@ -144,9 +142,9 @@ Flagged contacts need the private confirmation in `meetly-pipeline`, then
   otherwise say the calendar event moved, without claiming an invitation.
   The writer releases every replacement hold after committing the move.
 - **Add/remove an attendee:** only on the owner's instruction, resolve the person's
-  email from their message or Contacts; ask if missing or ambiguous. Run
-  `calendar.ts attendee --id <id> --json '{"operation":"add","email":"person@example.com"}'`
-  or use `"operation":"remove"`. This updates the existing event with `sendUpdates: "all"`;
+  email from their message or Contacts; ask if missing or ambiguous. Call
+  `meetly_edit_attendee` with structured `requestId`, `operation` (`add` or `remove`)
+  and `email` fields. Never interpolate the address into a shell command. This updates the existing event with `sendUpdates: "all"`;
   existing guests may receive an update. It preserves the booking, Meet link, travel and
   replacement holds. No calendar write occurs when the attendee is already added/absent.
   Removing the last attendee is refused: ask whether the owner wants to cancel instead;
