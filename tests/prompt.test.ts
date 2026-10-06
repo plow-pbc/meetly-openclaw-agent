@@ -80,6 +80,17 @@ test("the poll never contacts anyone new: it saves the request as asked and asks
   assert.ok(poll.includes("give https://plow.co/download/latch"));
 });
 
+test("every message the poll sends the owner targets plow-owner, so their reply is answered in view of it (#53)", () => {
+  const poll = pollSkill();
+  // A chat uid target is filed as a separate group session the owner never talks to.
+  assert.ok(!poll.includes("target the printed `chatUid`"));
+  assert.ok(!poll.includes("target the owner's DM uid"));
+  assert.ok(poll.includes("Every private message to the owner goes with `message` (action `send`, channel `plow`, accountId `chat`, target `plow-owner`)"));
+  assert.ok(poll.includes("when it is `null`, to the owner with target `plow-owner`"));
+  const maintenance = poll.split("5. Maintenance:")[1]!;
+  assert.ok(maintenance.includes("(action `send`, channel `plow`, accountId `chat`, target `plow-owner`)"));
+});
+
 test("poll maintenance sends only the reserved monitor batch to the owner DM", () => {
   const maintenance = pollSkill().split("5. Maintenance:")[1]!;
   assert.ok(maintenance.indexOf("calendar.ts resume-pending") < maintenance.indexOf("pipeline.ts nudge"));
