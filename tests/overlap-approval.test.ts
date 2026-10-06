@@ -5,6 +5,7 @@ import { rmSync } from "node:fs";
 import { movableAction } from "../skills/meetly/scripts/movable.ts";
 import { guestAction } from "../skills/meetly/scripts/guest.ts";
 import { calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.ts";
+import { emailStart } from "../skills/meetly/scripts/email.ts";
 import { answerOwner } from "../skills/meetly/scripts/answer-owner.ts";
 import { addRequest, pendingOwnerList, recordDelivery, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
@@ -15,14 +16,16 @@ const now = Date.parse("2026-10-03T08:00:00Z"), account = "owner@example.com";
 const slot = { start: "2026-10-05T12:00:00Z", end: "2026-10-05T12:30:00Z" };
 const owner = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "+15550001111", nativeChannelId: "owner-dm", sessionKey: "agent:main:main" };
 
-for (const scenario of ["allow", "refuse", "same-title", "other-account", "revoked", "email", "prior-grant", "booked", "travel", "asked", "travel-estimate", "guest-search", "guest-exact", "replacement", "clear-grant", "wrong-interval", "delivery-failure", "second-choice", "email-choice", "format-growth", "travel-growth", "new-request"] as const) test(`fresh overlap answer binds exact inspected event: ${scenario}`, async t => {
+for (const scenario of ["allow", "refuse", "same-title", "other-account", "revoked", "email", "prior-grant", "booked", "travel", "asked", "travel-estimate", "guest-search", "guest-exact", "replacement", "clear-grant", "wrong-interval", "delivery-failure", "second-choice", "email-choice", "format-growth", "travel-growth", "new-request", "new-email"] as const) test(`fresh overlap answer binds exact inspected event: ${scenario}`, async t => {
   const home = tmpHome(), old = process.env.MEETLY_HOME;
   process.env.MEETLY_HOME = home;
   t.mock.method(Date, "now", () => now);
   t.after(() => { if (old === undefined) delete process.env.MEETLY_HOME; else process.env.MEETLY_HOME = old; rmSync(home, { recursive: true, force: true }); });
+  const email = scenario.startsWith("email") || scenario === "new-email";
+  const fresh = scenario === "new-request" || scenario === "new-email";
   const config = { ...DEFAULTS, ownerName: "Alex", timezone: "UTC", defaultAccount: account, calendars: [{ account, id: account }], setupDoneAt: new Date(now).toISOString() };
   writeJson(join(home, "config.json"), config);
-  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, { origin: scenario === "asked" ? "owner-group" : "owner", status: scenario === "asked" ? "asked" : "offered", handle: scenario.startsWith("email") ? "guest@example.net" : "+15550002222", channel: scenario.startsWith("email") ? "email" : "text",
+  writeJson(join(home, "ledger.json"), addRequest({ requests: [] }, { origin: scenario === "asked" ? "owner-group" : "owner", status: scenario === "asked" ? "asked" : "offered", handle: email ? "guest@example.net" : "+15550002222", channel: email ? "email" : "text",
     chatUid: "guest-chat", topic: "Lunch", durationMin: 30, format: scenario.startsWith("travel") ? "in_person" : "meet", travel: { beforeMin: scenario.startsWith("travel") ? 15 : 0, afterMin: 0 },
     constraints: scenario.startsWith("guest-") ? { from: "2026-10-05", to: "2026-10-05", after: "12:00", before: "15:00" } : undefined,
     offered: scenario === "asked" ? [] : [{ start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z", account }] }, now, "request"));
@@ -36,14 +39,20 @@ for (const scenario of ["allow", "refuse", "same-title", "other-account", "revok
     const result = await calendar.command({ argv });
     return Response.json({ result: { content: [{ type: "text", text: JSON.stringify({ exit_code: 0, output: result.output }) }] } });
   } };
-  if (scenario === "new-request") {
+  if (fresh) {
     writeJson(join(home, "ledger.json"), { requests: [] });
     const initial = await movableAction(owner, { action: "inspect", candidates: [slot], format: "meet", travel: { beforeMin: 0, afterMin: 0 } }, bridge);
     assert.equal(initial.requiresRequest, true, "an unsaved inspection must require context before asking");
     assert.equal(initial.askedAt, undefined);
-    const created = addRequest({ requests: [] }, { origin: "owner", status: "asked", handle: "+15550002222", topic: "Lunch", durationMin: 30,
+    const created = addRequest({ requests: [] }, { origin: "owner", status: "asked", channel: email ? "email" : "text", handle: email ? "guest@example.net" : "+15550002222", topic: "Lunch", durationMin: 30,
       format: "meet", travel: { beforeMin: 0, afterMin: 0 }, offered: [] }, now, "request");
-    writeJson(join(home, "ledger.json"), updateRequest(recordDelivery(recordDelivery(created, "request", "start", "begin", now), "request", "start", "complete", now), "request", { chatUid: "guest-chat" }, now));
+    if (email) {
+      writeJson(join(home, "ledger.json"), created);
+      await emailStart("request", undefined, { now: () => now });
+      assert.equal(read().chatUid, undefined);
+      assert.deepEqual(read().offered, []);
+      await emailStart("request", { sent: true, chat_uid: "email-thread" }, { now: () => now });
+    } else writeJson(join(home, "ledger.json"), updateRequest(recordDelivery(recordDelivery(created, "request", "start", "begin", now), "request", "start", "complete", now), "request", { chatUid: "guest-chat" }, now));
     assert.deepEqual(read().offered, []);
     assert.equal(calendar.calls.some(c => c[2] === "create"), false);
   }
@@ -60,7 +69,7 @@ for (const scenario of ["allow", "refuse", "same-title", "other-account", "revok
   const options = { command: calendar.command, now: () => now };
   if (scenario === "prior-grant") writeJson(join(home, "ledger.json"), { requests: [{ ...read(), allowOverlap: [{ account, id: "unapproved" }] }] });
   const before = read();
-  if (scenario === "new-request") assert.equal(readJson<Ledger>(join(home, "ledger.json"), { requests: [] }).requests.length, 1);
+  if (fresh) assert.equal(readJson<Ledger>(join(home, "ledger.json"), { requests: [] }).requests.length, 1);
   assert.ok("error" in await answerOwner({ ...owner, turnStartedAt: now + 1 }, { ...args, outcome: "answer" }, send, options));
   assert.deepEqual(read(), before, "generic answers cannot consume overlap decisions");
   if (twoChoices) {
@@ -97,8 +106,10 @@ for (const scenario of ["allow", "refuse", "same-title", "other-account", "revok
     assert.deepEqual(read().offered, before.offered);
     assert.equal([...calendar.events.values()].filter(e => e.id.startsWith("new-") && e.status !== "cancelled").length, 0);
   } else {
-    if (scenario.startsWith("email")) {
+    if (email) {
       assert.ok(result.email, JSON.stringify(result));
+      assert.equal(result.email.to, fresh ? "email-thread" : "guest-chat");
+      assert.notEqual(result.email.to, read().handle, "string email destinations are thread IDs, not recipient addresses");
       assert.doesNotMatch(result.email.body, /Private|inspected|example.com/);
       const writes = calendar.calls.filter(c => c[2] === "create").length;
       if (twoChoices) assert.ok("error" in await answerOwner({ ...owner, turnStartedAt: now + 3 }, { ...args, overlapChoice: 0, emailSent: true }, send, options));
@@ -109,7 +120,7 @@ for (const scenario of ["allow", "refuse", "same-title", "other-account", "revok
     assert.equal(read().status, before.status === "asked" ? "offered" : before.status, "overlap permission never books or moves");
     assert.deepEqual(read().booked, before.booked);
     assert.deepEqual(read().allowOverlap ?? [], scenario === "refuse" ? [] : [{ account, id: "inspected", ...slot }]);
-    assert.equal(sent.length, scenario === "refuse" || scenario.startsWith("email") ? 0 : 1);
+    assert.equal(sent.length, scenario === "refuse" || email ? 0 : 1);
     assert.doesNotMatch(JSON.stringify(sent), /Private|inspected|example.com/);
     assert.equal(readJson<any>(join(home, "overlap-decisions.json"), {})["private focus block"].allowed, scenario !== "refuse");
   }
@@ -159,4 +170,43 @@ for (const scenario of ["allow", "refuse", "same-title", "other-account", "revok
   assert.ok("error" in await answerOwner({ ...owner, turnStartedAt: now + 4 }, args, send, options), "a repeated answer cannot write over an unapproved blocker or replay a consumed decision");
   assert.equal(calendar.calls.filter(c => ["create", "update", "delete"].includes(c[2]!)).length, writes);
   t.diagnostic(JSON.stringify({ scenario, result, sent, allowed: read().allowOverlap }));
+});
+
+for (const format of ["phone", "in_person"] as const) test(`approved overlap retains the inspected ${format} replacement through booking`, async t => {
+  const home = tmpHome(), previous = process.env.MEETLY_HOME;
+  process.env.MEETLY_HOME = home;
+  t.mock.method(Date, "now", () => now);
+  t.after(() => { if (previous === undefined) delete process.env.MEETLY_HOME; else process.env.MEETLY_HOME = previous; rmSync(home, { recursive: true, force: true }); });
+  writeJson(join(home, "config.json"), { ...DEFAULTS, ownerName: "Alex", timezone: "UTC", defaultAccount: account, calendars: [{ account, id: account }], setupDoneAt: new Date(now).toISOString() });
+  const replacement = { format, location: format === "phone" ? "Phone call" : "Library", travel: { beforeMin: format === "phone" ? 0 : 45, afterMin: 0 } };
+  const original = { format: format === "phone" ? "in_person" as const : "meet" as const, location: format === "phone" ? "Old venue" : "", travel: { beforeMin: format === "phone" ? 30 : 0, afterMin: 0 } };
+  const booked = { start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z", account };
+  const path = join(home, "ledger.json");
+  const created = addRequest({ requests: [] }, { origin: "owner", handle: "+15550002222", chatUid: "guest-chat", topic: "Permits", durationMin: 30, ...original,
+    offered: [{ start: "2026-10-05T16:00:00Z", end: "2026-10-05T16:30:00Z", account }] }, now, "request");
+  writeJson(path, { requests: [{ ...created.requests[0]!, status: "booked", eventId: "original", booked, bookedReplacement: true, replacement }] });
+  const read = () => readJson<Ledger>(path, { requests: [] }).requests[0]!;
+  const blocker = { ...calendarEvent("inspected", format === "phone" ? slot.start : "2026-10-05T11:20:00Z", format === "phone" ? slot.end : "2026-10-05T11:30:00Z"), summary: "Private focus block" };
+  const unchanged = structuredClone(blocker);
+  const calendar = fakeCalendar([blocker, calendarEvent("original", booked.start, booked.end), ...(format === "phone" ? [calendarEvent("travel-only", "2026-10-05T11:40:00Z", "2026-10-05T11:50:00Z")] : [])]);
+  const bridge = { token: "fixture", fetch: async (_url: unknown, init?: RequestInit) => {
+    const { argv } = JSON.parse(String(init?.body)).params.arguments;
+    const result = await calendar.command({ argv });
+    return Response.json({ result: { content: [{ type: "text", text: JSON.stringify({ exit_code: 0, output: result.output }) }] } });
+  } };
+  const inspected = await movableAction(owner, { action: "inspect", requestId: "request", candidates: [slot] }, bridge);
+  assert.ok(inspected.askedAt, JSON.stringify(inspected));
+  const pending = read().pendingOwner!;
+  assert.ok("question" in pending && pending.overlap);
+  assert.deepEqual(pending.overlap.travel, replacement.travel);
+  const delivered: string[] = [];
+  const result = await answerOwner({ ...owner, turnStartedAt: now + 1 }, { requestId: "request", askedAt: inspected.askedAt, outcome: "allow_overlap", text: "Yes" }, async (_to, text) => { delivered.push(text); }, { command: calendar.command, now: () => now });
+  assert.ok("answered" in result && result.answered, JSON.stringify(result));
+  assert.deepEqual(read().replacement, replacement);
+  assert.deepEqual({ format: read().format, location: read().location, travel: read().travel }, original, "approval retains the original booking until selection");
+  assert.doesNotMatch(JSON.stringify(delivered), /Private|focus|Library|Old venue/);
+  await calendarAction("request", { action: "book", start: slot.start }, { command: calendar.command, now: () => now });
+  assert.deepEqual({ format: read().format, location: read().location, travel: read().travel }, replacement);
+  assert.deepEqual(calendar.events.get("inspected"), unchanged);
+  t.diagnostic(JSON.stringify({ format, result, delivered, booked: read().booked, travel: read().travel }));
 });

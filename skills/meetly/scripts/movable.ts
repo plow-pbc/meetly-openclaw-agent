@@ -5,26 +5,24 @@ import { calendarListings, eventTitle } from "./calendar-read.ts";
 import { requestEvents, sameRequest, updateRequest, type Ledger, type OverlapChoice } from "./ledger.ts";
 import { type BridgeOptions } from "./mac.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
-import { lastBusy } from "./last-busy.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { travelRange, type TravelInput } from "./travel.ts";
 
 export type MovableArgs = TravelInput & { action: "inspect"; requestId?: string; ask?: boolean;
-  candidates?: { start: string; end: string }[] };
+  candidates: { start: string; end: string }[] };
 
 export async function movableAction(ctx: OwnerContext, args: MovableArgs, options: BridgeOptions = {}) {
   if (!resolveOwnerChat(ctx) || ctx.sessionKey !== "agent:main:main") return { error: "Only the owner's main DM can inspect overlap decisions." };
   try {
     const path = file("ledger.json");
     const config = loadConfig();
-    const last = args.candidates === undefined ? lastBusy() : null;
-    if (last && (args.requestId === undefined || last.requestId === undefined || args.requestId === last.requestId)) args = { ...last, ...args, candidates: [last.slot] };
     if (args.action !== "inspect" || !Array.isArray(args.candidates) || args.candidates.length < 1 || args.candidates.length > 2) throw new Error("inspect one or two candidate times");
     const request = args.requestId === undefined ? undefined : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === args.requestId);
     if (args.requestId !== undefined && !request) throw new Error("unknown request");
     const own = request ? requestEvents(request).map(ref => ({ account: ref.account, id: ref.holdId })) : [];
-    const travel = request ? { ...request, travel: request.travel?.override ? request.travel : args.travel ?? request.travel } : args;
+    const meeting = request ? { ...request, ...request.replacement } : args;
+    const travel = { ...meeting, travel: meeting.travel?.override ? meeting.travel : args.travel ?? meeting.travel };
     const ranges = args.candidates.map(slot => {
       if (!slot || !Number.isFinite(Date.parse(slot.start)) || !(Date.parse(slot.end) > Date.parse(slot.start))) throw new Error("candidate needs a valid start and later end");
       return { ...slot, ...travelRange(slot.start, slot.end, travel) };

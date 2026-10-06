@@ -9,7 +9,6 @@ import { isMain, run } from "./cli.ts";
 import { holdHours, parseTime, loadConfig, MEAL_DEFAULTS, reminderLeadMin, type Meal } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { DAYS } from "./time.ts";
-import { unpinBusyStart } from "./last-busy.ts";
 import { file } from "./paths.ts";
 import { type EventRef, type OverlapGrant } from "./busy.ts";
 import { checkTravel, travelFor, type Travel } from "./travel.ts";
@@ -561,7 +560,6 @@ if (isMain(import.meta.url)) {
         const input = jsonArg(values);
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires an inspected question answered through meetly_answer_owner.");
         const id = requestId();
-        if (input.constraints) input.constraints = unpinBusyStart(input.constraints, loadConfig().timezone, now);
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => addRequest(l, input, now, id));
         if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
         return { request: ledger.requests.find((r) => r.id === id) };
@@ -573,7 +571,6 @@ if (isMain(import.meta.url)) {
         }
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires an inspected question answered through meetly_answer_owner.");
         const id = requestId();
-        if (input.constraints) input.constraints = unpinBusyStart(input.constraints, loadConfig().timezone, now);
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
         if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
         return { request: findOpenByHandle(ledger, input.handle) ?? findOpenBySource(ledger, input) };

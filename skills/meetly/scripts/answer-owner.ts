@@ -81,7 +81,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     if (!emailReceipt) rememberOverlap(choice, args.outcome === "allow_overlap");
     if (!emailReceipt && !skipDelivery) {
       try {
-        const { id, origin, handle, name, channel, chatUid, topic, durationMin, format, location, meal, constraints, locale, askDetails } = request;
+        const { id, origin, handle, name, channel, chatUid, topic, durationMin, format, location, meal, constraints, locale, askDetails } = { ...request, ...request.replacement };
         const result = await offerRequest({ requestId: id, origin, handle, name, channel, chatUid, topic, durationMin, format, location, meal, travel: overlap.travel, constraints, locale, askDetails,
           offered: [{ start: choice.start, end: choice.end }] }, { ...options, overlapApproval: { pending, choice: args.overlapChoice ?? 0 }, validate(latest) {
           options.validate?.(latest);

@@ -174,7 +174,7 @@ test("inspection guidance is separate from calendar data and only accompanies ca
   ] as const) {
     let tool: any;
     registerMovableTool({ registerTool(factory: (ctx: OwnerContext) => unknown) { tool = factory(owner); } }, async () => data);
-    const result = await tool.execute("inspect", { action });
+    const result = await tool.execute("inspect", { action, candidates: [slot] });
     assert.deepEqual(result.details, data);
     assert.deepEqual(JSON.parse(result.content[0].text), data);
     assert.equal(result.content.length, guided ? 2 : 1);
@@ -192,11 +192,9 @@ test("private inspection unwraps the canonical calendar title", async t => {
   assert.equal(result.candidates![0]!.title, "Focus block");
 });
 
-test("cached busy inspection is fresh, request-scoped and read-only until a linked decision is saved", async t => {
+test("explicit inspection is read-only until a linked decision is saved", async t => {
   const f = fixture(t), now = Date.now();
-  const cache = join(f.home, "tmp", "last-busy.json");
-  writeJson(cache, { slot, format: inspect.format, travel: inspect.travel, checkedAt: new Date(now).toISOString() });
-  const readOnly = await movableAction(owner, { action: "inspect", ask: false }, f.options);
+  const readOnly = await movableAction(owner, { ...inspect, ask: false }, f.options);
   assert.equal(readOnly.candidates?.[0]?.title, "Focus block");
   assert.equal(readOnly.askedAt, undefined);
   assert.equal(existsSync(join(f.home, "ledger.json")), false);
@@ -204,7 +202,7 @@ test("cached busy inspection is fresh, request-scoped and read-only until a link
     format: inspect.format, travel: inspect.travel!, offered: [] }, now, "r");
   ledger = updateRequest(ledger, "r", { chatUid: "guest-chat" }, now);
   writeJson(join(f.home, "ledger.json"), ledger);
-  const asked = await movableAction(owner, { action: "inspect", requestId: "r" }, f.options);
+  const asked = await movableAction(owner, { ...inspect, requestId: "r" }, f.options);
   assert.equal(asked.requestId, "r");
   assert.ok(asked.askedAt);
   const saved = readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] }).requests[0]!;
@@ -212,8 +210,7 @@ test("cached busy inspection is fresh, request-scoped and read-only until a link
   assert.ok(saved.pendingOwner && "question" in saved.pendingOwner && saved.pendingOwner.overlap);
   assert.deepEqual(saved.pendingOwner.overlap.choices[0]!.event, { account, id: "focus" });
   assert.deepEqual(saved.pendingOwner.overlap.travel, inspect.travel);
-  writeJson(cache, { slot, requestId: "other-request", format: inspect.format, travel: inspect.travel, checkedAt: new Date(now).toISOString() });
-  assert.ok("error" in await movableAction(owner, { action: "inspect", requestId: "r", ask: false }, f.options));
-  writeJson(cache, { slot, format: inspect.format, travel: inspect.travel, checkedAt: new Date(now - 31 * 60_000).toISOString() });
-  assert.ok("error" in await movableAction(owner, { action: "inspect" }, f.options));
+  const calls = f.calls.length;
+  assert.ok("error" in await movableAction(owner, { action: "inspect" } as MovableArgs, f.options));
+  assert.equal(f.calls.length, calls, "missing candidates cannot reuse an earlier inspection");
 });

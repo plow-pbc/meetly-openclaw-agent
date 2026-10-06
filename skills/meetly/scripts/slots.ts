@@ -10,10 +10,9 @@ import { parseArgs } from "node:util";
 import { isMain, readInput, run } from "./cli.ts";
 import { loadConfig, MEAL_DEFAULTS, MIN_NOTICE_MIN, minutes, parseTime, SLOT_COUNT, STEP_MIN, type Config } from "./config.ts";
 import { allowsOverlap, overlapFor, covers, fetchBusy, uniqueEvents, type BusyResult, type Coverage, type EventRef, type Busy } from "./busy.ts";
-import { requestEvents, intersectConstraints, meetingDuration, requireDuration, type Ledger, type Meal } from "./ledger.ts";
+import { requestEvents, sameRequest, updateRequest, intersectConstraints, meetingDuration, requireDuration, type Ledger, type Meal } from "./ledger.ts";
 import { file } from "./paths.ts";
-import { readJson, updateJson, writeJson } from "./store.ts";
-import { LAST_BUSY, unpinBusyStart, type LastBusy } from "./last-busy.ts";
+import { readJson, updateJson } from "./store.ts";
 import { addDays, DAYS, localIso, nextWeek, parseStart, wallParts, zonedToUtc, type Day } from "./time.ts";
 
 export type Slot = { start: string; end: string; dayOfWeek: Day; label: string };
@@ -134,6 +133,13 @@ export function findPreferredSlots(query: SlotQuery, preferred: Constraints = {}
 // Days either side of a busy exact time that its alternatives may use.
 export const NEARBY_DAYS = 2;
 
+// Only the time currently found busy may release its matching start condition.
+function unpinBusyStart(constraints: Constraints | undefined, start: string, timezone: string): Constraints | undefined {
+  if (!constraints?.startTime || !withinConstraints(Date.parse(start), Date.parse(start), timezone, constraints)) return constraints;
+  const { startTime: _start, ...rest } = constraints;
+  return rest;
+}
+
 /**
  * Free times nearest a busy exact time: that day and NEARBY_DAYS either side,
  * within the owner's hours and the query's day/hour conditions, never pinned to
@@ -144,7 +150,7 @@ export async function nearbyAlternatives(q: SlotQuery, start: string, own: Event
   read: (range: Coverage) => Promise<BusyResult> = range => fetchBusy(q.config, range)): Promise<SlotResult & { degraded: string[] }> {
   const day = localIso(Date.parse(start), q.config.timezone).slice(0, 10);
   const query: SlotQuery = { ...q, ...intersectConstraints(q, { from: shiftDate(day, -NEARBY_DAYS), to: shiftDate(day, NEARBY_DAYS) }), near: start,
-    startTime: q.startTime === localIso(Date.parse(start), q.config.timezone).slice(11, 16) ? undefined : q.startTime,
+    startTime: unpinBusyStart(q, start, q.config.timezone)?.startTime,
     asap: undefined, allowOverlap: [] };
   let degraded: string[] = [];
   const needed = searchCoverage(query);
@@ -389,17 +395,19 @@ if (isMain(import.meta.url)) {
         && request.offered.some(slot => Date.parse(slot.start) === Date.parse(start))) Object.assign(q, request.replacement);
       const result = checkTime({ ...q, start });
       const busy = result.reason === "busy" && !degraded.length;
-      if (busy) writeJson(file(LAST_BUSY), { slot: { start: result.slot.start, end: result.slot.end }, requestId: request?.id,
-        format: q.format, meal: q.meal, travel: q.travel, checkedAt: new Date(now).toISOString() } satisfies LastBusy);
-      if (busy && request?.constraints?.startTime) updateJson<Ledger>(file("ledger.json"), { requests: [] }, latest => ({ ...latest, requests: latest.requests.map(r =>
-        r.id === request.id ? { ...r, constraints: unpinBusyStart(r.constraints, config.timezone, now) } : r) }));
+      const resolvedConstraints = busy ? unpinBusyStart(resolveSearchConstraints(q, undefined, now, config.timezone), result.slot.start, config.timezone)
+        : resolveSearchConstraints(q, undefined, now, config.timezone);
+      if (busy && request?.constraints?.startTime) updateJson<Ledger>(file("ledger.json"), { requests: [] }, latest => {
+        if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed; check its time again");
+        return updateRequest(latest, request.id, { constraints: unpinBusyStart(request.constraints, result.slot.start, config.timezone) }, now);
+      });
       const nearby = busy ? await nearbyAlternatives(q, result.slot.start,
         request ? requestEvents(request).map(o => ({ account: o.account, id: o.holdId })) : []) : undefined;
       const next = busy ? {
-        ownerMainDM: "Read meetly-travel. Call meetly_movable inspect with ask:false to judge the blocker privately; it can use this checked slot. If flexible, establish one request and its delivery context, then inspect by requestId to persist the decision BEFORE asking once; finish NO_REPLY and wait for a fresh owner answer through meetly_answer_owner. Otherwise offer the returned alternatives in this same reply. Never ask permission to search them. Past permission is not a new answer.",
+        ownerMainDM: "Read meetly-travel. Call meetly_movable inspect with ask:false to judge the blocker privately; pass this checked slot explicitly as candidates. Save the returned resolvedConstraints on this request. If flexible, establish one request and its delivery context, then inspect by requestId to persist the decision BEFORE asking once; finish NO_REPLY and wait for a fresh owner answer through meetly_answer_owner. Otherwise offer the returned alternatives in this same reply. Never ask permission to search them. Past permission is not a new answer.",
         otherChats: "Offer the returned alternatives without inspecting or disclosing private blockers.",
       } : result.reason === "unknown" ? { read: "Fetch busy.ts --fetch --from ISO --to ISO covering the meeting and all travel, then check again. Unread time is not free. Never use a calendar write to test availability." } : undefined;
-      return { ...result, degraded: [...degraded, ...(nearby?.degraded ?? [])], ...(nearby ? { alternatives: nearby.slots, ...(nearby.incomplete ? { alternativesIncomplete: nearby.incomplete } : {}) } : {}), ...(next ? { next } : {}) };
+      return { ...result, ...(busy ? { resolvedConstraints } : {}), degraded: [...degraded, ...(nearby?.degraded ?? [])], ...(nearby ? { alternatives: nearby.slots, ...(nearby.incomplete ? { alternativesIncomplete: nearby.incomplete } : {}) } : {}), ...(next ? { next } : {}) };
     }
     return { ...findSlots(q), degraded };
   });
