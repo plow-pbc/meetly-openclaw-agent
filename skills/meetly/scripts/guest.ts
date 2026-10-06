@@ -92,7 +92,7 @@ function preferences(args: GuestArgs, timezone: string): Constraints {
     if (!Array.isArray(args.days) || !args.days.every(d => (DAYS as readonly string[]).includes(d))) throw new Error("invalid days");
     out.days = args.days;
   }
-  for (const key of ["startTime", "after", "before"] as const) if (args[key] !== undefined) out[key] = parseTime(args[key]);
+  for (const key of ["after", "before"] as const) if (args[key] !== undefined) out[key] = parseTime(args[key]);
   for (const key of ["from", "to"] as const) if (args[key] !== undefined) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(args[key])) throw new Error("invalid date");
     out[key] = args[key];

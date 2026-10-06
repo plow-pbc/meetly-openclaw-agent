@@ -1361,7 +1361,7 @@ test("guests can book an owner-selected start that crosses midnight", async t =>
   const f = fixture(t);
   f.save({ requests: [] }); f.events.clear();
   const offered = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { topic: "Late call", durationMin: 60, constraints: { days: ["mon"], startTime: "23:30" } });
+    { travel: { beforeMin: 0, afterMin: 0 }, topic: "Late call", durationMin: 60, constraints: { days: ["mon"], startTime: "23:30" } });
   assert.ok(!("error" in offered), JSON.stringify(offered));
   const slot = f.request().offered[0]!;
   assert.equal(slot.start, "2026-10-05T23:30:00+00:00");
@@ -1468,7 +1468,7 @@ for (const existing of [false, true]) test(`malformed owner locale is rejected b
   const f = fixture(t);
   if (!existing) { f.save({ requests: [] }); f.events.clear(); }
   const before = f.read();
-  await assert.rejects(offerRequest({ origin: "owner", handle: context.requesterSenderId,
+  await assert.rejects(offerRequest({ travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", handle: context.requesterSenderId,
     topic: "Call", durationMin: 30, locale: "en_US",
     offered: offers.map(({ start, end }) => ({ start, end })),
   }), /language tag/i);
@@ -1517,7 +1517,7 @@ test("owner DM meal schema carries a new lunch through the calendar writer", asy
   let tool: any;
   registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
   assert.deepEqual(tool.parameters.properties.meal?.enum, ["lunch", "dinner", "coffee"]);
-  const result = await tool.execute("call", { origin: "owner", handle: context.requesterSenderId, topic: "Lunch", meal: "lunch",
+  const result = await tool.execute("call", { origin: "owner", handle: context.requesterSenderId, topic: "Lunch", meal: "lunch", travel: { beforeMin: 15, afterMin: 15 },
     offered: [{ start: "2026-10-05T12:00:00Z", end: "2026-10-05T13:00:00Z" }] });
   assert.equal(result.isError, false, JSON.stringify(result.details));
   assert.equal(f.request().durationMin, 60);
@@ -2107,7 +2107,7 @@ test("guest booking and place changes send travel only to the owner, and cannot 
   assert.doesNotMatch(JSON.stringify(changed), /travel|beforeMin|afterMin|owner@example/);
   const viewed = await f.act(context, "view");
   assert.doesNotMatch(JSON.stringify(viewed), /travel|beforeMin|afterMin/);
-  const other = await f.act(context, "other_times", { start: "2026-10-05T10:30:00Z" });
+  const other = await f.act(context, "other_times", { offer_week: false, start: "2026-10-05T10:30:00Z" });
   assert.ok(!("error" in other), JSON.stringify(other));
   assert.equal(f.read().requests[0]!.reoffer!.offered[0]!.start, "2026-10-05T10:30:00+00:00");
 });
