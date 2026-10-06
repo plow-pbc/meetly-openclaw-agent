@@ -151,7 +151,14 @@ export async function calendarAction(id: string, action: CalendarAction, options
     let request = requestById(id);
     let input: CalendarAction = action;
     options.validate?.(request);
-    if (intent && request.calendarRevision === intent.id) { rmSync(journal); intent = undefined; }
+    if (intent && request.calendarRevision === intent.id) {
+      if (input.action === "resume") {
+        await cleanup();
+        rmSync(journal);
+        return { request: requestById(id), ...(intent.input.action === "book" && intent.input.timeApproval ? { approved: true } : {}) };
+      }
+      rmSync(journal); intent = undefined;
+    }
     if (intent && input.action !== "resume") throw new Error(`calendar operation unresolved for ${id}; run resume first`);
     if (!intent) {
       if (input.action === "resume" || input.action === "cleanup") { await cleanup(); return { request: requestById(id) }; }
@@ -362,8 +369,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
         return { ...r, calendarRevision: completed.id, holdCleanup: cleanup };
       }) };
     });
-    rmSync(journal);
     await cleanup();
+    rmSync(journal);
     request = requestById(id);
     let invitationUpdated = false;
     if (completed.input.action === "book") {

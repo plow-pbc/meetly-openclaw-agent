@@ -892,10 +892,17 @@ for (const batch of [false, true]) test(`deferred time approval reports successf
       return { handle: "approval" };
     }, poll: async () => ({ handle: "approval" }) };
   await assert.rejects(approveTime("r_one", { start }, options), /unresolved/);
+  const journal = join(f.home, "calendar/r_one.json");
+  const intent = readJson(journal, {});
   const resumed = { ...options, poll: async () => completed };
   const result = batch ? (await resumePending(resumed)).results[0]! : await calendarAction("r_one", { action: "resume" }, resumed);
   assert.equal("approved" in result && result.approved, true);
   assert.equal(f.read().status, "booked");
   assert.deepEqual(pendingCalendarWrites(), []);
   t.diagnostic(JSON.stringify(result));
+  writeJson(journal, intent);
+  const recovered = batch ? (await resumePending(resumed)).results[0]! : await calendarAction("r_one", { action: "resume" }, resumed);
+  assert.equal("approved" in recovered && recovered.approved, true);
+  assert.deepEqual(pendingCalendarWrites(), []);
+  t.diagnostic(JSON.stringify({ recovered }));
 });
