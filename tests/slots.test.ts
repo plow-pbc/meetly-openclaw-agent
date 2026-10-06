@@ -26,7 +26,7 @@ const q = (over: Partial<SlotQuery> = {}): SlotQuery => ({ travel: { beforeMin: 
 const starts = (over: Partial<SlotQuery> = {}) => findSlots(q(over)).slots.map((s) => s.start);
 const labels = (over: Partial<SlotQuery> = {}) => findSlots(q(over)).slots.map((s) => s.label);
 
-test("Kelp busy exact time returns covered nearby alternatives without its saved start pin", () => {
+test("Kelp busy exact time returns covered nearby alternatives without its saved start pin", async (t) => {
   const home = tmpHome(), busyFile = join(home, "busy.json"), callsFile = join(home, "reads.json"), hook = join(home, "bridge.mjs");
   const now = Date.parse("2026-10-05T04:00:00-07:00"), start = "2026-10-29T14:00:00-07:00";
   const config = { ...CONFIG, timezone: "America/Los_Angeles", horizonDays: 14 };
@@ -79,6 +79,31 @@ test("Kelp busy exact time returns covered nearby alternatives without its saved
   assert.ok(independent.json.alternatives.length);
   assert.ok(independent.json.alternatives.every((s: { start: string }) => s.start.slice(11, 16) === "11:30"));
   assert.equal(independent.json.resolvedConstraints.startTime, "11:30");
+  await t.test("a complete refetch clears the earlier truncation cutoff", () => {
+    writeJson(busyFile, { busy: [busy], coverage, unknownAfter: "2026-10-29T22:00:00Z", degraded: [] });
+    const refreshed = cli("slots.ts", args, env);
+    assert.equal(refreshed.status, 0, refreshed.stderr);
+    assert.equal(refreshed.json.alternativesIncomplete, undefined);
+    assert.deepEqual(refreshed.json.alternatives, check.json.alternatives);
+  });
+  await t.test("alternatives retain input and saved overlap permission, unless revoked", () => {
+    const allowed = { ...busy, id: "authorized", start: "2026-10-29T21:30:00.000Z", end: "2026-10-29T23:15:00.000Z" };
+    const allowOverlap = [{ account: allowed.account, id: allowed.id }];
+    writeJson(busyFile, { busy: [busy, allowed], coverage, allowOverlap, degraded: [] });
+    const fromInput = cli("slots.ts", args, env);
+    assert.equal(fromInput.status, 0, fromInput.stderr);
+    assert.deepEqual(fromInput.json.alternatives, check.json.alternatives);
+    writeJson(busyFile, { busy: [busy, allowed], coverage, degraded: [] });
+    writeJson(join(home, "ledger.json"), { ...ledger, requests: ledger.requests.map(r => r.id === "kelp" ? { ...r, allowOverlap } : r) });
+    const fromRequest = cli("slots.ts", [...args, "--request", "kelp"], env);
+    assert.equal(fromRequest.status, 0, fromRequest.stderr);
+    assert.equal(fromRequest.json.alternatives[0].start, "2026-10-29T14:30:00-07:00");
+    const revoked = cli("slots.ts", [...args, "--request", "kelp", "--no-overlap"], env);
+    assert.equal(revoked.status, 0, revoked.stderr);
+    assert.ok(revoked.json.alternatives.length);
+    assert.ok(revoked.json.alternatives.every((s: { start: string; end: string }) => Date.parse(s.end) <= Date.parse(allowed.start) || Date.parse(s.start) >= Date.parse(allowed.end)));
+  });
+  writeJson(busyFile, { busy: [busy], coverage: { from: "2026-10-29T20:00:00Z", to: "2026-10-29T23:00:00Z" }, degraded: [] });
   const unavailable = cli("slots.ts", args, { ...env, CALENDAR_FIXTURE_ERROR: "1" });
   assert.deepEqual(unavailable.json.alternatives, []);
   assert.deepEqual(unavailable.json.degraded, ["jean@example.com"]);

@@ -141,7 +141,7 @@ async function nearbyAlternatives(q: SlotQuery, start: string, own: EventRef[]) 
   const date = localIso(Date.parse(start), q.config.timezone).slice(0, 10), from = shiftDate(date, -2), to = shiftDate(date, 2);
   const conditions = unpinBusyStart(resolveSearchConstraints(q, undefined, q.now, q.config.timezone), start, q.config.timezone);
   const query: SlotQuery = { ...conditions, now: q.now, config: q.config, durationMin: q.durationMin, meal: q.meal,
-    format: q.format, travel: q.travel, locale: q.locale, count: q.count,
+    format: q.format, travel: q.travel, locale: q.locale, count: q.count, allowOverlap: q.allowOverlap,
     from: conditions.from && conditions.from > from ? conditions.from : from,
     to: conditions.to && conditions.to < to ? conditions.to : to,
     near: start, exclude: [...(q.exclude ?? []), start], busy: q.busy, coverage: q.coverage, unknownAfter: q.unknownAfter };
@@ -149,7 +149,7 @@ async function nearbyAlternatives(q: SlotQuery, start: string, own: EventRef[]) 
   const needed = searchCoverage(query);
   const data = !covers(q.coverage, needed) || (q.unknownAfter !== undefined && Date.parse(q.unknownAfter) < Date.parse(needed.to))
     ? await fetchBusy(q.config, needed) : { busy: q.busy, coverage: q.coverage, unknownAfter: q.unknownAfter, degraded: [] };
-  const result = findSlots({ ...query, ...data, busy: data.busy.filter(b => !own.some(ref => ref.account === b.account && ref.id === b.id)) });
+  const result = findSlots({ ...query, ...data, unknownAfter: data.unknownAfter, busy: data.busy.filter(b => !own.some(ref => ref.account === b.account && ref.id === b.id)) });
   return { ...result, slots: data.degraded.length || result.incomplete ? [] : result.slots, degraded: data.degraded };
 }
 

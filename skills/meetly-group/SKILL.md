@@ -101,10 +101,13 @@ before searching, keeping any hard conditions they did not change.
    run `ledger.ts delivery --id <id> --kind start --action clear` before continuing.
 2. Read the calendar.
 3. For an existing request, pass `--request <id>` to preserve conditions and
-   exclude this request's own holds. Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
-   locale>`, with the request's `constraints` (the owner's) and, on its
-   first offer, its `proposed` times: `--days`, `--after`, `--before`,
-   `--from`/`--to`, `--duration`. For an exact owner-requested time, check with `--at <requested ISO start>`.
+   exclude this request's own holds. For a search:
+   Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
+   locale> --duration <minutes>`, with the request's `constraints` (the owner's) and, on its
+   first offer, its `proposed` times: `--days`, `--after`, `--before`, `--from`/`--to`.
+   For an exact owner-requested time, first save conditions with `ledger.ts update --id <id> --json '<patch>'`
+   (for a new request, `ledger.ts add` with `status:"asked"` and `offered:[]`), then check with
+   `--request <id> --at <requested ISO start>`; do not combine `--at` with search flags.
    When busy, it returns ranked free alternatives on that day ±2 days, reading calendar
    coverage as needed. Present them in this same reply without asking permission to search.
    Save its `resolvedConstraints`: the busy clock time is released; other hard conditions stay.
