@@ -164,3 +164,11 @@ test("a delivered holding reply cannot revive an earlier scheduling final", asyn
   assert.equal(reply.schedulingResult, undefined);
   turns.end({}, turn);
 });
+
+test("an invitation update is never described as no invitation following", async () => {
+  let pick: any;
+  registerGuestTools({ registerTool(factory: any) { const tool = factory({}); if (tool.name === "meetly_pick_time") pick = tool; } },
+    async () => ({ status: "booked", invitationSent: false, invitationUpdated: true }));
+  const result = await pick.execute("move", { start: "2026-10-06T10:00:00Z" });
+  assert.doesNotMatch(result.content.map((item: { text: string }) => item.text).join("\n"), /no invitation will follow/);
+});

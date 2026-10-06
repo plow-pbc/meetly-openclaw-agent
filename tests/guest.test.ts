@@ -2351,3 +2351,32 @@ for (const time of [undefined, "11:00"]) test(`booked weekday replacements use t
   assert.equal(f.ownerLines.length, 0);
   t.diagnostic(JSON.stringify(result));
 });
+
+test("repeating a newer meeting decline leaves the older booking untouched", async t => {
+  const f = fixture(t);
+  await f.act(context, "pick", { start: offers[0]!.start });
+  const booked = f.request();
+  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
+    { topic: "Another call", durationMin: 30, travel: { beforeMin: 0, afterMin: 0 } }) as any;
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.equal(f.read().requests.length, 2);
+  await f.act(context, "decline");
+  const deletes = f.commands.filter(c => c[2] === "delete").length;
+  await f.act(context, "decline");
+  assert.equal(f.commands.filter(c => c[2] === "delete").length, deletes);
+  assert.equal(f.events.get(booked.eventId!)!.status, "confirmed");
+  assert.deepEqual(f.request(), booked);
+});
+
+test("an exhausted search with an unrelated pending question sends a neutral holding reply", async t => {
+  const f = fixture(t);
+  const pendingOwner = { question: "Which entrance?", askedAt: new Date(now).toISOString() };
+  f.save({ requests: [{ ...f.request(), pendingOwner }] });
+  f.events.set("busy", event("busy", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z"));
+  const result = JSON.parse((await f.tools.get("meetly_other_times")!.execute("none", { offer_week: false })).content[0]!.text);
+  assert.equal(result.guestReplyDelivered, true);
+  assert.equal(f.ownerLines.length, 0);
+  assert.equal(f.deliveries.length, 1);
+  assert.equal(f.deliveries[0]!.payloads[0].text, "Those times don't work. I can't confirm another time yet.");
+  assert.deepEqual(f.request().pendingOwner, pendingOwner);
+});

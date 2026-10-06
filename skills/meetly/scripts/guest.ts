@@ -200,15 +200,12 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     const handoff = await askOwner(request, config, {
       question: "No alternative times fit the meeting conditions. May I check for other times again? Tell me if I can change the dates or time window.",
     }, sendOwner, "scheduling");
+    const message = "ownerAskSent" in handoff && handoff.ownerAskSent
+      ? `Those times don't work. I've asked ${config.ownerName} about another day or time.`
+      : "Those times don't work. I can't confirm another time yet.";
     return { error: "No other times are available within the owner’s conditions. The current offer is unchanged.",
-      ...handoff, code: "NO_ALTERNATIVES",
-      message: "ownerAskSent" in handoff && handoff.ownerAskSent
-        ? `Those times don't work. I've asked ${config.ownerName} about another day or time.`
-        : "Those times don't work. I can't confirm another time yet.",
-      ...(request.channel !== "email" ? { guestReply: request.pendingOwner && "guestReply" in handoff ? handoff.guestReply
-        : "ownerAskSent" in handoff && handoff.ownerAskSent
-          ? `Those times don't work. I've asked ${config.ownerName} about another day or time.`
-          : "Those times don't work. I can't confirm another time yet." } : {}),
+      ...handoff, code: "NO_ALTERNATIVES", message,
+      ...(request.channel !== "email" ? { guestReply: message } : {}),
       recovery: { action: "wait", retry: false } };
   }
   const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = { ...request, ...meeting };
@@ -224,7 +221,7 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     start: typeof args.start === "string" ? args.start.trim() || undefined : args.start,
   };
   if (request.pendingOwner) return { error: "A question is already open with the owner. Wait for their answer.",
-    ...(purpose === "scheduling" && request.channel !== "email" ? { guestReply: `I'm waiting for ${config.ownerName}'s decision about another time.` } : {}) };
+    ...(purpose === "scheduling" && request.channel !== "email" ? { guestReply: "Those times don't work. I can't confirm another time yet." } : {}) };
   if ((args.question === undefined) === (args.start === undefined)) return { error: "Provide either a question or a start time, not both." };
   if (!sendOwner) return { error: "Owner messaging is unavailable. Nothing was sent." };
   let pendingOwner: PendingOwner;
