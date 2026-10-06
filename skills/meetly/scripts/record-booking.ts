@@ -24,6 +24,8 @@ export function recordBooking(ledger: Ledger, id: string, event: EventInfo, acco
   };
   // A reminder belongs to one start time: a moved meeting gets a new one.
   if (request.booked && Date.parse(request.booked.start) !== Date.parse(event.start)) patch.reminder = null;
+  // Alternative searches are obsolete once booked; ordinary questions still need an answer.
+  if (request.pendingOwner && "question" in request.pendingOwner && request.pendingOwner.alternatives) patch.pendingOwner = null;
   // Keep only the booked time's approval linked until its answer is delivered.
   if (request.pendingOwner && "start" in request.pendingOwner
     && Date.parse(request.pendingOwner.start) !== Date.parse(event.start)) patch.pendingOwner = null;

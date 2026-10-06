@@ -7,6 +7,7 @@
 // Plain JavaScript on purpose: the image ships it as is, with no build step,
 // and preboot copies it into the state volume's plugin root on every boot.
 import { calendarPolicy } from "./calendar-policy.js";
+import { guestTurns } from "./guest-turn.js";
 import { execFile } from "node:child_process";
 import { registerGuestTools } from "./guest-tools.js";
 import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool } from "./owner-tools.js";
@@ -98,7 +99,9 @@ export default {
     registerOwnerGroupTool(api);
     registerOwnerDmTool(api);
     api.on("before_tool_call", calendarPolicy);
+    api.on("agent_end", guestTurns.end);
     api.on("before_prompt_build", async (_event, ctx) => {
+      guestTurns.begin(ctx);
       if (!isOwnerDmTurn(ctx)) return undefined;
       let context;
       try {

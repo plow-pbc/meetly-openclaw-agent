@@ -10,7 +10,7 @@ import { registerOwnerTools } from "../plugin/owner-tools.js";
 import { addRequest, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
-import { cli, fakeCalendar, tmpHome } from "./helpers.ts";
+import { calendarEvent, cli, fakeCalendar, tmpHome } from "./helpers.ts";
 
 const ctx = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "plow-owner",
   sessionKey: "agent:main:main", nativeChannelId: "owner-dm", config: {} };
@@ -38,10 +38,10 @@ function fixture(t: TestContext) {
   return { path, ledger, read: () => readJson<Ledger>(path, { requests: [] }) };
 }
 
-function ownerTool(sendDurableMessageBatch: (input: any) => Promise<any>) {
+function ownerTool(sendDurableMessageBatch: (input: any) => Promise<any>, context = ctx) {
   let tool: any;
   const route = { agentId: "main", sessionKey: "agent:main:plow:group:group-mia" };
-  registerOwnerTools({ registerTool(factory: any) { tool = factory(ctx); }, runtime: { channel: {
+  registerOwnerTools({ registerTool(factory: any) { tool = factory(context); }, runtime: { channel: {
     routing: { resolveAgentRoute(input: any) {
       assert.deepEqual(input.peer, { kind: "group", id: "group-mia" }); return route;
     } },
@@ -63,6 +63,7 @@ test("the owner answer sends once to the matched group, clears its question, and
   });
   const result = await tool.execute("answer", { ...args, chatUid: "intruder" });
   assert.equal(result.isError, false);
+  assert.equal(result.details.sent, true);
   assert.equal(deliveries.length, 1);
   assert.equal(deliveries[0].to, "group-mia");
   assert.deepEqual(deliveries[0].payloads, [{ text: args.text }]);
@@ -160,7 +161,7 @@ test("an owner answer already visible in the group clears the question without s
   const f = fixture(t);
   const result = await answerOwner({ ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" }, args,
     async () => assert.fail("the owner's answer is already in the group"));
-  assert.ok("answered" in result);
+  assert.deepEqual(result, { answered: true, sent: false, requestId: "mia", silent: true });
   assert.equal(f.read().requests[0]!.pendingOwner, undefined);
   assert.deepEqual(f.read().requests[1], f.ledger.requests[1]);
 });
@@ -174,4 +175,143 @@ test("concurrent sends and stale clears cannot consume another question", async 
   });
   assert.ok("sent" in result);
   assert.deepEqual(f.read().requests[0]!.pendingOwner, newer);
+});
+
+function alternativesFixture(t: TestContext, mixed = false) {
+  const f = fixture(t);
+  t.mock.method(Date, "now", () => Date.parse("2026-10-03T08:00:00Z"));
+  const previousToken = process.env.PLOW_MCP_BRIDGE_TOKEN;
+  process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture";
+  t.after(() => { if (previousToken === undefined) delete process.env.PLOW_MCP_BRIDGE_TOKEN; else process.env.PLOW_MCP_BRIDGE_TOKEN = previousToken; });
+  const request = f.ledger.requests[0]!;
+  request.constraints = { from: "2026-10-05", to: "2026-10-05", days: ["mon"], after: "10:00", before: "11:30" };
+  request.excludedDays = ["tue"]; request.format = "phone";
+  request.offered[0]!.holdId = "old";
+  if (mixed) request.offered.push({ ...request.offered[0]!, start: "2026-10-05T10:30:00Z", end: "2026-10-05T11:00:00Z", holdId: "fresh" });
+  const pendingOwner = { question: "May I check for other times again?", askedAt: args.askedAt,
+    alternatives: { previousStarts: ["2026-10-05T12:00:00+02:00"] } };
+  f.ledger = updateRequest(f.ledger, "mia", { pendingOwner }, Date.now());
+  writeJson(f.path, f.ledger);
+  const cal = fakeCalendar(request.offered.map(o => calendarEvent(o.holdId!, o.start, o.end)));
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    const call = JSON.parse(String(init.body));
+    assert.equal(call.params.name, "plow_run_command");
+    const result = await cal.command({ argv: call.params.arguments.argv });
+    return Response.json({ result: { content: [{ type: "text", text: JSON.stringify({ exit_code: 0, output: result.output }) }] } });
+  });
+  return { ...f, cal, request, pendingOwner };
+}
+
+for (const inGroup of [false, true]) for (const mixed of [false, true])
+test(`exhausted-search owner tool searches, holds and delivers without rejected starts: group=${inGroup}, mixed=${mixed}`, async t => {
+  const f = alternativesFixture(t, mixed);
+  const context = inGroup ? { ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" } : ctx;
+  const deliveries: any[] = [];
+  const { tool } = ownerTool(async input => {
+    const saved = f.read().requests[0]!;
+    assert.ok(saved.pendingOwner?.answerAttemptedAt);
+    assert.ok(saved.offered.every(o => o.holdId && Date.parse(o.start) !== Date.parse(f.pendingOwner.alternatives.previousStarts[0]!)));
+    assert.ok(f.cal.calls.some(c => c[2] === "create"), "holds must precede delivery");
+    deliveries.push(input); return { status: "sent" };
+  }, context);
+  const result = await tool.execute("approve", { ...args, text: "Yes" });
+  assert.equal(result.isError, false, JSON.stringify(result.details));
+  assert.equal(deliveries.length, 1);
+  assert.match(deliveries[0].payloads[0].text, /10:30|11:00/);
+  assert.doesNotMatch(deliveries[0].payloads[0].text, /10:00|Yes|previousStarts/);
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+  assert.deepEqual(f.read().requests[0]!.constraints, f.request.constraints);
+  assert.deepEqual(f.read().requests[0]!.excludedDays, ["tue"]);
+  assert.equal(f.read().requests[0]!.durationMin, 30);
+  assert.equal((await tool.execute("again", args)).isError, true);
+  assert.equal(deliveries.length, 1);
+});
+
+test("exhausted-search approval cannot reserve a question replaced during its calendar write", async t => {
+  const f = alternativesFixture(t);
+  const fetch = globalThis.fetch;
+  let replacement: unknown;
+  t.mock.method(globalThis, "fetch", async (url: any, init: RequestInit) => {
+    if (!replacement && JSON.parse(String(init.body)).params.arguments.argv[2] === "create") {
+      const refusal = await answerOwner({ ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" },
+        { ...args, declineAlternatives: true }, async () => assert.fail("refusal is already visible"));
+      assert.equal("error" in refusal, false);
+      await guestAction({ messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "group-mia", requesterSenderId: "mia@example.com" },
+        "ask_owner", { question: "Which entrance?" }, async () => {});
+      replacement = f.read().requests[0]!.pendingOwner;
+      assert.ok(replacement);
+    }
+    return fetch(url, init);
+  });
+  let sends = 0;
+  const { tool } = ownerTool(async () => { sends++; return { status: "sent" }; });
+  const result = await tool.execute("approve", { ...args, text: "Yes" });
+  assert.equal(result.isError, true);
+  assert.equal(sends, 0);
+  assert.deepEqual(f.read().requests[0]!.pendingOwner, replacement);
+  assert.ok(f.read().requests[0]!.offered.every(o => o.holdId));
+});
+
+for (const [locale, expected] of [
+  ["pt-BR", /^Patrick tem disponibilidade .+ ou .+\. Qual horário funciona para você\?$/],
+  ["pt-PT", /^Patrick tem disponibilidade .+ ou .+\. Qual horário funciona para você\?$/],
+  ["fr-FR", /^Patrick: .+ ou .+\?$/],
+] as const) test(`exhausted-search offer uses the saved guest locale: ${locale}`, async t => {
+  const f = alternativesFixture(t);
+  writeJson(f.path, updateRequest(f.read(), "mia", { locale }, Date.now()));
+  const deliveries: string[] = [];
+  const { tool } = ownerTool(async input => { deliveries.push(input.payloads[0].text); return { status: "sent" }; });
+  const result = await tool.execute("approve", { ...args, text: "Yes" });
+  assert.equal(result.isError, false, JSON.stringify(result.details));
+  assert.equal(deliveries.length, 1);
+  assert.match(deliveries[0]!, expected);
+  assert.doesNotMatch(deliveries[0]!, / is free | or |Which time/);
+  t.diagnostic(deliveries[0]!);
+});
+
+for (const outcome of ["empty", "calendar-failure", "hold-failure", "delivery-unknown"])
+test(`exhausted-search transaction retains pending on ${outcome}`, async t => {
+  const f = alternativesFixture(t);
+  if (outcome === "empty") f.cal.events.set("busy", calendarEvent("busy", "2026-10-05T00:00:00Z", "2026-10-06T00:00:00Z"));
+  if (outcome === "calendar-failure") t.mock.method(globalThis, "fetch", async () => { throw new Error("offline"); });
+  if (outcome === "hold-failure") {
+    const fetch = globalThis.fetch;
+    t.mock.method(globalThis, "fetch", async (url: any, init: RequestInit) =>
+      JSON.parse(String(init.body)).params.arguments.argv[2] === "create" ? new Response("", { status: 503 }) : fetch(url, init));
+  }
+  let sends = 0;
+  const { tool } = ownerTool(async () => { sends++; return { status: "unknown" }; });
+  const result = await tool.execute("approve", { ...args, text: "Yes" });
+  assert.equal(result.isError, true);
+  assert.ok(f.read().requests[0]!.pendingOwner);
+  assert.equal(sends, outcome === "delivery-unknown" ? 1 : 0);
+  if (outcome === "delivery-unknown") {
+    const calls = [...f.cal.calls];
+    assert.equal((await tool.execute("again", args)).isError, true);
+    assert.equal(sends, 1); assert.deepEqual(f.cal.calls, calls, "unknown delivery cannot repeat the transaction");
+  } else {
+    assert.deepEqual(f.read().requests[0]!.offered, f.request.offered);
+    assert.ok(f.cal.calls.every(c => c[2] === "events"));
+  }
+});
+
+for (const decline of [false, true]) test(`exhausted-search owner decision applies only explicit changes: decline=${decline}`, async t => {
+  const f = alternativesFixture(t);
+  const deliveries: string[] = [];
+  const { tool } = ownerTool(async input => { deliveries.push(input.payloads[0].text); return { status: "sent" }; });
+  const result = await tool.execute("decision", { ...args, text: "Patrick cannot offer another time.", declineAlternatives: decline,
+    constraints: { from: "2026-10-07", to: "2026-10-07", days: ["wed"] } });
+  assert.equal(result.isError, false, JSON.stringify(result.details));
+  assert.equal(f.read().requests[0]!.pendingOwner, undefined);
+  assert.equal(deliveries.length, 1);
+  if (decline) {
+    assert.deepEqual(f.read().requests[0]!.offered, f.request.offered);
+    assert.deepEqual(f.cal.calls, []);
+    assert.equal(deliveries[0], "Patrick cannot offer another time.");
+  } else {
+    assert.ok(f.read().requests[0]!.offered.every(o => o.start.startsWith("2026-10-07")));
+    assert.deepEqual(f.read().requests[0]!.constraints, { ...f.request.constraints, from: "2026-10-07", to: "2026-10-07", days: ["wed"] });
+    assert.match(deliveries[0]!, /10:00|10:30|11:00/);
+    assert.doesNotMatch(deliveries[0]!, /cannot offer/);
+  }
 });

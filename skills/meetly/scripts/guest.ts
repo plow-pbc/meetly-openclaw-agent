@@ -138,7 +138,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     }
     const { days, from, to } = bounds;
     const allowedDay = withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, { days, from, to });
-    if (allowedDay && checked.free && checked.outsideHours) return askOwner(request, config, { start: checked.slot.start }, sendOwner);
+    if (allowedDay && checked.free && checked.outsideHours) return askOwner(request, config, { start: checked.slot.start }, sendOwner, "scheduling");
     if (checked.free && withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, bounds)) exact = checked.slot;
     preferred.from = preferred.to = checked.slot.start.slice(0, 10);
     preferred.after = checked.slot.start.slice(11, 16);
@@ -160,7 +160,17 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     ? [{ ...query, from: narrowed.from, to: narrowed.to }, query] : [query];
   const { slots, preferencesUnavailable, incomplete } = exact ? { slots: [exact], preferencesUnavailable: false, incomplete: undefined } : findPreferredSlots(query, preferred, fallbacks);
   if (incomplete && !slots.length) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current offer is unchanged.", code: "INCOMPLETE_CALENDAR", incomplete };
-  if (!slots.length) return { error: "No other times are available within the owner's conditions. The current offer is unchanged." };
+  if (!slots.length) {
+    const handoff = await askOwner(request, config, {
+      question: "No alternative times fit the meeting conditions. May I check for other times again? Tell me if I can change the dates or time window.",
+    }, sendOwner, "scheduling");
+    return { error: "No other times are available within the owner’s conditions. The current offer is unchanged.",
+      ...handoff, code: "NO_ALTERNATIVES",
+      message: "ownerAskSent" in handoff && handoff.ownerAskSent
+        ? `Those times don't work. I've asked ${config.ownerName} about another day or time and will get back to you here.`
+        : "Those times don't work. I can't confirm another time yet.",
+      recovery: { action: "wait", retry: false } };
+  }
   const { origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
   request = (await write(request, { action: "offer", request: {
     origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
@@ -169,7 +179,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   return { ...view(request, config), preferencesUnavailable };
 }
 
-async function askOwner(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
+async function askOwner(request: Request, config: Config, args: GuestArgs, sendOwner: SendOwner | undefined, purpose: "guest-question" | "scheduling") {
   args = { ...args,
     start: typeof args.start === "string" ? args.start.trim() || undefined : args.start,
   };
@@ -183,7 +193,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
     if (args.question.length > OWNER_QUESTION_LIMIT) return { error: `Provide a question of ${OWNER_QUESTION_LIMIT} characters or fewer; received ${args.question.length}. Nothing was sent.` };
     question = args.question;
-    pendingOwner = { question, askedAt };
+    pendingOwner = { question, askedAt, ...(purpose === "scheduling"
+      ? { alternatives: { previousStarts: request.offered.map(o => o.start) } } : {}) };
   } else {
     const checked = await check(request, config, args.start!);
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) {
@@ -198,11 +209,16 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
   // Keep the slot on an uncertain send so another turn cannot duplicate it.
   try {
     const label = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 100);
-    await sendOwner(`${label(request.name ?? "Your guest")} in your ${label(request.topic)} group asks: ${JSON.stringify(question)} — what should I tell them?`);
+    await sendOwner(purpose === "scheduling" && "question" in pendingOwner
+      ? `Scheduling ${label(request.topic)} with ${label(request.name ?? request.handle)} needs your decision. ${question}`
+      : "question" in pendingOwner
+      ? `${label(request.name ?? "Your guest")} asked in your ${label(request.topic)} thread. Guest question: ${JSON.stringify(question)}. Reply there, or tell me what to say.`
+      : `${label(request.name ?? "Your guest")} in your ${label(request.topic)} group asks: ${JSON.stringify(question)} — what should I tell them?`);
   } catch {
     return { error: "I could not confirm delivery to the owner. The question remains pending; do not send it again." };
   }
-  return { ownerName: config.ownerName, ownerAskSent: true, askDetails: false, message: `I've asked ${config.ownerName} and will get back to you here when ${config.ownerName} replies.` };
+  return { ownerName: config.ownerName, ownerAskSent: true, askDetails: false,
+    ...(purpose === "guest-question" ? { silent: true } : { message: `I've asked ${config.ownerName} and will get back to you here when ${config.ownerName} replies.` }) };
 }
 
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
@@ -222,7 +238,8 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     }
     if (action === "ask_owner" && ["offered", "booked"].includes(request.status)) {
       if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
-      return await askOwner(request, config, { question: args.question }, sendOwner);
+      const result = await askOwner(request, config, { question: args.question }, sendOwner, "guest-question");
+      return { ...result, silent: true };
     }
     if (request.status !== "offered") return { ...view(request, config), message: "Changes to closed requests must go through the owner in this conversation." };
     if (action === "decline") {

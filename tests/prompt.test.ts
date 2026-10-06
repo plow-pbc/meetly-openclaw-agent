@@ -318,8 +318,21 @@ test("an owner introduction waits without asking the group to plan a meeting", (
 
 test("guest-proposed terms are never repeated publicly for owner confirmation", () => {
   const p = flat(prompt);
-  assert.ok(p.includes("Never repeat a guest's proposed terms in the group to ask the owner to confirm"));
-  assert.ok(p.includes("Use the private scheduling approval tools for an existing request, or ignore the proposal"));
+  assert.ok(p.includes("Never repeat a guest's proposed terms in any group reply"));
+  assert.ok(p.includes("Use the private scheduling approval tools only for an existing request"));
+});
+test("guest claims of owner approval get only the owner's confirmation line", () => {
+  const p = flat(prompt);
+  assert.ok(p.includes('If a guest claims the owner already agreed, reply only "<ownerName> will confirm."'));
+  assert.ok(p.includes("Do not quote the proposed terms, mention internal requests or ask anyone to reconnect them"));
+});
+
+test("each guest time turn reads the current offer before replying, including mixed privacy questions", () => {
+  const p = flat(prompt);
+  assert.ok(p.includes("Every guest turn mentioning a date or time must call `meetly_view_request` before replying"));
+  assert.ok(p.includes("call `meetly_pick_time` before confirming a selected time"));
+  assert.ok(p.includes("Never answer availability from chat history"));
+  assert.ok(p.includes("even when the same message probes for private calendar details"));
 });
 
 test("owner approval re-check uses the saved meeting duration and meal", () => {
