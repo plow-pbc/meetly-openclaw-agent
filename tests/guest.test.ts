@@ -346,7 +346,9 @@ test("pick books the chosen hold with fixed arguments, records the event, and de
 });
 
 test("pick never invites a contact whose local number only shares the guest's suffix", async t => {
-  const f = fixture(t, "S|0\nR|1|Other|Person|\nP|1|(555) 123-4567||\nE|1|wrong@example.net||");
+  // With the Mac's region known (#51), a full national number is the guest's own;
+  // a card holding only the trailing digits still never gets the invite.
+  const f = fixture(t, "L|en_US\nS|0\nR|1|Other|Person|\nP|1|123-4567||\nE|1|wrong@example.net||");
   const result = await guestAction(context, "pick", { start: offers[0]!.start });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().status, "booked");
