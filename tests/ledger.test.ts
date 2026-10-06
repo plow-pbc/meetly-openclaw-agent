@@ -8,7 +8,6 @@ import {
 } from "../skills/meetly/scripts/ledger.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
-import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { cli, tmpHome } from "./helpers.ts";
 
 const T0 = Date.parse("2026-09-28T12:00:00Z");
