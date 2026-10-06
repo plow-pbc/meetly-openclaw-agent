@@ -13,7 +13,7 @@ for (const sent of [true, false, "unknown", "transport-unknown"] as const) test(
   t.after(() => { if (previous === undefined) delete process.env.MEETLY_HOME; else process.env.MEETLY_HOME = previous; rmSync(home, { recursive: true, force: true }); });
   const offered = [{ start: "2026-10-05T10:00:00Z", end: "2026-10-05T10:30:00Z", account: "owner@example.com", holdId: "hold" }];
   const path = join(home, "ledger.json");
-  writeJson(path, addRequest({ requests: [] }, { channel: "email", origin: "owner", handle: "ana@example.net", topic: "Coffee", durationMin: 30, offered }, Date.now(), "request"));
+  writeJson(path, addRequest({ requests: [] }, { travel: { beforeMin: 0, afterMin: 0 }, channel: "email", origin: "owner", handle: "ana@example.net", topic: "Coffee", durationMin: 30, offered }, Date.now(), "request"));
   const read = () => readJson<Ledger>(path, { requests: [] }).requests[0]!;
   const prepared = cli("email.ts", ["prepare", "--id", "request"], { MEETLY_HOME: home });
   assert.equal(prepared.status, 0, prepared.stderr);

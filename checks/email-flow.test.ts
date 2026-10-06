@@ -142,7 +142,7 @@ for (const mode of ["sent", "unknown", "failed", "transport-unknown"]) test(`ema
     if (!allowFailure) assert.ok(!result.isError, JSON.stringify(result)); return result.details ?? JSON.parse(result.content[0].text);
   };
   const offered = [5, 6, 7].map(day => ({ start: `2026-10-0${day}T10:00:00Z`, end: `2026-10-0${day}T10:30:00Z`, account: config.defaultAccount }));
-  await offerRequest({ channel: "email", origin: "owner", handle: ana.provider_key, name: "Ana", topic: "coffee", meal: "coffee", durationMin: 30,
+  await offerRequest({ travel: { beforeMin: 0, afterMin: 0 }, channel: "email", origin: "owner", handle: ana.provider_key, name: "Ana", topic: "coffee", meal: "coffee", durationMin: 30,
     constraints: { from: "2026-10-05", to: "2026-10-11" }, format: "meet", locale: "en-US", offered });
   await emailStart(request().id);
   const opened = await send(context("instruction", true), { to: [ana.provider_key], subject: "Coffee with Alex",

@@ -1,5 +1,5 @@
 import { guestTurns } from "./guest-turn.js";
-import { cleanArgs, constraints as guestConstraints, sendPlowMessage } from "./guest-tools.js";
+import { cleanArgs, travel, constraints as guestConstraints, sendPlowMessage } from "./guest-tools.js";
 
 const constraints = { ...guestConstraints, properties: { ...guestConstraints.properties,
   startTime: { type: "string", description: "Owner-selected exact clock time, HH:MM." },
@@ -18,7 +18,7 @@ export function registerOwnerTools(api, execute = run, outbound) {
     parameters: {
       type: "object", additionalProperties: false, required,
       properties: {
-        outcome: { type: "string", enum: ["answer", "calendar_change", "decline_alternatives"], description: "answer for words only; calendar_change for an approved alternative search or after successfully applying another meeting change; decline_alternatives when refusing a pending alternative search." },
+        outcome: { type: "string", enum: ["answer", "calendar_change", "decline_alternatives"], description: "answer for words only; calendar_change for an approved alternative search or after successfully applying another meeting change; decline_alternatives when refusing a pending alternative search. Never include private travel details in text." },
         constraints: { ...constraints, description: "For an approved exhausted search, only the conditions the owner explicitly changed; other saved conditions remain in force." },
         requestId: { type: "string", description: "The matched request's id." },
         askedAt: { type: "string", description: "The matched pending question or time approval's askedAt." },
@@ -42,11 +42,11 @@ const runGroup = async (context, args, sendOwner) => {
 };
 
 export function registerOwnerGroupTool(api, execute = runGroup, outbound) {
-  const required = ["topic", "durationMin", "introduction"];
+  const required = ["topic", "durationMin", "introduction", "travel"];
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
-    description: "Group-only: never use in the owner's DM. If silent is true, output nothing in the group and do not send another message or retry: the tool handles private coordination. Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group. For this/next week supply week, not computed dates. For earliest available starts supply asap:true. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals, guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread; participants determine identity. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless the owner requests a change. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Reply here using the returned askDetails flag. If this is your first reply in this group, introduce yourself as \"<agentName>, <ownerName>'s scheduling assistant\" in their language with the offer. An earlier introduction-only reply already counts; after that, give just the offer without introducing yourself again. Owner only.",
+    description: "Group-only: never use in the owner's DM. If silent is true, output nothing in the group and do not send another message or retry: the tool handles private coordination. Offer times for the owner's scheduling request in the current group. Uses the normal calendar offer flow; resolves the sole non-owner member and chat from Plow participants. Read meetly-group. For this/next week supply week, not computed dates. For earliest available starts supply asap:true. Supply explicit travel estimates; read meetly-travel before in-person preparation. Supply the owner's scheduling conditions; this tool searches the calendar and holds times itself. Never supply intervals, guest handles or calendar IDs. Supply name only as the guest's name given by the owner in this thread; participants determine identity. Choose durationMin from the meeting context and supply it when saving the request. Preserve the saved duration unless the owner requests a change. If preferencesUnavailable is true, explain that the preferred times do not work and offer the returned alternatives. Reply here using the returned askDetails flag. If this is your first reply in this group, introduce yourself as \"<agentName>, <ownerName>'s scheduling assistant\" in their language with the offer. An earlier introduction-only reply already counts; after that, give just the offer without introducing yourself again. Owner only.",
     parameters: { type: "object", additionalProperties: false, required, properties: {
       introduction: { type: "string", enum: ["needed", "already_introduced"], description: "Read prior assistant messages. An earlier introduction-only reply counts; choose needed only when no introduction has been given here." },
       week: { type: "string", enum: ["this", "next"] },
@@ -55,7 +55,7 @@ export function registerOwnerGroupTool(api, execute = runGroup, outbound) {
       topic: string, meal: { type: "string", enum: ["lunch", "dinner", "coffee"] }, name: { type: "string", description: "Guest name explicitly given by the owner in this thread, if known." },
       constraints: { ...constraints, description: "Explicit non-relaxable owner conditions, including an accepted exact clock time in startTime. Supplied conditions replace the saved conditions; an empty object clears them and omission preserves them." },
       proposed: { ...constraints, description: "Preferred dates/times from the owner; these may be relaxed when busy." }, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
-      location: string, locale: string,
+      travel, location: string, locale: string,
     } },
     async execute(_id, args) {
       {
@@ -83,7 +83,7 @@ const runDm = async args => {
 };
 
 export function registerOwnerDmTool(api, execute = runDm) {
-  const required = ["origin", "handle", "topic", "offered"];
+  const required = ["origin", "handle", "topic", "offered", "travel"];
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_dm", label: "Offer owner-authorized times",
@@ -94,7 +94,7 @@ export function registerOwnerDmTool(api, execute = runDm) {
       meal: { type: "string", enum: ["lunch", "dinner", "coffee"] },
       name: string, sourceRowid: { type: "integer" }, chatUid: string,
       constraints, proposed: constraints, format: { type: "string", enum: ["meet", "in_person", "phone", "unknown"] },
-      location: string, locale: string, allowOverlapTitles: { type: "array", items: string },
+      travel, location: string, locale: string, allowOverlapTitles: { type: "array", items: string },
       offered: { type: "array", minItems: 1, maxItems: 3, items: { type: "object", additionalProperties: false,
         required: ["start", "end"], properties: { start: string, end: string } } },
     } },

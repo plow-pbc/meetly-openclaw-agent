@@ -1,4 +1,5 @@
 // Scheduling actions scoped to the sender and conversation supplied by OpenClaw.
+import { checkTravel, travelNote, travelRange, type Travel } from "./travel.ts";
 import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config } from "./config.ts";
 import { lookupContact } from "./contact.ts";
@@ -12,7 +13,7 @@ import { view } from "./request-view.ts";
 
 export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string; senderIsOwner?: boolean; config?: { channels?: { plow?: { apiBase?: string; emailLineUid?: string } } } };
 export type GuestAction = "view" | "pick" | "other_times" | "format" | "ask_owner" | "decline";
-export type GuestArgs = Omit<Constraints, "startTime"> & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string; attendees?: string[] };
+export type GuestArgs = Omit<Constraints, "startTime"> & { excludedDays?: string[]; restoredDays?: string[]; offer_week?: boolean; next_week?: string; start?: string | WeekdayTime; question?: string; format?: Format; location?: string; attendees?: string[]; travel?: Travel };
 type SendOwner = (text: string) => Promise<void>;
 const EMPTY: Ledger = { requests: [] };
 
@@ -42,7 +43,7 @@ const write = (request: Request, action: CalendarAction) => calendarAction(reque
   validate: latest => unchanged(request, latest),
 });
 
-// Remove only this request's holds and booked event, with their accounts.
+// Remove this request's holds, booking and travel, with their accounts.
 async function busyFor(request: Request, config: Config, from: string, to: string): Promise<BusyResult> {
   const result = await fetchBusy(config, { from, to });
   if (result.degraded.length) throw new Error("calendar unavailable");
@@ -68,20 +69,23 @@ const referenceTimes = (r: Request) => currentOffers(r).length ? currentOffers(r
 async function check(request: Request, config: Config, requested: string | WeekdayTime) {
   if (typeof requested === "object" && requested.time === undefined) throw new Error("An exact time is required");
   const start = typeof requested === "string" ? requested : resolveWeekday(requested, referenceTimes(request), config.timezone);
-  const query = { now: Date.now(), config, meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
+  const query = { now: Date.now(), config, travel: request.travel, format: request.format, meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, start, locale: request.locale, allowOverlap: request.allowOverlap };
   const { slot } = checkTime({ ...query, busy: [] });
-  const busy = await busyFor(request, config, slot.start, slot.end);
+  const range = travelRange(slot.start, slot.end, request);
+  const busy = await busyFor(request, config, range.from, range.to);
   const checked = checkTime({ ...query, ...busy });
   const overlap = busy.busy.some(b => allowsOverlap(b, request.allowOverlap)
-    && Date.parse(b.start) < Date.parse(slot.end) && Date.parse(b.end) > Date.parse(slot.start));
+    && Date.parse(b.start) < Date.parse(range.to) && Date.parse(b.end) > Date.parse(range.from));
   return { ...checked, overlap };
 }
 
-async function notifyOwner(request: Request, config: Config, change: "moved" | "cancelled" | "declined", sendOwner?: SendOwner) {
+async function notifyOwner(request: Request, config: Config, change: "moved" | "cancelled" | "declined" | "travel", sendOwner?: SendOwner, note?: string) {
+  if (change === "moved" || change === "travel") note ??= travelNote(request);
   const when = request.booked ? localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(request.booked.start)) : undefined;
   const subject = `${request.topic} with ${request.name ?? request.handle}`;
+  if (change === "travel" && !note) return {};
   const text = change === "declined" ? `${request.name ?? request.handle} declined ${request.topic}; the scheduling request was dropped.${request.holdCleanup?.length ? " Hold cleanup is pending." : ""}`
-    : change === "moved" ? `${subject} moved to ${when} (${config.timezone}).`
+    : change === "travel" ? note! : change === "moved" ? `${subject} moved to ${when} (${config.timezone}).${note ? ` ${note}` : ""}`
     : request.holdCleanup?.length ? `${request.name ?? request.handle} requested cancellation of ${request.topic} on ${when} (${config.timezone}); calendar cleanup is pending.`
     : `${request.name ?? request.handle} cancelled ${request.topic} on ${when} (${config.timezone}).`;
   try {
@@ -97,7 +101,7 @@ async function pick(request: Request, config: Config, start: string, attendees?:
   if (attendees !== undefined && (!Array.isArray(attendees) || (attendees.length > 0 && (request.channel !== "email" || request.status === "booked"
     || attendees.some(email => typeof email !== "string" || !/^[^\s@,]+@[^\s@,]+$/.test(email)))))) return { error: "Additional invitees need email addresses on an unbooked email request." };
   const requested = checkTime({ now: Date.now(), config, busy: [], start,
-    meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin }).slot.start;
+    travel: { beforeMin: 0, afterMin: 0 }, meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin }).slot.start;
   const offer = currentOffers(request).find(o => Date.parse(o.start) === Date.parse(requested));
   if (!offer) return { error: "Choose one of the currently offered start times." };
   // Only a replacement held before this run can represent the guest's choice.
@@ -105,18 +109,22 @@ async function pick(request: Request, config: Config, start: string, attendees?:
     && Date.parse(request.offeredAt!) < turnStartedAt!)) {
     return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
   }
-  const checked = await check(request, config, offer.start);
-  if (request.excludedDays?.includes(checked.slot.dayOfWeek) || !checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available. Ask for other times." };
+  const meeting = request.replacement ?? request;
+  const travel = meeting.travel;
+  const checked = await check({ ...request, ...meeting }, config, offer.start);
+  if (request.excludedDays?.includes(checked.slot.dayOfWeek) || !checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available.", code: "TIME_UNAVAILABLE",
+    recovery: { action: "other_times", tool: "meetly_other_times", retry: false } };
   if (request.status === "booked") {
-    const result = await write(request, { action: "book", start: offer.start, end: offer.end });
+    const result = await write(request, { action: "book", start: offer.start, end: offer.end, travel });
     request = result.request;
     return { ...view(request, config), invitationUpdated: "invitationUpdated" in result && result.invitationUpdated === true,
       overlappedWithOwnerApproval: checked.overlap, ...await notifyOwner(request, config, "moved", sendOwner) };
   }
   const contact = request.handle.includes("@") ? undefined : await lookupContact(request.handle);
   const email = request.channel === "email" ? undefined : request.handle.includes("@") ? request.handle : contact?.found && contact.matches === 1 ? contact.emails[0] : undefined;
-  const result = await write(request, { action: "book", start: offer.start, attendees: [email, ...attendees ?? []].filter(Boolean).join(",") || undefined });
-  return { ...view(result.request, config), invitationSent: "invitationSent" in result && result.invitationSent === true, overlappedWithOwnerApproval: checked.overlap };
+  const result = await write(request, { action: "book", start: offer.start, travel, attendees: [email, ...attendees ?? []].filter(Boolean).join(",") || undefined });
+  return { ...view(result.request, config), invitationSent: "invitationSent" in result && result.invitationSent === true, overlappedWithOwnerApproval: checked.overlap,
+    ...await notifyOwner(result.request, config, "travel", sendOwner) };
 }
 
 async function otherTimes(request: Request, config: Config, args: GuestArgs, sendOwner?: SendOwner) {
@@ -128,6 +136,8 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     const message = "For that week, keep offer_week: true and omit next_week entirely. Retain excludedDays and any preferred weekday. next_week is only for a new week relative to a source timestamp, with offer_week: false. No search or holds were made; retry using only the intended scope.";
     return { error: message, code: "DATE_SCOPE_CONFLICT", recovery: { action: "retry", message } };
   }
+  const meeting = request.replacement ?? request;
+  const travel = meeting.travel?.override ? meeting.travel : args.travel ?? meeting.travel;
   try {
     if (typeof args.start === "string") parseStart(args.start, config.timezone);
     if (args.start !== undefined && typeof args.start !== "string") {
@@ -158,7 +168,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   let exact: Slot | undefined;
   if (start) {
-    const checked = await check(request, config, start);
+    const checked = await check({ ...request, ...meeting, travel }, config, start);
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) {
       return { error: "That weekday was ruled out. Choose a different day." };
     }
@@ -171,7 +181,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     preferred.before = checked.slot.end.slice(11, 16);
   }
   const now = Date.now();
-  const query: SlotQuery = { busy: [], ...bounds, now, config,
+  const query: SlotQuery = { busy: [], ...bounds, now, config, travel, format: meeting.format,
     meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
   const range = preferredSearchCoverage(query, preferred);
   const fromDate = localIso(Date.parse(range.from), config.timezone).slice(0, 10);
@@ -197,9 +207,9 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
         : "Those times don't work. I can't confirm another time yet.",
       recovery: { action: "wait", retry: false } };
   }
-  const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
+  const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = { ...request, ...meeting };
   request = (await write(request, { action: "offer", request: {
-    channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
+    channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale, travel,
     offered: slots.map(slot => ({ start: slot.start, end: slot.end, account: config.defaultAccount })),
   } })).request;
   return { ...view(request, config), preferencesUnavailable };
@@ -261,15 +271,21 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     let request = resolveRequest(ctx);
     if (!request) return { error: "No scheduling request matches you in this conversation." };
     const config = loadConfig();
+    if (action === "pick" && args.travel !== undefined) return { error: "Picking uses the saved offer. Retry without travel; use set_format only if the meeting place or format changed." };
+    if (args.travel !== undefined) {
+      checkTravel(args.travel);
+      args = { ...args, travel: { beforeMin: args.travel.beforeMin, afterMin: args.travel.afterMin } };
+    }
     if (action === "view") return view(request, config);
     if (config.paused) return { error: "Scheduling is paused. The owner can resume it." };
     if (action === "format") {
       if (request.status !== "offered" && request.status !== "booked") return view(request, config);
       if (!["meet", "in_person", "phone", "unknown"].includes(args.format ?? "")) return { error: "Choose meet, in_person, phone, or unknown." };
       if (args.location !== undefined && (typeof args.location !== "string" || args.location.length > 1000)) return { error: "Provide a short meeting place." };
-      const change = { format: args.format!, location: args.location ?? "" };
-      request = (await write(request, { action: "format", ...change })).request;
-      return view(request, config);
+      const change = { format: args.format!, location: args.location ?? "", travel: args.travel };
+      const result = await write(request, { action: "format", ...change });
+      request = result.request;
+      return { ...view(request, config), ...(request.status === "booked" ? await notifyOwner(request, config, "travel", sendOwner, "ownerTravelNote" in result ? result.ownerTravelNote : undefined) : {}) };
     }
     if (action === "ask_owner" && ["offered", "booked"].includes(request.status)) {
       if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
