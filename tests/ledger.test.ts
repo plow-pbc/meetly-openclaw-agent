@@ -27,7 +27,11 @@ test("handles normalize phones and emails", () => {
   for (const handle of ['(555) 123-4567', '5551234567', '+05551234567', '+15551234567junk', '+1234567890123456', 'guest@', 'guest name@example.com', '']) {
     assert.throws(() => normalizeHandle(handle), /handle/);
   }
-  assert.equal(normalizeHandle(" Ana@Example.COM "), "ana@example.com");
+  for (const char of "`$\"'\\;&|<>(){}[]*?!~#") {
+    assert.throws(() => normalizeHandle(`x${char}id@example.com`), /handle/);
+    assert.throws(() => normalizeHandle(`guest@exa${char}mple.com`), /handle/);
+  }
+  assert.equal(normalizeHandle(" Ana+Coffee@Example.COM "), "ana+coffee@example.com");
   assert.ok(sameHandle("+1 (555) 123-4567", "+15551234567"));
   assert.ok(!sameHandle("+15551234567", "(555) 123-4567"));
   assert.ok(sameHandle("ANA@example.com", "ana@EXAMPLE.com"));
@@ -148,7 +152,7 @@ test("update resets offeredAt with new offers and rejects unknown keys", () => {
 test("expired: 48 hours after the offer, open requests only", () => {
   let l = addRequest(empty(), input(), T0, "r_1");
   l = addRequest(l, input({ handle: "+15559999999" }), T0, "r_2");
-  l = updateRequest(l, "r_2", { status: "booked" }, T0);
+  l = updateRequest(l, "r_2", { status: "booked", offered: [] }, T0);
   assert.deepEqual(expiredRequests(l, 48, T0 + 47 * HOUR), []);
   assert.deepEqual(expiredRequests(l, 48, T0 + 48 * HOUR).map((r) => r.id), ["r_1"]);
 });
@@ -466,4 +470,17 @@ test("inbound meal classification applies code defaults and preserves explicit l
     assert.equal(result.json.request.durationMin, expected);
     assert.equal(result.json.request.meal, meal);
   }
+});
+
+test("find reads externally sourced email handles as literal file data", () => {
+  const home = tmpHome();
+  const handle = 'ana+coffee@example.com';
+  writeJson(join(home, "ledger.json"), addRequest(empty(), input({ origin: "owner", channel: "email", handle }), T0, "literal-address"));
+  const handleFile = join(home, "address.txt");
+  writeFileSync(handleFile, handle + "\n");
+  const found = cli("ledger.ts", ["find", "--handle-file", handleFile], { MEETLY_HOME: home });
+  assert.equal(found.status, 0, found.stderr);
+  assert.equal(found.json.request.id, "literal-address");
+  assert.equal(found.json.request.handle, handle);
+  assert.equal(cli("ledger.ts", ["find", "--handle-file", handleFile, "--handle", "other@example.com"], { MEETLY_HOME: home }).status, 1);
 });

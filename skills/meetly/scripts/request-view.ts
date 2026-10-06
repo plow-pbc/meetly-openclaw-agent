@@ -21,7 +21,7 @@ export function view(request: Request, config: Config) {
     // Reserve before returning permission to ask; a lost reply must not ask twice.
     askDetails = true;
     const at = new Date(Date.now()).toISOString();
-    return { requests: ledger.requests.map(r => r.id === current.id ? { ...r, detailsAskedAt: at, updatedAt: at } : r) };
+    return { ...ledger, requests: ledger.requests.map(r => r.id === current.id ? { ...r, detailsAskedAt: at, updatedAt: at } : r) };
   });
   const format = localeFormatter(request.locale ?? "en-US", config.timezone);
   const time = (slot: { start: string; end: string }) => ({ start: slot.start, end: slot.end, label: format.format(new Date(slot.start)) });
@@ -32,7 +32,7 @@ export function view(request: Request, config: Config) {
     offered,
     ...(request.status === "booked" && offered.length ? { message: `Replacement times are held: ${offered.map(o => o.label).join("; ")} (${config.timezone}). The current booking remains unchanged until you pick a replacement.` } : {}),
     ...(request.booked ? { confirmationTime: formatMeetingTime(request.booked.start, config.timezone, request.locale), booked: time(request.booked), reminderAvailable: request.channel !== "email" && !!request.meetUrl, ...(request.channel === "email" && request.meetUrl ? { meetUrl: request.meetUrl } : {}) } : {}),
-    ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
+    ...(request.pendingOwner && !("contact" in request.pendingOwner) ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
     ...(request.holdCleanup?.length ? { cleanupPending: true } : {}),
   };
 }
