@@ -285,6 +285,7 @@ export function requireDuration(value: number | undefined): number {
 
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
   if ("id" in input) throw new Error("Do not pass id to ledger add/save; update or select the existing request instead.");
+  if (input.chatUid && ledger.requests.some(r => r.status === "booked" && r.chatUid === input.chatUid && sameHandle(r.handle, input.handle))) throw new Error("SEPARATE_MEETING_REQUIRED: coordinate the new meeting privately in a new conversation.");
   input = { ...input, handle: normalizeHandle(input.handle) };
   if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return ledger;
   for (const key of ["contactApproved", "lastGuestReplyAt", "lastNudge", "pendingOwner"]) {

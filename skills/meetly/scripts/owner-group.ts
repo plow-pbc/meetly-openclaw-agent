@@ -6,11 +6,11 @@ import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { findPreferredSlots, resolveSearchConstraints, preferredSearchCoverage, type SearchTiming } from "./slots.ts";
 import { view } from "./request-view.ts";
-import { sameRequest, nudgeFingerprint, checkContact, ContactConfirmationRequired, addRequest, requestId, findOpenByHandle, normalizeHandle, sameHandle, type Constraints, type Ledger } from "./ledger.ts";
+import { requestEvents, sameRequest, nudgeFingerprint, checkContact, ContactConfirmationRequired, addRequest, requestId, findOpenByHandle, normalizeHandle, sameHandle, type Constraints, type Ledger } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & SearchTiming & { durationMin: number };
+type GroupRequest = Pick<OfferInput, "requestId" | "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & SearchTiming & { durationMin: number };
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sendOwner?: (text: string) => Promise<void>): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -20,6 +20,11 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
   if (!Number.isInteger(args.durationMin) || args.durationMin <= 0) {
     return { error: "Set durationMin to your chosen positive whole number of minutes when saving this request." };
   }
+  const notifyOwner = async (text: string) => {
+    if (!sendOwner) return false;
+    try { await sendOwner(text); return true; }
+    catch { return false; }
+  };
   try {
     const api = plowApi();
     const response = await api.fetch(`${api.base}/v1/chats/${encodeURIComponent(chat)}`, {
@@ -44,7 +49,26 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     }
     name = args.name?.trim() || name;
     const ledger = readJson<Ledger>(file("ledger.json"), { requests: [] });
-    const existing = findOpenByHandle(ledger, handle);
+    if (args.requestId === undefined && ledger.requests.some(r => r.status === "booked" && r.chatUid === chat)) {
+      const id = requestId(), now = Date.now();
+      updateJson<Ledger>(file("ledger.json"), { requests: [] }, current => addRequest(current, {
+        origin: "owner-group", handle, name, topic: args.topic, durationMin: args.durationMin, travel: args.travel,
+        meal: args.meal, format: args.format, location: args.location, locale: args.locale, proposed: args.proposed,
+        constraints: resolveSearchConstraints(args.constraints ?? {}, args.week, now, loadConfig().timezone),
+        askDetails: false, status: "asked", offered: [],
+      }, now, id));
+      const ownerAskSent = await notifyOwner(`Request ${id}: you asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Guest: ${JSON.stringify(name ?? handle)}.`
+            + ` Conditions: ${JSON.stringify(args.constraints ?? {})}. Preferences: ${JSON.stringify(args.proposed ?? {})}.`
+            + (args.week ? ` Week: ${args.week}.` : "") + (args.asap ? " As soon as possible." : "")
+            + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")
+            + " This group already has a booked meeting, which stays unchanged. Shall I arrange the separate meeting in a new conversation?");
+      return { code: "SEPARATE_MEETING_REQUIRED", silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
+    }
+    const existing = args.requestId === undefined ? findOpenByHandle(ledger, handle)
+      : ledger.requests.find(r => r.id === args.requestId && ["asked", "offered", "booked"].includes(r.status)
+        && r.chatUid === chat && sameHandle(r.handle, handle));
+    if (args.requestId !== undefined && !existing) throw new Error("No matching selected request.");
+    if (existing?.status === "booked" && args.durationMin !== existing.durationMin) throw new Error("Changing a booked duration is not supported.");
     if (existing && existing.chatUid !== chat && !(existing.status === "asked" && existing.chatUid === undefined)) {
       throw new Error("request belongs to another conversation");
     }
@@ -70,7 +94,8 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
         format, location, locale, chatUid: chat, askDetails: false, offered: [], status: "asked" as const };
       let id = existing?.id ?? requestId();
       updateJson<Ledger>(file("ledger.json"), { requests: [] }, current => {
-        const saved = findOpenByHandle(current, handle);
+        const saved = args.requestId === undefined ? findOpenByHandle(current, handle)
+          : current.requests.find(r => r.id === args.requestId);
         if (saved && saved.chatUid && saved.chatUid !== chat) throw new Error("request belongs to another conversation");
         id = saved?.id ?? id;
         if (!saved) current = addRequest(current, contact, now, id);
@@ -83,25 +108,17 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
           value?.days?.length && `on ${value.days.join(", ")}`, value?.after && `after ${value.after}`, value?.before && `before ${value.before}`].filter(Boolean);
         return parts.length ? ` ${label}: ${parts.join("; ")} (${loadConfig().timezone}).` : "";
       };
-      let ownerAskSent = false;
-      try {
-        if (sendOwner) {
-          await sendOwner(`Request ${id}: you asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Name: ${JSON.stringify(name ?? handle)}. Handle: ${JSON.stringify(handle)}.`
+      const ownerAskSent = await notifyOwner(`Request ${id}: you asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Name: ${JSON.stringify(name ?? handle)}. Handle: ${JSON.stringify(handle)}.`
             + dates("Required dates/times", args.constraints) + dates("Preferred dates/times", args.proposed)
             + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")
             + (args.format ? ` Format: ${args.format}.` : "")
             + " You previously marked this person do not contact. Please confirm here in our private DM if you want to schedule this meeting. Your preference stays in place unless you ask to clear it.");
-          ownerAskSent = true;
-        }
-      } catch {
-        // An uncertain delivery is never retried or explained in the group.
-      }
       return { code: "OWNER_CONFIRMATION_REQUIRED", silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
     }
     const search = { travel, format: format ?? existing?.format, ...constraints, now, config, meal, durationMin, locale, asap: args.asap, busy: [] };
     const busy = await fetchBusy(config, preferredSearchCoverage(search, proposed));
     if (busy.degraded.length) throw new Error("calendar unavailable");
-    busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
+    busy.busy = busy.busy.filter(b => !existing || !requestEvents(existing).some(o => o.holdId === b.id && o.account === b.account));
     const query = { ...search, ...busy, allowOverlap: existing?.allowOverlap };
     query.days = (constraints?.days ?? DAYS).filter(day => !existing?.excludedDays?.includes(day));
     const near = !args.asap && proposed?.from && proposed.from === proposed.to
@@ -109,7 +126,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     const { slots, preferencesUnavailable, incomplete } = findPreferredSlots(query, proposed, [{ ...query, near }]);
     if (incomplete && !slots.length) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current request is unchanged.", incomplete };
     if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
-    const { request } = await offerRequest({ travel, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
+    const { request } = await offerRequest({ requestId: existing?.id, travel, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
       offered: slots.map(({ start, end }) => ({ start, end })),
       origin: "owner-group", chatUid: chat, askDetails: false }, {
       validate(latest) {
