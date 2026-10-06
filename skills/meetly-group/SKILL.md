@@ -36,7 +36,7 @@ Never claim the owner is free on an account in `degraded`.
 **Overlap permission.** The busy file keeps the allowed events' references for slot
 search without exposing them. Overlap permission alone is not a time selection.
 "Noon is fine, it can overlap my other event" grants permission to offer noon, not to book it:
-use `meetly_offer_owner_dm` with `allowOverlapTitles` to resolve the named permission,
+use `meetly_offer_owner_dm` with the selected `requestId` for an existing meeting and `allowOverlapTitles` to resolve the named permission,
 re-offer and hold times, then let the guest choose. Use `slots.ts --near <owner-authorized start> --request <id>` for nearest alternatives. Never write
 `allowOverlap` with the ledger CLI. Only an explicit booking instruction such as "book noon"
 selects it (`meetly-confirm`, "Book the event"). Overlap permission does not authorize sharing the event title in the group.
@@ -98,7 +98,7 @@ before searching, keeping any hard conditions they did not change.
      loosening it; stop.
    - **`degraded` is not empty:** tell the owner which account could not be read.
    - **`unknownAfter` is set:** offer only what came back.
-4. For new overlap permission, use `meetly_offer_owner_dm` with `allowOverlapTitles`; the raw CLI cannot authorize overlaps. Otherwise save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,
+4. For new overlap permission, use `meetly_offer_owner_dm` with the selected `requestId` for an existing meeting and `allowOverlapTitles`; the raw CLI cannot authorize overlaps. Otherwise save with `calendar.ts offer --json '<request>'`: `origin`, resolved `handle`,
    `name`, `sourceRowid`, known `chatUid`, `topic`, `location`, `meal` if applicable, optional `durationMin`,
    `constraints` (the owner's conditions), `proposed`, `format`,
    `locale`, and `offered[]` with each slot's `start`/`end`. Do not supply hold ids.
