@@ -6,11 +6,11 @@ import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { findPreferredSlots, resolveSearchConstraints, preferredSearchCoverage, type SearchTiming } from "./slots.ts";
 import { view } from "./request-view.ts";
-import { nudgeFingerprint, checkContact, ContactConfirmationRequired, addRequest, requestId, findOpenByHandle, normalizeHandle, sameHandle, type Constraints, type Ledger } from "./ledger.ts";
+import { requestEvents, nudgeFingerprint, checkContact, ContactConfirmationRequired, addRequest, requestId, findOpenByHandle, normalizeHandle, sameHandle, type Constraints, type Ledger } from "./ledger.ts";
 import { plowApi, type Chat } from "./owner-chat.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 
-type GroupRequest = Pick<OfferInput, "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & SearchTiming & { durationMin: number };
+type GroupRequest = Pick<OfferInput, "requestId" | "travel" | "topic" | "meal" | "constraints" | "proposed" | "format" | "location" | "locale" | "name"> & SearchTiming & { durationMin: number };
 
 export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sendOwner?: (text: string) => Promise<void>): Promise<object> {
   const chat = resolveOwnerChat(ctx);
@@ -44,7 +44,25 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     }
     name = args.name?.trim() || name;
     const ledger = readJson<Ledger>(file("ledger.json"), { requests: [] });
-    const existing = findOpenByHandle(ledger, handle);
+    if (args.requestId === undefined && ledger.requests.some(r => r.status === "booked" && r.chatUid === chat)) {
+      let ownerAskSent = false;
+      try {
+        if (sendOwner) {
+          await sendOwner(`You asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Guest: ${JSON.stringify(name ?? handle)}.`
+            + ` Conditions: ${JSON.stringify(args.constraints ?? {})}. Preferences: ${JSON.stringify(args.proposed ?? {})}.`
+            + (args.week ? ` Week: ${args.week}.` : "") + (args.asap ? " As soon as possible." : "")
+            + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")
+            + " This group already has a booked meeting, which stays unchanged. Shall I arrange the separate meeting in a new conversation?");
+          ownerAskSent = true;
+        }
+      } catch { /* Unknown delivery must not trigger another send. */ }
+      return { code: "SEPARATE_MEETING_REQUIRED", silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
+    }
+    const existing = args.requestId === undefined ? findOpenByHandle(ledger, handle)
+      : ledger.requests.find(r => r.id === args.requestId && ["asked", "offered", "booked"].includes(r.status)
+        && r.chatUid === chat && sameHandle(r.handle, handle));
+    if (args.requestId !== undefined && !existing) throw new Error("No matching selected request.");
+    if (existing?.status === "booked" && args.durationMin !== existing.durationMin) throw new Error("Changing a booked duration is not supported.");
     if (existing && existing.chatUid !== chat && !(existing.status === "asked" && existing.chatUid === undefined)) {
       throw new Error("request belongs to another conversation");
     }
@@ -70,7 +88,8 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
         format, location, locale, chatUid: chat, askDetails: false, offered: [], status: "asked" as const };
       let id = existing?.id ?? requestId();
       updateJson<Ledger>(file("ledger.json"), { requests: [] }, current => {
-        const saved = findOpenByHandle(current, handle);
+        const saved = args.requestId === undefined ? findOpenByHandle(current, handle)
+          : current.requests.find(r => r.id === args.requestId);
         if (saved && saved.chatUid && saved.chatUid !== chat) throw new Error("request belongs to another conversation");
         id = saved?.id ?? id;
         if (!saved) current = addRequest(current, contact, now, id);
@@ -101,7 +120,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     const search = { travel, format: format ?? existing?.format, ...constraints, now, config, meal, durationMin, locale, asap: args.asap, busy: [] };
     const busy = await fetchBusy(config, preferredSearchCoverage(search, proposed));
     if (busy.degraded.length) throw new Error("calendar unavailable");
-    busy.busy = busy.busy.filter(b => !existing?.offered.some(o => o.holdId && o.holdId === b.id && o.account === b.account));
+    busy.busy = busy.busy.filter(b => !existing || !requestEvents(existing).some(o => o.holdId === b.id && o.account === b.account));
     const query = { ...search, ...busy, allowOverlap: existing?.allowOverlap };
     query.days = (constraints?.days ?? DAYS).filter(day => !existing?.excludedDays?.includes(day));
     const near = !args.asap && proposed?.from && proposed.from === proposed.to
@@ -109,7 +128,7 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     const { slots, preferencesUnavailable, incomplete } = findPreferredSlots(query, proposed, [{ ...query, near }]);
     if (incomplete && !slots.length) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current request is unchanged.", incomplete };
     if (!slots.length) return { error: "No times are available within the owner's conditions. The current request is unchanged." };
-    const { request } = await offerRequest({ travel, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
+    const { request } = await offerRequest({ requestId: existing?.id, travel, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale,
       offered: slots.map(({ start, end }) => ({ start, end })),
       origin: "owner-group", chatUid: chat, askDetails: false });
     return { ...view(request, config), preferencesUnavailable };

@@ -62,6 +62,7 @@ export type Request = {
   sourceRowid?: number;
   chatUid?: string;
   calendarRevision?: string;
+  formatConfirmation?: { text: string; attemptedAt?: string; delivered?: boolean };
   contactApproved?: boolean;
   lastGuestReplyAt?: string;
   lastNudge?: { fingerprint: string; at: string };
@@ -113,11 +114,12 @@ export const requestEvents = (request: Request): HoldRef[] => [
 export type Ledger = { requests: Request[]; blockedHandles?: string[] };
 
 export type NewRequest = Omit<Request,
-  "replacement" | "travelEvents" | "id" | "channel" | "contactApproved" | "lastGuestReplyAt" | "lastNudge" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "bookedReplacement" | "meetUrl" | "reminder"
+  "replacement" | "travelEvents" | "id" | "channel" | "contactApproved" | "lastGuestReplyAt" | "lastNudge" | "calendarRevision" | "formatConfirmation" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "bookedReplacement" | "meetUrl" | "reminder"
   | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { channel?: Request["channel"]; status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
   "travel" | "travelEvents" | "status" | "chatUid" | "eventId" | "offered" | "bookedReplacement" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "excludedDays" | "topic" | "format" | "locale">> & {
+  formatConfirmation?: Request["formatConfirmation"] | null;
   replacement?: Request["replacement"] | null;
   pendingOwner?: PendingOwner | null;
   booked?: Booked | null;
@@ -131,10 +133,10 @@ const FORMATS: readonly Format[] = ["meet", "in_person", "phone", "unknown"];
 const OUTCOMES: readonly Reminder["outcome"][] = ["sent", "cancelled", "no-link"];
 const PATCH_KEYS = [
   "travel", "travelEvents", "status", "chatUid", "eventId", "offered", "bookedReplacement", "holdCleanup", "name", "location", "allowOverlap", "constraints", "excludedDays", "topic", "pendingOwner",
-  "format", "locale", "booked", "meetUrl", "reminder", "replacement",
+  "format", "locale", "booked", "meetUrl", "reminder", "replacement", "formatConfirmation",
 ];
 // Keys a patch can clear with null.
-const NULLABLE = ["replacement", "pendingOwner", "booked", "meetUrl", "reminder"] as const;
+const NULLABLE = ["formatConfirmation", "replacement", "pendingOwner", "booked", "meetUrl", "reminder"] as const;
 
 const isDate = (t: unknown) => typeof t === "string" && !Number.isNaN(Date.parse(t));
 
@@ -284,6 +286,7 @@ export function requireDuration(value: number | undefined): number {
 }
 
 export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: string): Ledger {
+  if (input.chatUid && ledger.requests.some(r => r.status === "booked" && r.chatUid === input.chatUid && sameHandle(r.handle, input.handle))) throw new Error("SEPARATE_MEETING_REQUIRED: coordinate the new meeting privately in a new conversation.");
   input = { ...input, handle: normalizeHandle(input.handle) };
   if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return ledger;
   for (const key of ["contactApproved", "lastGuestReplyAt", "lastNudge", "pendingOwner"]) {
@@ -292,7 +295,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   const channel = input.channel ?? "text";
   if (channel !== "text" && channel !== "email") throw new Error("channel must be text or email");
   if (channel === "email" && !input.handle.includes("@")) throw new Error("email requests need an email address");
-  for (const key of ["calendarRevision", "travelEvents", "replacement"]) {
+  for (const key of ["calendarRevision", "travelEvents", "replacement", "formatConfirmation"]) {
     if (key in input) throw new Error(`${key} is managed by calendar.ts`);
   }
   if ("detailsAskedAt" in input) throw new Error("detailsAskedAt is managed by request-view.ts");
@@ -575,7 +578,7 @@ if (isMain(import.meta.url)) {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
         const patch = jsonArg(values);
         if (patch.pendingOwner && "contact" in patch.pendingOwner) throw new Error("Contact decisions require the owner DM tools.");
-        for (const key of ["replacement", "travel", "travelEvents", "status", "eventId", "offered", "bookedReplacement", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location", "durationMin", "allowOverlap"]) {
+        for (const key of ["replacement", "travel", "travelEvents", "status", "eventId", "offered", "bookedReplacement", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location", "formatConfirmation", "durationMin", "allowOverlap"]) {
           if (key in patch) throw new Error(`${key} is managed by calendar.ts or reminder-check.ts`);
         }
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => updateRequest(l, values.id!, patch, now));

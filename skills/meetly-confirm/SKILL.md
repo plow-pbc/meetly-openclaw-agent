@@ -43,9 +43,12 @@ tell the owner; do not resend. For a pending item, only if the owner explicitly 
   only for conditions the owner explicitly changed. For a refusal, pass
   `outcome:"decline_alternatives"` and their answer as `text`.
 - **Question (`pendingOwner.question`, without `alternatives`):** if the owner's answer changes location, format or time,
-  apply it first: use `calendar.ts format` for place/format, or
+  apply it first: from the main DM use `meetly_change_format` for place/format
+  (it delivers and resolves the question itself); in a group use `calendar.ts format`, or
   "Book the event" / "Changes after booking" for time changes. Wait until the
-  calendar writer succeeds before calling `meetly_answer_owner` or acknowledging.
+  calendar writer succeeds before acknowledging. After `meetly_change_format`
+  delivers successfully, do not call `meetly_answer_owner` again. For the other
+  calendar flows, call `meetly_answer_owner` after the write succeeds.
   On a failed or unresolved write, leave the question pending; resume unresolved
   writes and never claim the change completed. `text` relays the confirmed result,
   or the owner's answer when no calendar change is needed.
@@ -98,11 +101,20 @@ guest to identify a request. Larger groups are out of scope.
 
 The owner can authorize a time outside the meeting window; conflict overrides require their DM.
 For other times on a booked meeting, follow "Changes after booking" below; use its saved id. For an open request, follow "Offer times" with the saved conditions and the owner's changes.
-**Format or place after booking:** for a format/place change, run `calendar.ts format --id <id> --json '<format/location and explicit travel estimate>'`.
-After a format/place change, tell the guest the new format/place once: with a pending question use `meetly_answer_owner` and `outcome: "calendar_change"`; otherwise reply in the meeting thread, using `plow_reply_to` from the owner DM
+**Format or place after booking:** from the owner's main DM, call `meetly_change_format`
+with `requestId`, `format`, `location` for an in-person meeting, explicit `travel`
+and a guest-facing `confirmation`. It uses the calendar writer, then delivers one
+confirmation to the text group and resolves its pending question. `effectiveTravel`
+is the committed private estimate. On `silent: true`, finish `NO_REPLY`; do not send
+another owner DM or group confirmation. An identical change without a pending question
+stays silent. For email, complete returned `guestConfirmation` steps before acknowledging.
+In the meeting group, use `calendar.ts format --id <id> --json '<format/location and explicit travel estimate>'`.
+After a group-initiated format/place change, tell the guest the new format/place once: with a pending question use `meetly_answer_owner` and `outcome: "calendar_change"`; otherwise reply in the meeting thread, using `plow_reply_to` from the owner DM
 (`plow_send_email` for email).
 Keep private travel estimates out of the guest message; travel-only corrections
 get no guest notice. Do not acknowledge completion in the DM before guest delivery.
+When a CLI result returns `ownerReply.action: "already_notified"`, confirm only
+the guest-facing change; never repeat the delivered private travel note.
 Cancel a booked meeting with `calendar.ts cancel --id <id>`; drop an open one with
 `calendar.ts drop --id <id>`. Confirm once in the meeting thread. For a Meet, say the
 link will be posted here 10 minutes before. Do not paste the link now.

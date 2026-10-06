@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import { allowsOverlap, fetchBusy, toBusy } from "./busy.ts";
 import { isMain, run } from "./cli.ts";
 import { holdHours, loadConfig, SLOT_COUNT } from "./config.ts";
@@ -24,7 +24,7 @@ export type CalendarAction =
   | { action: "duration"; durationMin: number; topic: string; offered: OfferInput["offered"] }
   | { action: "book"; start: string; end?: string; attendees?: string; timeApproval?: boolean; travel?: Travel; format?: Request["format"]; location?: string }
   | { action: "approve-time"; start?: string; attendees?: string }
-  | { action: "format"; format: Request["format"]; location?: string; travel?: Travel }
+  | { action: "format"; format: Request["format"]; location?: string; travel?: Travel; confirmation?: string }
   | { action: "travel"; travel: Travel }
   | { action: "attendee"; operation: "add" | "remove"; email: string }
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
@@ -55,6 +55,7 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
     input.constraints = { ...input.constraints, startTime };
   }
   if (request?.status !== "booked") return saveRequest(l, input, now, id);
+  if (input.durationMin !== request.durationMin) throw new Error("Changing a booked duration is not supported.");
   if (!sameHandle(request.handle, input.handle) || request.chatUid !== input.chatUid || (input.channel !== undefined && (request.channel ?? "text") !== input.channel)) throw new Error("offer belongs to another request");
   const format = input.format ?? request.format;
   const validated = addRequest(EMPTY, { ...input, format, location: input.location ?? request.location,
@@ -237,10 +238,12 @@ export async function calendarAction(id: string, action: CalendarAction, options
         const format = input.action === "format" ? input.format : request.format;
         input.travel = request.travel?.override && !input.travel.override && format !== "meet" && format !== "phone" ? request.travel : input.travel;
         travelFor({ format, travel: input.travel });
+        if (["offered", "booked"].includes(request.status) && isDeepStrictEqual(request.travel, input.travel)
+          && (input.action === "travel" || (request.format === input.format && (request.location ?? "") === (input.location ?? "")))) return { request, unchanged: true };
       }
       if ((input.action === "format" || input.action === "travel") && request.status === "offered") {
         patch({ ...(input.action === "format" ? { format: input.format, location: input.location ?? "" } : {}),
-          travel: input.travel });
+          travel: input.travel, ...(input.action === "format" ? { formatConfirmation: input.confirmation ? { text: input.confirmation } : null } : {}) });
         return { request: requestById(id) };
       }
       if ((input.action === "format" || input.action === "travel" || input.action === "attendee") ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(request.status === "booked" && (((input.action === "book" || input.action === "approve-time") && wasBooked) || input.action === "offer"))) throw new Error(`request is ${request.status}`);
@@ -492,6 +495,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           .filter(h => !(r.status === "booked" && r.eventId === h.holdId && r.booked?.account === h.account));
         const decision = l.requests.find(r => r.id === id)!.pendingOwner;
         return { ...r, ...(completed.input.action === "offer" && decision && "contact" in decision ? { contactApproved: true, pendingOwner: undefined } : {}),
+          ...(completed.input.action === "format" ? { formatConfirmation: completed.input.confirmation ? { text: completed.input.confirmation } : undefined } : {}),
           calendarRevision: completed.id, holdCleanup: cleanup };
       }) };
     }); } catch (error) { if (error instanceof ContactConfirmationRequired) await fail(error); throw error; }
@@ -529,6 +533,7 @@ export async function offerRequest({ requestId: selectedId, allowOverlapTitles, 
     : current.requests.find(r => r.id === selectedId);
   if (selectedId !== undefined && (!saved || !sameHandle(saved.handle, args.handle))) throw new Error("No matching selected request.");
   const durationMin = meetingDuration(args.durationMin ?? saved?.durationMin, args.meal ?? saved?.meal, config.durationMin);
+  if (saved?.status === "booked" && durationMin !== saved.durationMin) throw new Error("Changing a booked duration is not supported.");
   if (args.offered.some(slot => Date.parse(slot.end) - Date.parse(slot.start) !== durationMin * 60_000)) {
     throw new Error("Every offered interval must match the request durationMin. Set the request duration and search again.");
   }

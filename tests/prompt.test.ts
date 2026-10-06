@@ -320,7 +320,8 @@ test("owner answers apply calendar changes before clearing the question", () => 
   assert.match(question, /location, format or time/);
   assert.match(question, /calendar\.ts format/);
   assert.match(question, /Book the event.*Changes after booking/);
-  assert.match(question, /writer succeeds before calling `meetly_answer_owner` or acknowledging/);
+  assert.match(question, /writer succeeds before acknowledging/);
+  assert.match(question, /After `meetly_change_format` delivers successfully, do not call `meetly_answer_owner` again/);
   assert.match(question, /failed or unresolved write, leave the question pending/);
   registerOwnerTools({ registerTool(factory: (ctx: object) => { description: string }) {
     const description = factory({}).description;

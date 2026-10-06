@@ -17,12 +17,12 @@ flow, read `meetly-group`, look up Contacts or search open requests.
    Match the returned bookings by person, topic and conversation. If none matches
    or more than one could match, ask privately which booking and stop.
 2. Copy the matched `id` into
-   `node /opt/plow/skills/meetly/scripts/calendar.ts travel --id <id> --json '{"travel":{"beforeMin":45,"afterMin":45,"override":true}}'`.
+   `meetly_change_travel` with `requestId` and `travel: {beforeMin: 45, afterMin: 45}`.
    Use the owner's minutes; one symmetric estimate changes both sides. This preserves
    meeting start/end and duration. The override wins over later estimates for this
    meeting; a virtual format needs explicit zero.
 3. The writer sends the travel note directly to the owner DM. When it returns
-   `ownerReply.action: "silent"`, finish with exactly `NO_REPLY`: no second message,
+   `silent: true`, finish with exactly `NO_REPLY`: no second message,
    summary or acknowledgement. If `ownerNotified: false`, report only that delivery
    is unconfirmed, without retrying the write or send. On a write error, report it privately without claiming a change.
    Do not notify the guest or create an offer.
@@ -41,7 +41,11 @@ and "a quick chat". "coffee" or "lunch" with no place gets the meal travel defau
 Never guess from the topic for other meetings. An external video link stays in
 `location`, with zero travel; it is not a Google Meet link.
 
-Save their language tag as `locale`. Record answers with `calendar.ts format
+Save their language tag as `locale`. From the owner's main DM, record format/place
+answers with `meetly_change_format`, supplying `requestId`, `format`, `location`,
+explicit `travel` and a guest-facing `confirmation`. It delivers the text-group
+confirmation and private travel note; on `silent: true`, finish `NO_REPLY`.
+Follow returned guestConfirmation steps for email. For other turns, record answers with `calendar.ts format
 --id <id> --json '{"format":"<format>","location":"<place>","travel":{"beforeMin":25,"afterMin":25}}'`;
 omit location when absent. Later answers replace earlier ones. Use the tool's
 view or `request-view.ts --id <id>` before replying. Ask format/place only when

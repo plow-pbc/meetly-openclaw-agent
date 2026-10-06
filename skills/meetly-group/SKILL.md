@@ -85,6 +85,10 @@ before searching, keeping any hard conditions they did not change.
 
 1. In the current group, call `meetly_offer_owner_group` with `topic`, required `durationMin`, `travel`, `introduction: "needed"|"already_introduced"`, `meal`, `constraints`,
    `proposed`, `name` as given by the owner in this thread, `format`, `location` and `locale` as known.
+   For rescheduling an existing booking in this group, also pass its saved `requestId`.
+   Keep its booked duration; changing a booked duration is not supported.
+   For a separate meeting in an already-booked group, omit it: the tool coordinates
+   privately before calendar access. On `silent: true`, finish `NO_REPLY`.
    It resolves the guest and chat, searches within the owner's conditions and
    holds times itself using your chosen duration; never supply `offered` intervals.
    Choose the duration from the meeting context, honoring an explicit owner length.
