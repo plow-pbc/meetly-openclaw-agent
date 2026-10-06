@@ -1,0 +1,47 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Meetly email outreach · local validation</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;background:#f4f5f7;color:#202630;margin:0}main{max-width:1000px;margin:auto;padding:32px}h1{margin-bottom:8px}h2{font-size:21px}.note{color:#56606e}.summary{background:#e4f1e8;border:1px solid #b4d9c0;border-radius:12px;padding:14px 18px}.threads{display:grid;grid-template-columns:1.45fr 1fr;gap:20px}.thread{background:white;border:1px solid #dce1e6;border-radius:14px;overflow:hidden;margin:18px 0}.heading{padding:16px;background:#eaf0f8;font-weight:650}.private .heading{background:#fff2d9}.messages{padding:16px}.bubble{background:#edf1f5;border-radius:12px;padding:12px 14px;margin:0 20px 15px 0;white-space:pre-wrap;overflow-wrap:anywhere}.own{background:#e4edf9;margin:0 0 15px 20px}.sender{font-size:12px;font-weight:650;color:#4e6279;display:block;margin-bottom:6px}footer{font-size:13px;color:#596270;border-top:1px solid #ddd;margin-top:22px;padding:16px 0}@media(max-width:750px){main{padding:18px}.threads{display:block}}</style><main>
+<h1>Meetly email outreach</h1><p class="note">Offline validation · 2026-10-06 · pinned production base image<br>Recorded fixture messages with scripted model choices. No live email, Latch, or model run.</p>
+<div class="summary">Passed: 4 base-channel integration scenarios. Confirmed receipt → CC assistant booking → direct owner question. Unknown receipts stay unlinked; definite refusal releases holds.</div>
+<h2>Confirmed opener receipt</h2><div class="threads">
+<section class="thread"><div class="heading">Email · Coffee with Alex</div><div class="messages"><div class="bubble own"><span class="sender">Meetly</span>Hi Ana, I&#x27;m Meetly, Alex&#x27;s scheduling assistant. Alex would like coffee over Google Meet next week. Alex is free Mon Oct 5, Tue Oct 6, or Wed Oct 7, each at 10:00 AM UTC for 30 minutes. Which works?
+
+--
+Sent by Meetly, Alex&#x27;s AI assistant on Plow · plow.co</div>
+<div class="bubble"><span class="sender">Ana&#x27;s assistant</span>Tuesday at 10 works for Ana.</div>
+<div class="bubble own"><span class="sender">Meetly</span>Booked: Ana and Alex, Tue Oct 6 at 10:00 AM UTC, 30 minutes on Google Meet. Invitation sent. Join: https://meet.google.com/abc-defg-hij
+
+--
+Sent by Meetly, Alex&#x27;s AI assistant on Plow · plow.co</div>
+<div class="bubble"><span class="sender">Ana&#x27;s assistant</span>Should Ana bring the budget?</div>
+<div class="bubble own"><span class="sender">Meetly</span>Alex says, please bring the Q3 budget.
+
+--
+Sent by Meetly, Alex&#x27;s AI assistant on Plow · plow.co</div>
+</div></section>
+<section class="thread private"><div class="heading">Owner · request & private DM</div><div class="messages"><div class="bubble"><span class="sender">Alex</span>Email Ana about coffee next week on Google Meet.</div>
+<div class="bubble own"><span class="sender">Meetly</span>Ana asked in your coffee thread. Guest question: &quot;Should Ana bring the budget?&quot;. Reply there, or tell me what to say.</div>
+<div class="bubble"><span class="sender">Alex</span>Yes, please tell Ana to bring the Q3 budget.</div>
+</div></section>
+</div><p class="note">Booked Ana without inviting the CC assistant; two holds released; owner question sent directly once; NO_REPLY final; confirmed owner answer clears pending state.</p>
+<h2>Unknown receipt: unlinked thread refused</h2><div class="threads">
+<section class="thread"><div class="heading">Email · Coffee with Alex</div><div class="messages"><div class="bubble own"><span class="sender">Meetly</span>Hi Ana, I&#x27;m Meetly, Alex&#x27;s scheduling assistant. Alex would like coffee over Google Meet next week. Alex is free Mon Oct 5, Tue Oct 6, or Wed Oct 7, each at 10:00 AM UTC for 30 minutes. Which works?
+
+--
+Sent by Meetly, Alex&#x27;s AI assistant on Plow · plow.co</div>
+<div class="bubble"><span class="sender">Ana&#x27;s assistant</span>Tuesday at 10 works for Ana.</div>
+</div></section>
+<section class="thread private"><div class="heading">Owner · request & private DM</div><div class="messages"><div class="bubble"><span class="sender">Alex</span>Email Ana about coffee next week on Google Meet.</div>
+</div></section>
+</div><p class="note">unaffiliated thread refused; opener not repeated</p>
+<h2>Definite refusal: holds released</h2><div class="threads">
+<section class="thread"><div class="heading">Email · Coffee with Alex</div><div class="messages"></div></section>
+<section class="thread private"><div class="heading">Owner · request & private DM</div><div class="messages"><div class="bubble"><span class="sender">Alex</span>Email Ana about coffee next week on Google Meet.</div>
+</div></section>
+</div><p class="note">failed receipt drops request and releases holds</p>
+<h2>Lost transport receipt: no resend or guessed link</h2><div class="threads">
+<section class="thread"><div class="heading">Email · Coffee with Alex</div><div class="messages"><div class="bubble"><span class="sender">Ana&#x27;s assistant</span>Tuesday at 10 works for Ana.</div>
+</div></section>
+<section class="thread private"><div class="heading">Owner · request & private DM</div><div class="messages"><div class="bubble"><span class="sender">Alex</span>Email Ana about coffee next week on Google Meet.</div>
+</div></section>
+</div><p class="note">unaffiliated thread refused; opener not repeated</p>
+<footer>Real pinned base dispatch, tool policy, email sender, durable owner delivery and Meetly calendar writer. External services are fixtures. See email-outreach.md for reproduction.</footer></main></html>

@@ -22,7 +22,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `update --id X --json '<patch>'` | `{request}`; patch keys: `chatUid, name, constraints, topic, pendingOwner, locale` (`null` clears `pendingOwner`); other fields belong to their owning scripts |
 | | `expired [--hours N]` \| `asked` \| `pending` \| `booked` \| `cleanup` | `{requests}` |
 | | `delivery --id X --kind start\|answer --action begin\|complete\|clear` | `{request, delivery?}`: `begin` records the attempt before sending (a start returns `delivery.state: reserved`, `sendNow: true`; starts and answers refuse a second attempt); `complete` records success or unknown delivery; `clear` resets an unlinked start or an answer attempt, only on the owner's explicit instruction |
-| | `reminders [--lead-min N]` | `{requests}`: booked Meets whose link is due (default 10 min before, until 5 min after the start) |
+| | `reminders [--lead-min N]` | `{requests}`: booked text-thread Meets whose link is due (default 10 min before, until 5 min after the start) |
 | `event.ts` | `--in F` | `{id, status, start, end, meetUrl}` from a saved calendar event read |
 | `calendar.ts` | `offer [--id X] --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer; uses explicit, saved, meal-default or configured `durationMin` and requires matching intervals; retains an existing offer on failure; drops a failed new request while retaining cleanup |
 | | `approve-time --id X --json '{"start":"<approved time>"}'` | `{approved,request,...}`; a time approval never grants an overlap. On `TIME_APPROVAL_BUSY`, use `slots.ts --request X --near <near> --no-overlap` |
@@ -65,6 +65,10 @@ Notes:
 - Displayed pipeline times use `localeFormatter` in the owner's
   configured timezone. `--locale` chooses their language tag (default en-US).
   Raw timestamps in items and reservations are machine data, not display text.
+- A request has `channel: "text"` (the default) or `"email"`. Email requests use
+  an email `handle` and their thread's `chatUid`; participants act by thread,
+  not by matching the guest's sender handle. Email starts use the same delivery
+  attempt markers as group starts and must not retry an unknown send.
 - A booked request may have replacement `offered` times and `offeredAt`. Expiry releases only
   those replacement holds; the original event remains until a move or cancellation.
 - `pendingOwner` holds one `{contact, askedAt}`, `{question, askedAt}` or `{start, end, askedAt}`.
