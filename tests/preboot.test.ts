@@ -40,7 +40,7 @@ for (const failure of ["plugin", "config", "fresh", "existing", "name-fallback"]
       }
     });
   `);
-  writeFileSync(join(dir, "prompt.md"), "Your conversation name is {{agentName}}.");
+  writeFileSync(join(dir, "prompt.md"), "Use your configured name.");
   if (failure !== "fresh") writeFileSync(join(dir, "openclaw.json"), JSON.stringify({ agents: { defaults: { model: baseModel } } }));
   const result = spawnSync(process.execPath, ["--import", hook, new URL(preboot).pathname], {
     env: { ...process.env, PLOW_API_BASE: "http://fixture.invalid" }, encoding: "utf8", timeout: 1_000,
@@ -62,6 +62,6 @@ for (const failure of ["plugin", "config", "fresh", "existing", "name-fallback"]
       { enabled: true, hooks: { allowConversationAccess: true } });
     assert.match(result.stdout, /GATEWAY_STARTED/);
     assert.equal(result.status, 0);
-    assert.equal(readFileSync(join(dir, "workspace", "AGENTS.md"), "utf8"), `Your conversation name is "${agentName}".`);
+    assert.equal(readFileSync(join(dir, "workspace", "AGENTS.md"), "utf8"), "Use your configured name.");
   }
 });

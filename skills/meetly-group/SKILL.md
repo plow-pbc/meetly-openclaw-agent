@@ -36,9 +36,7 @@ The reader checks every calendar in the config on the Mac itself and writes `/va
 `{file, busy, degraded, unknownAfter?}`. Never run `plow-gog calendar events`
 yourself or copy a calendar listing into a file. An account in `degraded`
 could not be read: `slots.ts` reports it, and you never claim the owner is
-free there. A read-only holiday subscription is not a conflict warning:
-omit that notice on a successful write. Other unread calendars and actual
-write failures still need attention; never override a real conflict.
+free there.
 
 ## Offer times
 

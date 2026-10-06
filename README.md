@@ -39,7 +39,7 @@ said for that one request, and runs the same group.
 Meetly always speaks as your assistant, in the third person: *"Jean is free Tue
 29/9 at 12:00"*, never *"I'm free"*. It never texts from your own Messages
 account; every conversation with the other person happens in the Plow group,
-signed as Meetly.
+signed with the Plow conversation name.
 
 ## What it will and won't do
 
@@ -76,7 +76,7 @@ The first time you text the line, Meetly introduces itself in one line and
 gets to work on what you asked. It asks only what nobody else can tell it:
 your name and time zone, when your Plow profile and your Mac cannot supply
 them. Your busy calendars are read from the Mac: every calendar you show in
-Google Calendar counts, except read-only holiday subscriptions.
+Google Calendar counts.
 
 Everything else starts at these defaults:
 

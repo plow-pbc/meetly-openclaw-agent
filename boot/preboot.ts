@@ -51,8 +51,7 @@ try {
     await rm(`/var/lib/plow/workspace/${name}`, { force: true });
   }
   const prompt = await readFile("/opt/plow/prompt/AGENTS.md", "utf8");
-  const namedPrompt = prompt.replaceAll("{{agentName}}", () => JSON.stringify(identity.agent.name));
-  await writeFile("/var/lib/plow/workspace/AGENTS.md", await renderPrompt(namedPrompt, identity.mcp_url, process.env.PLOW_AGENT_TOKEN, config.channels.plow.threadTrust, identity.agent?.web_url));
+  await writeFile("/var/lib/plow/workspace/AGENTS.md", await renderPrompt(prompt, identity.mcp_url, process.env.PLOW_AGENT_TOKEN, config.channels.plow.threadTrust, identity.agent?.web_url));
 
   const JSON5 = createRequire("/opt/plow/package.json")("json5");
   let owner: Record<string, unknown>;

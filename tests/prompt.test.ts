@@ -33,7 +33,6 @@ const BASE_CONTRACT = [
 ];
 
 test("AGENTS.md renders the conversation identity and keeps the base's tool and authority contract", () => {
-  assert.ok(prompt.includes("Your conversation name is {{agentName}}"));
   for (const rule of BASE_CONTRACT) assert.ok(flat(prompt).includes(rule), `missing base rule: ${rule}`);
   // Every one of them is still in the base it came from, so a base bump that rewords one shows here.
   const base = flat(readFileSync(join(ROOT, "tests", "fixtures", "base-AGENTS.md"), "utf8"));
@@ -101,9 +100,9 @@ test("the owner's yes or no in their DM decides an asked request", () => {
 
 
 
-test("introductions use the rendered conversation name, never the owner or a generic assistant", () => {
+test("introductions use the configured conversation name, never the owner or a generic assistant", () => {
   const text = flat(prompt);
-  assert.ok(text.includes("Your conversation name is {{agentName}}, from your Plow identity."));
+  assert.ok(text.includes("Your conversation name is your configured name, from your Plow identity."));
   assert.ok(text.includes("You are not the owner, not \"a Plow assistant\""));
   assert.ok(text.includes("Never ask what you should be called."));
   assert.ok(text.includes("introduce yourself in one short line using your conversation name"));

@@ -31,8 +31,7 @@ test("preboot carries every step of the pinned base's boot", () => {
     .filter((l) => l && !l.startsWith("import ") && !l.startsWith("//") && !["try {", "}", "} catch (error) {"].includes(l));
   assert.ok(steps.length > 15, "fixture looks empty");
   for (const step of steps) {
-    const expected = changed[step] ?? step.replace("error instanceof Error ? error.message : String(error)", "message(error)")
-      .replace("renderPrompt(prompt,", "renderPrompt(namedPrompt,");
+    const expected = changed[step] ?? step.replace("error instanceof Error ? error.message : String(error)", "message(error)");
     assert.ok(preboot.includes(flat(expected)), `preboot is missing the base step: ${step}`);
   }
   for (const module of ["log", "agent-index", "config", "identity", "prompt", "process"]) {
