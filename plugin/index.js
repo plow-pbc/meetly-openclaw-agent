@@ -98,7 +98,7 @@ export default {
     registerOwnerTools(api);
     registerOwnerGroupTool(api);
     registerOwnerDmTool(api);
-    api.on("before_tool_call", (event, ctx) => { guestTurns.beforeTool(event, ctx); return calendarPolicy(event, ctx); });
+    api.on("before_tool_call", calendarPolicy);
     api.on("agent_end", guestTurns.end);
     api.on("before_prompt_build", async (_event, ctx) => {
       guestTurns.begin(ctx);

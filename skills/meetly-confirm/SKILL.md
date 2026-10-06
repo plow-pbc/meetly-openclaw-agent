@@ -27,7 +27,19 @@ group and clears the pending item only after the send succeeds. If delivery is u
 tell the owner; do not resend. Only if the owner explicitly authorizes a retry, run
 `ledger.ts delivery --id <id> --kind answer --action clear` first.
 
-- **Question (`pendingOwner.question`):** `text` is Meetly relaying the owner's answer.
+- **Exhausted search (`pendingOwner.alternatives`):** keep this decision pending until
+  the owner supplies concrete new dates or a time window; a bare yes needs clarification.
+  Read a fresh calendar and search with `slots.ts` using those explicitly authorized
+  conditions, preserving other saved conditions, excluded weekdays, meal and duration.
+  Omit `--request` for this widened search: it would intersect the old bounds again.
+  Pass each `previousStarts` value as `--exclude` so rejected times are not offered again.
+  Hold the returned times with `calendar.ts offer --id <id>`, including the revised
+  constraints and the request's other saved fields; do not update the ledger first.
+  Only after successful holds call `meetly_answer_owner` with their labels as the selection
+  question; it sends the offer once even in the same group. If no times fit or a write is
+  unresolved, leave the decision pending and tell the owner. If the owner declines,
+  call the answer tool with `declineAlternatives:true` and their refusal; retain the existing offer.
+- **Question (`pendingOwner.question`, without `alternatives`):** `text` is Meetly relaying the owner's answer.
   In the same group the answer is already visible: the tool clears silently without
   sending or acknowledging; after `silent: true`, output nothing. If the owner answers
   a different question already visible in the group, leave the unrelated pending

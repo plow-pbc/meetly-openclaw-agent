@@ -148,10 +148,10 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   if (incomplete && !slots.length) return { error: "Calendar data is incomplete for the requested dates. Availability is not yet known; the current offer is unchanged.", code: "INCOMPLETE_CALENDAR", incomplete };
   if (!slots.length) {
     const handoff = await askOwner(request, config, {
-      question: "No alternative times fit the meeting conditions. May we look on another day or widen the time window?",
+      question: "No alternative times fit the meeting conditions. What dates or time window may I offer instead?",
     }, sendOwner, "scheduling");
     return { error: "No other times are available within the owner’s conditions. The current offer is unchanged.",
-      ...handoff, code: "NO_ALTERNATIVES", conditions: request.constraints ?? {},
+      ...handoff, code: "NO_ALTERNATIVES",
       message: "ownerAskSent" in handoff && handoff.ownerAskSent
         ? `Those times don't work. I've asked ${config.ownerName} about another day or time and will get back to you here.`
         : "Those times don't work. I can't confirm another time yet.",
@@ -180,7 +180,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
     if (typeof args.question !== "string" || !args.question.trim()) return { error: "Provide a question about this meeting." };
     question = args.question.replace(/\s+/g, " ").trim();
     question = question.slice(0, OWNER_QUESTION_LIMIT);
-    pendingOwner = { question, askedAt };
+    pendingOwner = { question, askedAt, ...(purpose === "scheduling"
+      ? { alternatives: { previousStarts: request.offered.map(o => o.start) } } : {}) };
   } else {
     const checked = await check(request, config, args.start!);
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) {
@@ -210,8 +211,8 @@ async function askOwner(request: Request, config: Config, args: GuestArgs, sendO
 export async function guestAction(ctx: GuestContext, action: GuestAction, args: GuestArgs = {}, sendOwner?: SendOwner): Promise<object> {
   try {
     let request = current(readJson<Ledger>(file("ledger.json"), EMPTY), ctx);
+    if (!request) return { error: "No scheduling request matches you in this conversation." };
     const config = loadConfig();
-    if (!request) return { ownerName: config.ownerName, error: `${config.ownerName} will confirm.` };
     if (action === "view") return view(request, config);
     if (config.paused) return { error: "Scheduling is paused. The owner can resume it." };
     if (action === "format") {
