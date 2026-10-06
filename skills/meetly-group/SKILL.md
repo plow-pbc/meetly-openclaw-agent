@@ -80,8 +80,8 @@ and save it with the replacement offer. For example, "30-minute call" becomes
 
 When the owner replaces saved hard conditions in a group, pass the complete replacement
 as `constraints`; an empty object clears them. Omission preserves the saved policy.
-For a DM search, run `ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
-before searching, keeping any hard conditions they did not change.
+For a DM search without `--at`, run `ledger.ts update --id <id> --json '{"constraints":<replacement conditions>}'`
+before searching, keeping any hard conditions they did not change. Exact-time checks use the single call below.
 
 1. In the current group, call `meetly_offer_owner_group` with `topic`, required `durationMin`, `travel`, `introduction: "needed"|"already_introduced"`, `meal`, `constraints`,
    `proposed`, `name` as given by the owner in this thread, `format`, `location` and `locale` as known.
@@ -105,12 +105,13 @@ before searching, keeping any hard conditions they did not change.
    Run `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --locale <their
    locale> --duration <minutes>`, with the request's `constraints` (the owner's) and, on its
    first offer, its `proposed` times: `--days`, `--after`, `--before`, `--from`/`--to`.
-   For an exact owner-requested time, first save conditions with `ledger.ts update --id <id> --json '<patch>'`
-   (for a new request, `ledger.ts add` with `status:"asked"` and `offered:[]`), then check with
-   `--request <id> --at <requested ISO start>`; do not combine `--at` with search flags.
+   For an exact owner-requested time, run one `slots.ts` call with `--at <requested ISO start>`,
+   `--request <id>` when one exists, and the owner's conditions as `--before`, `--after`, `--days`, `--from`/`--to`.
+   For example: `slots.ts --in /var/lib/plow/meetly/tmp/busy.json --request <id> --at 2026-10-29T14:00 --before 16:00`.
+   It applies and saves those conditions itself; do not add or update a ledger request before or after this check.
    When busy, it returns ranked free alternatives on that day ±2 days, reading calendar
    coverage as needed. Present them in this same reply without asking permission to search.
-   Save its `resolvedConstraints`: the busy clock time is released; other hard conditions stay.
+   The matching busy clock pin is removed; no start pin is created. Other hard conditions stay.
    If `degraded` or `alternativesIncomplete` is present, report incomplete coverage rather than no times.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.

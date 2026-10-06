@@ -240,9 +240,9 @@ export type TimeCheck = {
 
 // Checks one exact time the other person asked for. free: clear of busy time
 // (except allowOverlap), with enough notice, and inside what was read.
-// outsideHours: not on the owner's days or not inside the window, so the
+// outsideHours: outside the owner's window or request conditions, so the
 // owner must confirm before it is held or booked.
-export function checkTime(q: TravelInput & {
+export function checkTime(q: Constraints & TravelInput & {
   now: number;
   config: Config;
   busy: Busy[];
@@ -251,7 +251,6 @@ export function checkTime(q: TravelInput & {
   coverage?: Coverage;
   durationMin?: number;
   meal?: Meal;
-  startTime?: string;
   allowOverlap?: EventRef[];
   locale?: string;
 }): TimeCheck {
@@ -263,7 +262,7 @@ export function checkTime(q: TravelInput & {
   const sameDay = s.y === e.y && s.m === e.m && s.d === e.d;
   const [windowStart, windowEnd] = windowFor(q.config, q.meal, q.startTime, meetingDuration(q.durationMin, q.meal, q.config.durationMin));
   const outsideHours = !q.config.days.includes(s.weekday) || (q.startTime === undefined && !sameDay) ||
-    s.hh * 60 + s.mm < windowStart || e.hh * 60 + e.mm > windowEnd;
+    s.hh * 60 + s.mm < windowStart || e.hh * 60 + e.mm > windowEnd || !withinConstraints(start, end, tz, q);
   const range = travelRange(start, end, q);
   let reason: TimeCheck["reason"];
   if (!covers(q.coverage, range) || (q.unknownAfter !== undefined && Date.parse(range.to) > Date.parse(q.unknownAfter))) reason = "unknown";
@@ -350,7 +349,8 @@ if (isMain(import.meta.url)) {
     if (values.before !== undefined) q.before = parseTime(values.before);
     if (values.from !== undefined) q.from = date(values.from, "--from");
     if (values.to !== undefined) q.to = date(values.to, "--to");
-    Object.assign(q, resolveSearchConstraints(q, values.week as SearchTiming["week"], now, config.timezone));
+    const requestedConditions = resolveSearchConstraints(q, values.week as SearchTiming["week"], now, config.timezone);
+    Object.assign(q, requestedConditions);
     q.asap = values.asap;
     if (values["allow-overlap"]) q.allowOverlap = values["allow-overlap"].map(value => JSON.parse(value));
     if (values.locale !== undefined) q.locale = values.locale;
@@ -373,7 +373,7 @@ if (isMain(import.meta.url)) {
     }
     if (values["no-overlap"]) q.allowOverlap = [];
     if (values.at !== undefined) {
-      for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "start-time", "week", "asap"] as const) {
+      for (const flag of ["exclude", "count", "near", "start-time", "week", "asap"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
       const start = checkTime({ ...q, travel: { beforeMin: 0, afterMin: 0 }, start: values.at }).slot.start;
@@ -382,14 +382,15 @@ if (isMain(import.meta.url)) {
       const result = checkTime({ ...q, start });
       const busy = result.reason === "busy" && !degraded.length;
       const resolvedConstraints = busy ? unpinBusyStart(resolveSearchConstraints(q, undefined, now, config.timezone), result.slot.start, config.timezone) : undefined;
-      const conditions = busy && request?.constraints ? unpinBusyStart(request.constraints, result.slot.start, config.timezone) : request?.constraints;
-      if (request && conditions !== request.constraints) updateJson<Ledger>(file("ledger.json"), { requests: [] }, latest => {
+      const mergedConditions = resolveSearchConstraints(intersectConstraints(request?.constraints, requestedConditions), undefined, now, config.timezone);
+      const conditions = busy ? unpinBusyStart(mergedConditions, result.slot.start, config.timezone) : mergedConditions;
+      if (request && JSON.stringify(conditions) !== JSON.stringify(request.constraints ?? {})) updateJson<Ledger>(file("ledger.json"), { requests: [] }, latest => {
         if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed; check its time again");
         return updateRequest(latest, request.id, { constraints: conditions }, now);
       });
       const nearby = busy ? await nearbyAlternatives(q, result.slot.start,
         request ? requestEvents(request).map(o => ({ account: o.account, id: o.holdId })) : []) : undefined;
-      const next = busy ? { reply: "Tell the owner the requested time is busy and present the returned alternatives in their ranked order in this same reply. Save resolvedConstraints on this request; do not pin the busy start or ask permission to search. If degraded or alternativesIncomplete is present, report incomplete calendar coverage instead of claiming no times exist." }
+      const next = busy ? { reply: `Tell the owner the requested time is busy and present the returned alternatives in their ranked order in this same reply. ${request ? "Conditions are already saved on this request; do not update the ledger after this check." : "Use resolvedConstraints if later creating a request; never pin the busy start."} Do not ask permission to search. If degraded or alternativesIncomplete is present, report incomplete calendar coverage instead of claiming no times exist.` }
         : result.reason === "unknown" ? { read: "Fetch busy.ts --fetch --from ISO --to ISO covering the meeting and all travel, then check again. Unread time is not free. Never use a calendar write to test availability." } : undefined;
       return { ...result, ...(busy ? { resolvedConstraints } : {}), degraded: [...degraded, ...(nearby?.degraded ?? [])],
         ...(nearby ? { alternatives: nearby.slots, ...(nearby.incomplete ? { alternativesIncomplete: nearby.incomplete } : {}) } : {}), ...(next ? { next } : {}) };

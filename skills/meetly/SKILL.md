@@ -41,7 +41,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `--in F [--in F2…] [--max 100]` | `{busy:[{start,end,id,account}], unknownAfter?, degraded}` |
 | `time.ts` | `next_week --anchor ISO` | `{from,to}` in the owner's timezone, anchored to the source message timestamp; pass weekdays separately |
 | `slots.ts` | `--in busy.json [--near <ISO or owner-zone wall time>] [--request ID] [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--days mon,thu] [--after HH:MM] [--before HH:MM] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--week this\|next] [--asap] [--start-time HH:MM] [--allow-overlap '{"account":"…","id":"…"}']… [--exclude ISO]… [--count N] [--locale TAG]` | `{slots:[{start,end,dayOfWeek,label}], durationMin, resolvedConstraints, incomplete?, unknownAfter?, degraded}` |
-| | `--in busy.json [--request ID] --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, alternatives?, resolvedConstraints?, alternativesIncomplete?, degraded, next?}` |
+| | `--in busy.json [--request ID] --at <ISO or YYYY-MM-DDTHH:MM in the owner's zone> [--before HH:MM] [--after HH:MM] [--days mon,thu] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--meal lunch\|dinner\|coffee] [--format F] [--travel JSON] [--duration N] [--allow-overlap '{"account":"…","id":"…"}']… [--locale TAG]` | `{slot, free, reason?: busy\|too-soon\|unknown, outsideHours, alternatives?, resolvedConstraints?, alternativesIncomplete?, degraded, next?}` |
 | `owner-chat.ts` | | `{chatUid}`: the owner's DM |
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
 | `pipeline.ts` | `view [--locale TAG]` | `{items, text}`: derived pending pipeline; read-only |
@@ -92,12 +92,14 @@ Notes:
   `resolvedConstraints`; never recompute the week. `--asap` ranks earliest starts
   from now while preserving minimum notice. If `incomplete` is present, fetch its
   `requiredCoverage`; missing calendar data is not "no free time".
-- For an existing request, include `--request ID` even when only checking its exact
-  time with `--at`; it preserves saved conditions and releases only that request's
-  matching busy start pin. A busy check returns ranked free alternatives on the
+- Check an exact time in one call: `slots.ts --at <start> --request ID --before 16:00`
+  (omit `--request` only when no request exists). Pass all owner conditions as
+  `--before`, `--after`, `--days`, `--from`/`--to`; no prior ledger save is needed.
+  It applies and saves the conditions on the selected request and releases only its
+  matching busy start pin. Do not update the ledger after this check. A busy check returns ranked free alternatives on the
   requested day ±2 days, fetching adequate coverage itself. Present them in the
   same reply, without asking permission to search or running another `--near` search.
-  Save `resolvedConstraints` if saving the request later; never re-pin the busy start.
+  With no request yet, use `resolvedConstraints` when later creating it; never re-pin the busy start.
   Report `degraded` or `alternativesIncomplete` instead of claiming no times exist.
 - Use each slot's `label` and `dayOfWeek` as printed; never work out a
   weekday yourself. Pass `--locale` for whoever reads the message (the other

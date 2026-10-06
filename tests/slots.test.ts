@@ -79,6 +79,23 @@ test("Kelp busy exact time returns covered nearby alternatives without its saved
   assert.ok(independent.json.alternatives.length);
   assert.ok(independent.json.alternatives.every((s: { start: string }) => s.start.slice(11, 16) === "11:30"));
   assert.equal(independent.json.resolvedConstraints.startTime, "11:30");
+  await t.test("one exact-time call applies and saves hard conditions without pinning the busy start", () => {
+    writeJson(join(home, "ledger.json"), { ...ledger, requests: ledger.requests.map(r => r.id === "kelp" ? { ...r, constraints: { startTime: "14:00" } } : r) });
+    const constrained = cli("slots.ts", [...args, "--request", "kelp", "--before", "16:00", "--after", "13:00", "--days", "thu", "--from", "2026-10-29", "--to", "2026-10-29"], env);
+    assert.equal(constrained.status, 0, constrained.stderr);
+    assert.equal(constrained.json.reason, "busy");
+    assert.equal(constrained.json.outsideHours, false);
+    assert.deepEqual(constrained.json.alternatives.map((s: { start: string }) => s.start), ["2026-10-29T14:30:00-07:00", "2026-10-29T15:00:00-07:00"]);
+    const saved = readJson<typeof ledger>(join(home, "ledger.json"), { requests: [] });
+    assert.deepEqual(saved.requests.find(r => r.id === "kelp")!.constraints, { days: ["thu"], after: "13:00", before: "16:00", from: "2026-10-29", to: "2026-10-29" });
+    assert.deepEqual(saved.requests.find(r => r.id === "other"), ledger.requests.find(r => r.id === "other"));
+    const again = cli("slots.ts", [...args, "--request", "kelp"], env);
+    assert.equal(again.status, 0, again.stderr);
+    assert.deepEqual(again.json.alternatives, constrained.json.alternatives);
+    const rejected = cli("slots.ts", [...args, "--request", "kelp", "--start-time", "14:00"], env);
+    assert.equal(rejected.status, 1);
+    assert.equal(readJson<typeof ledger>(join(home, "ledger.json"), { requests: [] }).requests.find(r => r.id === "kelp")!.constraints?.startTime, undefined);
+  });
   await t.test("a complete refetch clears the earlier truncation cutoff", () => {
     writeJson(busyFile, { busy: [busy], coverage, unknownAfter: "2026-10-29T22:00:00Z", degraded: [] });
     const refreshed = cli("slots.ts", args, env);
@@ -110,6 +127,14 @@ test("Kelp busy exact time returns covered nearby alternatives without its saved
   const truncated = cli("slots.ts", args, { ...env, CALENDAR_FIXTURE_TRUNCATED: "1" });
   assert.deepEqual(truncated.json.alternatives, []);
   assert.equal(truncated.json.alternativesIncomplete.reason, "truncated-calendar");
+});
+
+test("exact-time checks report every hard-condition boundary", () => {
+  const start = "2026-09-28T10:00:00-03:00";
+  for (const conditions of [{ before: "10:29" }, { after: "10:01" }, { days: ["tue"] }, { from: "2026-09-29" }, { to: "2026-09-27" }]) {
+    assert.equal(checkTime({ ...q(conditions), start }).outsideHours, true, JSON.stringify(conditions));
+  }
+  assert.equal(checkTime({ ...q({ days: ["mon"], after: "10:00", before: "10:30", from: "2026-09-28", to: "2026-09-28" }), start }).outsideHours, false);
 });
 
 test("no busy: spread over the first days, after the minimum notice", () => {
@@ -227,7 +252,9 @@ test("the CLI reads busy.ts output and the stored config", () => {
     outsideHours: true,
     degraded: ["other@example.com"],
   });
-  assert.equal(cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--at", "2026-10-03T10:00:00-03:00", "--days", "sat"], env).status, 1);
+  const saturday = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now, "--at", "2026-10-03T10:00:00-03:00", "--days", "sat"], env);
+  assert.equal(saturday.status, 0, saturday.stderr);
+  assert.equal(saturday.json.outsideHours, true);
   assert.equal(cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--owner"], env).status, 1);
   const authorizedFile = join(home, "authorized-busy.json");
   writeJson(authorizedFile, { coverage, busy: [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly", account: "jean@example.com" }], allowOverlap: [{ account: "jean@example.com", id: "weekly" }] });
