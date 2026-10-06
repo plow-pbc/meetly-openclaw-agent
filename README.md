@@ -277,7 +277,7 @@ npm test            # node --test
 ```
 
 Node 24.16 or newer. The OpenClaw runtime (`2026.9.6`) comes from the base
-image, pinned by digest (`8c2b2320` in `Dockerfile`, base commit `9ba2473`).
+image, pinned by digest (`5b0ebf5e` in `Dockerfile`, base commit `ddbaa6b`).
 
 ### Bumping the base image
 
