@@ -14,7 +14,7 @@ import { requestEvents, intersectConstraints, meetingDuration, requireDuration, 
 import { file } from "./paths.ts";
 import { readJson, updateJson, writeJson } from "./store.ts";
 import { LAST_BUSY, unpinBusyStart, type LastBusy } from "./last-busy.ts";
-import { addDays, DAYS, localIso, nextWeek, wallParts, zonedToUtc, type Day } from "./time.ts";
+import { addDays, DAYS, localIso, nextWeek, parseStart, wallParts, zonedToUtc, type Day } from "./time.ts";
 
 export type Slot = { start: string; end: string; dayOfWeek: Day; label: string };
 
@@ -261,12 +261,7 @@ export function checkTime(q: TravelInput & {
   locale?: string;
 }): TimeCheck {
   const tz = q.config.timezone;
-  // A wall time with no offset (2026-10-03T10:00) is the owner's clock.
-  const wall = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(q.start);
-  const start = wall
-    ? zonedToUtc(Number(wall[1]), Number(wall[2]), Number(wall[3]), Number(wall[4]), Number(wall[5]), tz) + Number(wall[6] ?? 0) * 1000
-    : Date.parse(q.start);
-  if (Number.isNaN(start)) throw new Error(`not a time: ${q.start}`);
+  const start = parseStart(q.start, tz);
   const end = start + meetingDuration(q.durationMin, q.meal, q.config.durationMin) * 60_000;
   const s = wallParts(start, tz);
   const e = wallParts(end, tz);

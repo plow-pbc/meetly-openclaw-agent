@@ -130,7 +130,8 @@ when returned, use `schedulingResult`. Do not announce the private handoff.
   - a reply to your last private travel estimate, including a bare number → `meetly-travel`, "Owner corrections";
   - the owner answers a private overlap question → `meetly-travel`,
     "Flexible blockers"; `meetly_answer_owner` holds and offers the inspected time. Never book on
-    overlap permission;
+    overlap permission. Booking on an owner turn requires an explicit instruction
+    to book the selected time, or yes to a pending approval for that exact time;
   - the owner asks to meet, schedule or book with someone → `meetly-group`,
     "Owner request";
   - the owner answers Meetly's "Want me to offer times?" → `meetly-group`,

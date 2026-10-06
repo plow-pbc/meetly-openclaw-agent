@@ -9,7 +9,7 @@ import { fetchBusy } from "../skills/meetly/scripts/busy.ts";
 import { record, finish } from "../skills/meetly/scripts/record-setup.ts";
 import { status } from "../skills/meetly/scripts/setup-status.ts";
 import { view } from "../skills/meetly/scripts/request-view.ts";
-import { addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
+import { addRequest, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { calendarEvent, tmpHome } from "./helpers.ts";
 import type { OwnerContext } from "../skills/meetly/scripts/owner-turn.ts";
@@ -190,4 +190,30 @@ test("private inspection unwraps the canonical calendar title", async t => {
   f.set({ events: [{ ...event(), summary: '<<<EXTERNAL_UNTRUSTED_CONTENT id="wrap">>>\nSource: google_api\n---\nFocus block\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="wrap">>>' }] });
   const result = await movableAction(owner, inspect, f.options);
   assert.equal(result.candidates![0]!.title, "Focus block");
+});
+
+test("cached busy inspection is fresh, request-scoped and read-only until a linked decision is saved", async t => {
+  const f = fixture(t), now = Date.now();
+  const cache = join(f.home, "tmp", "last-busy.json");
+  writeJson(cache, { slot, format: inspect.format, travel: inspect.travel, checkedAt: new Date(now).toISOString() });
+  const readOnly = await movableAction(owner, { action: "inspect", ask: false }, f.options);
+  assert.equal(readOnly.candidates?.[0]?.title, "Focus block");
+  assert.equal(readOnly.askedAt, undefined);
+  assert.equal(existsSync(join(f.home, "ledger.json")), false);
+  let ledger = addRequest({ requests: [] }, { origin: "owner", status: "asked", handle: "+15550002222", topic: "Lunch", durationMin: 60,
+    format: inspect.format, travel: inspect.travel!, offered: [] }, now, "r");
+  ledger = updateRequest(ledger, "r", { chatUid: "guest-chat" }, now);
+  writeJson(join(f.home, "ledger.json"), ledger);
+  const asked = await movableAction(owner, { action: "inspect", requestId: "r" }, f.options);
+  assert.equal(asked.requestId, "r");
+  assert.ok(asked.askedAt);
+  const saved = readJson<Ledger>(join(f.home, "ledger.json"), { requests: [] }).requests[0]!;
+  assert.deepEqual(saved.offered, []);
+  assert.ok(saved.pendingOwner && "question" in saved.pendingOwner && saved.pendingOwner.overlap);
+  assert.deepEqual(saved.pendingOwner.overlap.choices[0]!.event, { account, id: "focus" });
+  assert.deepEqual(saved.pendingOwner.overlap.travel, inspect.travel);
+  writeJson(cache, { slot, requestId: "other-request", format: inspect.format, travel: inspect.travel, checkedAt: new Date(now).toISOString() });
+  assert.ok("error" in await movableAction(owner, { action: "inspect", requestId: "r", ask: false }, f.options));
+  writeJson(cache, { slot, format: inspect.format, travel: inspect.travel, checkedAt: new Date(now - 31 * 60_000).toISOString() });
+  assert.ok("error" in await movableAction(owner, { action: "inspect" }, f.options));
 });

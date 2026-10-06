@@ -536,8 +536,6 @@ const kelp = (over: Partial<SlotQuery> = {}): SlotQuery => ({ travel: { beforeMi
 test("a busy exact time's alternatives come from that day and nearby days, reading the calendar the caller did not", async () => {
   const reads: { from: string; to: string }[] = [];
   const read = async (range: { from: string; to: string }) => { reads.push(range); return { busy: [kelpBusy], coverage: range, degraded: [] }; };
-  const { nearbyAlternatives } = await import("../skills/meetly/scripts/slots.ts");
-  assert.equal(typeof nearbyAlternatives, "function");
   const alternatives = await nearbyAlternatives(kelp({ startTime: "14:00" }), "2026-10-29T14:00:00-07:00", [], read);
   assert.equal(reads.length, 1);
   assert.ok(reads[0]!.from <= "2026-10-27T07:00:00.000Z" && reads[0]!.to >= "2026-11-01T07:00:00.000Z", JSON.stringify(reads[0]));
@@ -564,4 +562,28 @@ test("an exact time found busy is never saved as the request's start, and a save
   assert.deepEqual(later.json.request.constraints, { from: "2026-10-29", to: "2026-10-29" });
   const free = cli("ledger.ts", ["add", "--json", JSON.stringify({ ...base, handle: "+15550116005", constraints: { startTime: "11:30", from: "2026-10-29", to: "2026-10-29" } })], env);
   assert.equal(free.json.request.constraints.startTime, "11:30", "an approved free time stays a hard start");
+});
+
+test("exact starts preserve fractional owner-zone times", () => {
+  const checked = checkTime({ ...q(), start: "2026-10-05T10:00:01.25" });
+  assert.equal(checked.slot.start, "2026-10-05T10:00:01.250-03:00");
+  assert.equal(Date.parse(checked.slot.start), Date.parse("2026-10-05T13:00:01.250Z"));
+  assert.equal(Date.parse(checked.slot.end) - Date.parse(checked.slot.start), q().config.durationMin * 60_000);
+});
+
+test("nearby alternatives preserve hard conditions, reject cached grants and report incomplete coverage", async () => {
+  const start = "2026-10-29T14:00:00-07:00";
+  const reads: { from: string; to: string }[] = [];
+  const read = async (range: { from: string; to: string }) => { reads.push(range); return { busy: [kelpBusy], coverage: range, degraded: [] }; };
+  const result = await nearbyAlternatives(kelp({ from: "2026-10-29", to: "2026-10-29", after: "14:00", before: "16:00",
+    allowOverlap: [{ account: kelpBusy.account, id: kelpBusy.id }] }), start, [], read);
+  assert.equal(reads.length, 1);
+  assert.ok(result.slots.length);
+  assert.ok(result.slots.every(slot => slot.start.startsWith("2026-10-29") && slot.start.slice(11, 16) >= "14:30" && slot.end.slice(11, 16) <= "16:00"));
+  const pinned = await nearbyAlternatives(kelp({ startTime: "11:30" }), start, [], read);
+  assert.ok(pinned.slots.length);
+  assert.ok(pinned.slots.every(slot => slot.start.slice(11, 16) === "11:30"), "an unrelated hard clock time remains binding");
+  const truncated = await nearbyAlternatives(kelp(), start, [], async range => ({ busy: [kelpBusy], coverage: range, degraded: [], unknownAfter: "2026-10-27T07:00:00Z" }));
+  assert.deepEqual(truncated.slots, []);
+  assert.equal(truncated.incomplete?.reason, "truncated-calendar");
 });
