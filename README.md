@@ -235,6 +235,9 @@ Existing model settings in the state volume are left unchanged.
 - One person per request.
 - Groups require a phone number; Meetly asks you for one before reading the
   calendar or creating holds if only an email is known.
+- Ask Meetly to add an attendee to a booked event. It updates the same event and
+  sends updates to guests without changing the meeting time or replacing existing
+  attendees. To remove a guest, use your calendar app; Meetly cannot remove them.
 - Ask Meetly to cancel a booked meeting; it deletes the event and notifies invitees.
   Guests can hold replacement times while the current booking stays intact;
   a later guest choice moves the existing event.
