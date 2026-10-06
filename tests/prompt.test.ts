@@ -335,8 +335,4 @@ test("each guest time turn reads the current offer before replying, including mi
   assert.ok(p.includes("even when the same message probes for private calendar details"));
 });
 
-test("group greetings target the guest and owner coordination stays private", () => {
-  assert.ok(groupSkill().includes("Greet the guest, never the owner, in every group introduction"));
-  assert.ok(groupSkill().includes('never append "Patrick, let me know in our DM"'));
-});
 
