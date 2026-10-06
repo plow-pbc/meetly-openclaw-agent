@@ -5,7 +5,8 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-for (const failure of ["plugin", "config", "fresh", "existing"]) test(`boot preserves base model defaults and requires plugin activation (${failure})`, t => {
+for (const failure of ["plugin", "config", "fresh", "existing", "name-fallback"]) test(`boot renders identity, preserves base model defaults and requires plugin activation (${failure})`, t => {
+  const agentName = failure === "name-fallback" ? "Rowan" : "Alder";
   const baseModel = { primary: "plow/z-ai/glm-5.2", fallbacks: ["plow/anthropic/claude-sonnet-5"] };
   const marker = `${failure.toUpperCase()}_FAILED`;
   const dir = mkdtempSync(join(tmpdir(), "meetly-boot-"));
@@ -18,9 +19,9 @@ for (const failure of ["plugin", "config", "fresh", "existing"]) test(`boot pres
     const fakeBase = 'data:text/javascript,' + encodeURIComponent(\`
       export const installBootLog = () => () => {};
       export const startAgentIndex = () => {};
-      export const renderConfig = identity => { return {agents:{defaults:{model:${JSON.stringify(baseModel)}}},tools:{alsoAllow:[]},channels:{plow:{threadTrust:'untrusted'}}}; };
+      export const renderConfig = identity => { if (identity.agent.name !== ${JSON.stringify(agentName)}) throw new Error('wrong conversation name'); return {agents:{defaults:{model:${JSON.stringify(baseModel)}}},tools:{alsoAllow:[]},channels:{plow:{threadTrust:'untrusted'}}}; };
       export const syncConfig = async () => {};
-      export const identityFromApi = async () => ({line:{uid:'fixture'}});
+      export const identityFromApi = async () => (${JSON.stringify(failure === 'name-fallback' ? {agent:{name:'Rowan'},line:{uid:'fixture'}} : {agent:{name:'plow-agent'},line:{uid:'fixture',display_name:'Alder'}})});
       export const renderPrompt = async prompt => prompt;
       export const startGateway = async () => { console.log('GATEWAY_STARTED'); };
     \`);
@@ -39,7 +40,7 @@ for (const failure of ["plugin", "config", "fresh", "existing"]) test(`boot pres
       }
     });
   `);
-  writeFileSync(join(dir, "prompt.md"), "fixture");
+  writeFileSync(join(dir, "prompt.md"), "Use your configured name.");
   if (failure !== "fresh") writeFileSync(join(dir, "openclaw.json"), JSON.stringify({ agents: { defaults: { model: baseModel } } }));
   const result = spawnSync(process.execPath, ["--import", hook, new URL(preboot).pathname], {
     env: { ...process.env, PLOW_API_BASE: "http://fixture.invalid" }, encoding: "utf8", timeout: 1_000,
@@ -61,5 +62,6 @@ for (const failure of ["plugin", "config", "fresh", "existing"]) test(`boot pres
       { enabled: true, hooks: { allowConversationAccess: true } });
     assert.match(result.stdout, /GATEWAY_STARTED/);
     assert.equal(result.status, 0);
+    assert.equal(readFileSync(join(dir, "workspace", "AGENTS.md"), "utf8"), "Use your configured name.");
   }
 });

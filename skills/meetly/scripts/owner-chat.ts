@@ -58,7 +58,9 @@ export function findOwnerChat(identity: Identity): string | null {
 export async function ownerDisplayName(opts: ApiOptions = {}): Promise<string | undefined> {
   const dm = findOwnerDm(await fetchIdentity(plowApi(opts)));
   const owner = dm?.participants?.find((p) => p.type === "member" && p.role === "owner");
-  return owner?.display_name?.trim() || undefined;
+  const name = owner?.display_name?.trim();
+  // Plow uses the phone number as a display-name fallback for an unnamed profile.
+  return name && !/^\+?[\d\s().-]+$/.test(name) ? name : undefined;
 }
 
 export async function ownerChat(opts: ApiOptions = {}): Promise<{ chatUid: string }> {
