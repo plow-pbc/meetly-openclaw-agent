@@ -9,12 +9,13 @@ export function registerOwnerChangeTools(api, execute = run, outbound) {
     api.registerTool(context => ({
       name: `meetly_change_${action}`, label: `Change meeting ${action}`,
       description: "Owner main DM only. Read the current meeting first. Applies the existing calendar writer, then delivers the private travel note once. "
-        + (action === "format" ? "Delivers confirmation once to the saved guest group and resolves its pending question after delivery. Supply a guest-facing confirmation with no private travel details or invitation promises. An identical format/place/travel without a pending question stays silent. For email, complete returned guestConfirmation steps before acknowledging delivery. " : "Records the owner's explicit travel correction without telling the guest. ")
+        + (action === "format" ? "Delivers confirmation once to the saved guest group and resolves its pending question after delivery. Supply a guest-facing confirmation with no private travel details or invitation promises. An identical format/place/travel without a pending question stays silent. For email without a pending question, after confirmed sent:true call this tool with the same fields, emailSent:true and returned confirmationAttemptedAt. For an ordinary pending question, complete its meetly_answer_owner receipt. Never confirm or resend unknown delivery. " : "Records the owner's explicit travel correction without telling the guest. ")
         + "When silent is true, finish NO_REPLY; do not send a duplicate owner DM. On uncertain delivery report privately without repeating the change or send. effectiveTravel is private.",
       parameters: { type: "object", additionalProperties: false, required, properties: {
         requestId: { type: "string" }, travel,
         ...(action === "format" ? { format: { type: "string", enum: ["meet", "phone", "in_person", "unknown"] },
-          location: { type: "string" }, confirmation: { type: "string", minLength: 1 } } : {}),
+          location: { type: "string" }, confirmation: { type: "string", minLength: 1 },
+          emailSent: { type: "boolean" }, confirmationAttemptedAt: { type: "string" } } : {}),
       } },
       async execute(_id, args) {
         const result = await execute(context, { ...cleanArgs(args, required), action },

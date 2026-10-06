@@ -2352,20 +2352,22 @@ test("separate meeting in a booked group coordinates privately before calendar a
  const notices:string[]=[]; const result=await offerOwnerGroup({...context,senderIsOwner:true,sessionKey:"agent:main:plow:group:chat-one"},{topic:"Another call",durationMin:30,travel:{beforeMin:0,afterMin:0}},async text=>{notices.push(text);}) as any;
  assert.equal(result.code,"SEPARATE_MEETING_REQUIRED"); assert.equal(result.silent,true); assert.equal(notices.length,1); assert.deepEqual(f.commands,[]); assert.deepEqual(f.read().requests,[before]);
 });
-for (const durationMin of [30, 60]) test(`selected booked group contact handoff keeps selection and refuses duration ${durationMin}`, async t => {
+for (const blocked of [false, true]) for (const durationMin of [30, 60]) test(`selected booked group: blocked=${blocked}, duration=${durationMin}`, async t => {
   const f = fixture(t);
   await f.act(context, "pick", { start: offers[0]!.start });
-  contactPreference({ handle: f.request().handle, blocked: true });
+  if (blocked) contactPreference({ handle: f.request().handle, blocked: true });
   const before = f.read(), notices: string[] = [];
   f.commands.length = 0;
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { requestId: "request-one", topic: "Lunch", durationMin, travel: { beforeMin: 0, afterMin: 0 } }, async text => { notices.push(text); }) as any;
-  assert.deepEqual(f.commands, []);
+    { requestId: "request-one", topic: "Lunch", durationMin, travel: { beforeMin: 0, afterMin: 0 },
+      proposed: { from: "2026-10-05", to: "2026-10-05", after: "10:00", before: "10:30" } }, async text => { notices.push(text); }) as any;
   if (durationMin === 60) {
     assert.ok(result.error);
+    assert.deepEqual(f.commands, []);
     assert.deepEqual(f.read(), before);
     assert.deepEqual(notices, []);
-  } else {
+  } else if (blocked) {
+    assert.deepEqual(f.commands, []);
     assert.equal(result.code, "OWNER_CONFIRMATION_REQUIRED", JSON.stringify(result));
     assert.equal(result.silent, true);
     assert.equal(notices.length, 1);
@@ -2379,15 +2381,15 @@ for (const durationMin of [30, 60]) test(`selected booked group contact handoff 
     assert.equal(confirmed.request.bookedReplacement, true);
     assert.deepEqual(confirmed.request.booked, before.requests[0]!.booked);
     assert.equal(confirmed.request.pendingOwner, undefined);
+  } else {
+    assert.equal(result.error, undefined, JSON.stringify(result));
+    assert.deepEqual(notices, []);
+    assert.equal(f.read().requests.length, 1);
+    assert.equal(f.request().id, "request-one");
+    assert.equal(f.request().bookedReplacement, true);
+    assert.deepEqual(f.request().booked, before.requests[0]!.booked);
+    assert.ok(f.request().offered.some(slot => Date.parse(slot.start) === Date.parse(offers[0]!.start)), "the request's own booked slot remains available for replacement");
+    assert.ok(f.commands.every(c => c[2] !== "update" && c[2] !== "delete"));
   }
   t.diagnostic(JSON.stringify({ code: result.code, rejected: !!result.error, notices: notices.length, selected: f.request().id }));
-});
-
-test("a selected booked duration change stops before searching the calendar", async t => {
-  const f = fixture(t);
-  await f.act(context, "pick", { start: offers[0]!.start });
-  f.commands.length = 0; const before = f.read();
-  const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { requestId: "request-one", topic: "Lunch", durationMin: 60, travel: { beforeMin: 0, afterMin: 0 } }) as any;
-  assert.ok(result.error); assert.deepEqual(f.commands, []); assert.deepEqual(f.read(), before);
 });

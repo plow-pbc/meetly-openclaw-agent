@@ -20,6 +20,11 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
   if (!Number.isInteger(args.durationMin) || args.durationMin <= 0) {
     return { error: "Set durationMin to your chosen positive whole number of minutes when saving this request." };
   }
+  const notifyOwner = async (text: string) => {
+    if (!sendOwner) return false;
+    try { await sendOwner(text); return true; }
+    catch { return false; }
+  };
   try {
     const api = plowApi();
     const response = await api.fetch(`${api.base}/v1/chats/${encodeURIComponent(chat)}`, {
@@ -45,17 +50,11 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
     name = args.name?.trim() || name;
     const ledger = readJson<Ledger>(file("ledger.json"), { requests: [] });
     if (args.requestId === undefined && ledger.requests.some(r => r.status === "booked" && r.chatUid === chat)) {
-      let ownerAskSent = false;
-      try {
-        if (sendOwner) {
-          await sendOwner(`You asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Guest: ${JSON.stringify(name ?? handle)}.`
+      const ownerAskSent = await notifyOwner(`You asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Guest: ${JSON.stringify(name ?? handle)}.`
             + ` Conditions: ${JSON.stringify(args.constraints ?? {})}. Preferences: ${JSON.stringify(args.proposed ?? {})}.`
             + (args.week ? ` Week: ${args.week}.` : "") + (args.asap ? " As soon as possible." : "")
             + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")
             + " This group already has a booked meeting, which stays unchanged. Shall I arrange the separate meeting in a new conversation?");
-          ownerAskSent = true;
-        }
-      } catch { /* Unknown delivery must not trigger another send. */ }
       return { code: "SEPARATE_MEETING_REQUIRED", silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
     }
     const existing = args.requestId === undefined ? findOpenByHandle(ledger, handle)
@@ -102,19 +101,11 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
           value?.days?.length && `on ${value.days.join(", ")}`, value?.after && `after ${value.after}`, value?.before && `before ${value.before}`].filter(Boolean);
         return parts.length ? ` ${label}: ${parts.join("; ")} (${loadConfig().timezone}).` : "";
       };
-      let ownerAskSent = false;
-      try {
-        if (sendOwner) {
-          await sendOwner(`Request ${id}: you asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Name: ${JSON.stringify(name ?? handle)}. Handle: ${JSON.stringify(handle)}.`
+      const ownerAskSent = await notifyOwner(`Request ${id}: you asked in your group for ${args.durationMin} minutes. Topic: ${JSON.stringify(args.topic)}. Name: ${JSON.stringify(name ?? handle)}. Handle: ${JSON.stringify(handle)}.`
             + dates("Required dates/times", args.constraints) + dates("Preferred dates/times", args.proposed)
             + (args.location ? ` Place: ${JSON.stringify(args.location)}.` : "")
             + (args.format ? ` Format: ${args.format}.` : "")
             + " You previously marked this person do not contact. Please confirm here in our private DM if you want to schedule this meeting. Your preference stays in place unless you ask to clear it.");
-          ownerAskSent = true;
-        }
-      } catch {
-        // An uncertain delivery is never retried or explained in the group.
-      }
       return { code: "OWNER_CONFIRMATION_REQUIRED", silent: true, ownerAskSent, recovery: { action: "silent", retry: false } };
     }
     const search = { travel, format: format ?? existing?.format, ...constraints, now, config, meal, durationMin, locale, asap: args.asap, busy: [] };

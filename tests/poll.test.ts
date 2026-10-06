@@ -227,3 +227,16 @@ test("batch consumption hides queued work while paused or not ready and preserve
   writeJson(configPath, ready);
   assert.deepEqual(read(), { batch });
 });
+
+for (const state of ["unattempted", "attempted", "delivered", "email"] as const) test(`format confirmation without a calendar journal wakes only safe text delivery: ${state}`, async () => {
+  const f = fixture();
+  writeJson(join(f.home, "ledger.json"), { requests: [{ id: "format", status: "booked", origin: "owner", handle: "+15550001111", topic: "Call", durationMin: 30,
+    travel: { beforeMin: 0, afterMin: 0 }, offered: [], format: "phone", createdAt: new Date(T0).toISOString(), updatedAt: new Date(T0).toISOString(),
+    booked: { start: "2026-10-06T10:00:00Z", end: "2026-10-06T10:30:00Z", account: "owner@example.com" },
+    channel: state === "email" ? "email" : "text", formatConfirmation: { text: "Alex will call you.",
+      ...(state !== "unattempted" && state !== "email" ? { attemptedAt: new Date(T0).toISOString() } : {}),
+      ...(state === "delivered" ? { delivered: true } : {}) } }] });
+  const result = await f.run();
+  assert.equal(result.woke, state === "unattempted");
+  if (state === "unattempted") assert.deepEqual(f.batch()!.reasons, ["calendar-writes"]);
+});

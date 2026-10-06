@@ -1,13 +1,13 @@
 import { answerOwner } from "./answer-owner.ts";
 import { calendarAction, type CalendarOptions } from "./calendar.ts";
-import { calendarOutput, sendOwnerTravel } from "./calendar-output.ts";
+import { calendarOutput, sendOwnerTravel, sendChatMessage } from "./calendar-output.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
 import { checkTravel, type Travel } from "./travel.ts";
 import { file } from "./paths.ts";
-import { updateJson } from "./store.ts";
+import { readJson, updateJson } from "./store.ts";
 import type { Ledger, Request } from "./ledger.ts";
 
-type Args = { requestId: string; action: "format" | "travel"; travel: Travel; format?: Request["format"]; location?: string; confirmation?: string };
+type Args = { requestId: string; action: "format" | "travel"; travel: Travel; format?: Request["format"]; location?: string; confirmation?: string; emailSent?: boolean; confirmationAttemptedAt?: string };
 
 // Keep delivery attached to the calendar result: the private travel note and
 // guest confirmation each have one destination and cannot become an owner final.
@@ -16,6 +16,17 @@ export async function changeOwnerMeeting(ctx: OwnerContext, args: Args,
   options: CalendarOptions = {}): Promise<Record<string, unknown>> {
   if (!resolveOwnerChat(ctx) || ctx.sessionKey !== "agent:main:main") return { error: "Change meeting details from the owner's main DM." };
   try {
+    if (args.emailSent === true) {
+      const saved = updateJson<Ledger>(file("ledger.json"), { requests: [] }, l => ({ ...l, requests: l.requests.map(r => {
+        if (r.id !== args.requestId) return r;
+        const confirmation = r.formatConfirmation;
+        if (args.action !== "format" || r.channel !== "email" || !confirmation?.attemptedAt
+          || confirmation.attemptedAt !== args.confirmationAttemptedAt || confirmation.text !== args.confirmation?.trim()) throw new Error("No matching email confirmation attempt.");
+        return { ...r, formatConfirmation: { ...confirmation, delivered: true } };
+      }) })).requests.find(r => r.id === args.requestId);
+      if (!saved) throw new Error("No matching email confirmation attempt.");
+      return { effectiveTravel: saved.travel, guestConfirmation: { delivered: true }, silent: true };
+    }
     checkTravel(args.travel);
     if (!args.requestId || !["format", "travel"].includes(args.action)) throw new Error("Provide the request and change action.");
     if (args.action === "format") {
@@ -30,34 +41,52 @@ export async function changeOwnerMeeting(ctx: OwnerContext, args: Args,
       : { action: "format", format: args.format, location: args.location, travel, confirmation: args.confirmation!.trim() }, options);
     const request = result.request;
     const unchanged = "unchanged" in result && result.unchanged === true;
-    const confirmation = args.action === "format" && !(request.formatConfirmation?.delivered && request.pendingOwner)
-      ? request.formatConfirmation : undefined;
-    if (unchanged && !request.pendingOwner && (args.action === "travel" || confirmation?.delivered || !confirmation)) return { unchanged: true, silent: true, effectiveTravel: request.travel };
-    if (confirmation?.attemptedAt) throw new Error("Guest delivery is unconfirmed. Do not repeat the change or send.");
+    const question = request.pendingOwner && "question" in request.pendingOwner && !request.pendingOwner.alternatives;
+    if (unchanged && !question && (args.action === "travel" || request.formatConfirmation?.delivered || !request.formatConfirmation)) return { unchanged: true, silent: true, effectiveTravel: request.travel };
     const output = await calendarOutput(result, sendOwner);
     if (args.action === "travel") return { ...output, effectiveTravel: request.travel, silent: output.ownerNotified === true || unchanged };
-    const text = confirmation?.text ?? args.confirmation!;
-    if (confirmation) updateJson<Ledger>(file("ledger.json"), { requests: [] }, l => ({ ...l, requests: l.requests.map(r => {
-      if (r.id !== request.id) return r;
-      if (r.calendarRevision !== request.calendarRevision || r.formatConfirmation?.text !== text || r.formatConfirmation.attemptedAt) throw new Error("Meeting or delivery changed. Read it before trying again.");
-      return { ...r, formatConfirmation: { ...r.formatConfirmation, attemptedAt: new Date().toISOString() } };
-    }) }));
-    if (request.pendingOwner) {
-      const answer = await answerOwner(ctx, { requestId: request.id, askedAt: request.pendingOwner.askedAt,
-        text, outcome: "calendar_change" }, sendGuest);
-      if ("email" in answer && !("error" in answer)) return { ...output, effectiveTravel: request.travel, guestConfirmation: answer, silent: output.ownerNotified === true };
-      if (!("answered" in answer) || !answer.answered) return { ...output, error: "The meeting was updated, but guest delivery is unconfirmed. Do not repeat the change or send.", guestConfirmation: { delivered: false } };
-    } else if (request.channel === "email") {
-      return { ...output, effectiveTravel: request.travel, guestConfirmation: { delivered: false, tool: "plow_send_email", to: request.chatUid, body: text }, silent: output.ownerNotified === true };
-    } else {
-      if (!request.chatUid) throw new Error("The meeting was updated, but no guest conversation is linked.");
-      try { await sendGuest(request.chatUid, text); }
-      catch { return { ...output, error: "The meeting was updated, but guest delivery is unconfirmed. Do not repeat the change or send.", guestConfirmation: { delivered: false } }; }
-    }
-    if (confirmation) updateJson<Ledger>(file("ledger.json"), { requests: [] }, l => ({ ...l, requests: l.requests.map(r =>
-      r.id === request.id && r.calendarRevision === request.calendarRevision ? { ...r, formatConfirmation: { ...r.formatConfirmation!, delivered: true } } : r) }));
-    return { ...output, effectiveTravel: request.travel, guestConfirmation: { delivered: true }, silent: output.ownerNotified !== false };
+    let delivery: Record<string, unknown>;
+    if (unchanged && question && (!request.formatConfirmation || request.formatConfirmation.delivered)) {
+      const answer = await answerOwner(ctx, { requestId: request.id, askedAt: request.pendingOwner!.askedAt,
+        text: args.confirmation, outcome: "calendar_change" }, sendGuest);
+      delivery = "answered" in answer && answer.answered ? { guestConfirmation: { delivered: true } }
+        : "email" in answer ? { guestConfirmation: answer } : { ...answer, guestConfirmation: { delivered: false } };
+    } else delivery = await deliverFormatConfirmation(request, sendGuest);
+    return { ...output, effectiveTravel: request.travel, ...delivery,
+      ...("error" in delivery ? {} : { silent: request.channel === "email" ? output.ownerNotified === true : output.ownerNotified !== false }) };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "The meeting change could not be completed." };
+  }
+}
+
+
+export async function deliverFormatConfirmation(request: Request, sendGuest = sendChatMessage): Promise<Record<string, unknown>> {
+  try {
+    const confirmation = request.formatConfirmation;
+    if (!confirmation || confirmation.delivered) return { unchanged: true };
+    const text = confirmation.text;
+    const question = request.pendingOwner && "question" in request.pendingOwner && !request.pendingOwner.alternatives;
+    request = updateJson<Ledger>(file("ledger.json"), { requests: [] }, l => ({ ...l, requests: l.requests.map(r => {
+      if (r.id !== request.id) return r;
+      if (r.calendarRevision !== request.calendarRevision || r.formatConfirmation?.text !== text || r.formatConfirmation.attemptedAt
+        || (question && (JSON.stringify(r.pendingOwner) !== JSON.stringify(request.pendingOwner) || r.pendingOwner?.answerAttemptedAt))) throw new Error("Meeting or delivery changed. Do not repeat the send.");
+      const attemptedAt = new Date().toISOString();
+      return { ...r, formatConfirmation: { ...r.formatConfirmation, attemptedAt },
+        ...(question ? { pendingOwner: { ...r.pendingOwner!, answerAttemptedAt: attemptedAt } } : {}) };
+    }) })).requests.find(r => r.id === request.id)!;
+    if (!request.chatUid) throw new Error("The meeting was updated, but no guest conversation is linked.");
+    if (request.channel === "email") return { guestConfirmation: question ? {
+      email: { to: request.chatUid, body: text }, requestId: request.id, askedAt: request.pendingOwner!.askedAt,
+      message: "After plow_send_email confirms sent:true, call meetly_answer_owner with outcome:calendar_change, this text and emailSent:true. Do not resend unknown delivery.",
+    } : { delivered: false, tool: "plow_send_email", to: request.chatUid, body: text,
+      receipt: { tool: "meetly_change_format", requestId: request.id, confirmation: text, confirmationAttemptedAt: request.formatConfirmation!.attemptedAt } } };
+    await sendGuest(request.chatUid, text);
+    updateJson<Ledger>(file("ledger.json"), { requests: [] }, l => ({ ...l, requests: l.requests.map(r =>
+      r.id === request.id && r.calendarRevision === request.calendarRevision && r.formatConfirmation?.attemptedAt === request.formatConfirmation!.attemptedAt
+        ? { ...r, formatConfirmation: { ...r.formatConfirmation!, delivered: true },
+          ...(question && JSON.stringify(r.pendingOwner) === JSON.stringify(request.pendingOwner) ? { pendingOwner: undefined } : {}) } : r) }));
+    return { guestConfirmation: { delivered: true } };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Guest delivery is unconfirmed. Do not repeat the send.", guestConfirmation: { delivered: false } };
   }
 }

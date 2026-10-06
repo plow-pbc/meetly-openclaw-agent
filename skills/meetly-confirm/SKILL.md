@@ -107,7 +107,9 @@ and a guest-facing `confirmation`. It uses the calendar writer, then delivers on
 confirmation to the text group and resolves its pending question. `effectiveTravel`
 is the committed private estimate. On `silent: true`, finish `NO_REPLY`; do not send
 another owner DM or group confirmation. An identical change without a pending question
-stays silent. For email, complete returned `guestConfirmation` steps before acknowledging.
+stays silent. For email, complete returned `guestConfirmation` steps before acknowledging;
+after confirmed `sent:true`, use its receipt fields with `emailSent:true`. Unknown
+delivery stays reserved; never resend it.
 In the meeting group, use `calendar.ts format --id <id> --json '<format/location and explicit travel estimate>'`.
 After a group-initiated format/place change, tell the guest the new format/place once: with a pending question use `meetly_answer_owner` and `outcome: "calendar_change"`; otherwise reply in the meeting thread, using `plow_reply_to` from the owner DM
 (`plow_send_email` for email).

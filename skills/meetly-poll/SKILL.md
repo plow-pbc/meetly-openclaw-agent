@@ -92,7 +92,10 @@ they do not appear in the scheduled reminder list.
 4. If `upto` is set, run `cursor.ts set <upto>`.
 5. Maintenance:
    - Run `calendar.ts resume-pending` before expiry or cleanup. It resumes every
-     pending write and reports each result. For results with an `error`, skip
+     pending write and delivers recovered text-group format confirmations, including
+     unattempted confirmations whose calendar journal was already cleared. When
+     `guestConfirmation.delivered` is true, do not send another group confirmation.
+     For results with an `error`, skip
      that request's other mutations and report it to the owner.
    - For each request from `ledger.ts expired`, run `calendar.ts expire --id <id>`.
      The writer rechecks expiry while holding the request lock. If it prints

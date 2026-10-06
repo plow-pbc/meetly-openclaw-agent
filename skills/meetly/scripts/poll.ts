@@ -49,7 +49,7 @@ export function ledgerReasons(ledger: Ledger, now: number): string[] {
     dueReminders(ledger, now, reminderLeadMin()).length ? "reminders" : "",
     expiredRequests(ledger, holdHours(), now).length ? "expired" : "",
     cleanupList(ledger).length ? "cleanup" : "",
-    pending.length ? "calendar-writes" : "",
+    pending.length || ledger.requests.some(r => r.channel !== "email" && r.formatConfirmation && !r.formatConfirmation.delivered && !r.formatConfirmation.attemptedAt) ? "calendar-writes" : "",
     pendingNudges(ledger, now, pending).length ? "nudge" : "",
   ].filter(Boolean);
 }

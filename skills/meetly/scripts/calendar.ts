@@ -30,7 +30,7 @@ export type CalendarAction =
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
 type Step = { travel?: boolean; checkFrom?: string; checkTo?: string; verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
 type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" | "travel" | "attendee" }>; steps: Step[]; failed?: boolean };
-export type CalendarOptions = { overlapApproved?: boolean; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+export type CalendarOptions = { overlapApproved?: boolean; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number; sendGuest?: (to: string, text: string) => Promise<void> };
 class TimeApprovalBusy extends Error {
   start: string;
   constructor(start: string) { super("Time approval cannot book a busy slot; no overlap was authorized."); this.start = start; }
@@ -494,7 +494,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         const cleanup = uniqueCleanup(r.holdCleanup ?? [])
           .filter(h => !(r.status === "booked" && r.eventId === h.holdId && r.booked?.account === h.account));
         const decision = l.requests.find(r => r.id === id)!.pendingOwner;
-        return { ...r, ...(completed.input.action === "offer" && decision && "contact" in decision ? { contactApproved: true, pendingOwner: undefined } : {}),
+        return { ...r, ...(completed.input.action === "format" ? { pendingOwner: decision } : {}), ...(completed.input.action === "offer" && decision && "contact" in decision ? { contactApproved: true, pendingOwner: undefined } : {}),
           ...(completed.input.action === "format" ? { formatConfirmation: completed.input.confirmation ? { text: completed.input.confirmation } : undefined } : {}),
           calendarRevision: completed.id, holdCleanup: cleanup };
       }) };
@@ -572,8 +572,15 @@ export async function offerRequest({ requestId: selectedId, allowOverlapTitles, 
 
 export async function resumePending(options: CalendarOptions = {}) {
   const results = [];
-  for (const id of pendingCalendarWrites()) {
-    try { results.push({ id, ...await calendarAction(id, { action: "resume" }, options) }); }
+  const ids = new Set([...pendingCalendarWrites(), ...ledger().requests.filter(r => r.channel !== "email" && r.formatConfirmation
+    && !r.formatConfirmation.delivered && !r.formatConfirmation.attemptedAt).map(r => r.id)]);
+  for (const id of ids) {
+    try {
+      const result = await calendarAction(id, { action: "resume" }, options);
+      const { deliverFormatConfirmation } = await import("./owner-change.ts");
+      results.push({ id, ...result, ...(result.request.channel !== "email" && result.request.formatConfirmation
+        ? await deliverFormatConfirmation(result.request, options.sendGuest) : {}) });
+    }
     catch (error) { results.push({ id, error: error instanceof Error ? error.message : String(error) }); }
   }
   return { results };

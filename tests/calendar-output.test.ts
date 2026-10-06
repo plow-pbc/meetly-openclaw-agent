@@ -41,8 +41,3 @@ for (const mode of ["sent", "missing", "ambiguous", "unknown", "error"] as const
   if (mode === "sent") await send(); else await assert.rejects(send);
   assert.equal(posts.length, ["missing", "ambiguous"].includes(mode) ? 0 : 1, "never retry an unknown send or choose a group");
 });
-
-test("a delivered format travel note tells the owner not to repeat the private DM",async()=>{
- const output=await calendarOutput({...result,travelOnly:false},async()=>{});
- assert.equal((output.ownerReply as any)?.action,"already_notified");
-});

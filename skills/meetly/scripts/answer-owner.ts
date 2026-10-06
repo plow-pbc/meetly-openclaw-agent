@@ -95,7 +95,9 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
     updateJson<Ledger>(path, { requests: [] }, latest => {
       const current = latest.requests.find(r => r.id === request.id)?.pendingOwner;
       if (!current || JSON.stringify(current) !== JSON.stringify(pending)) return latest;
-      return updateRequest(latest, request.id, { pendingOwner: null }, Date.now());
+      return updateRequest(latest, request.id, { pendingOwner: null,
+        ...(emailReceipt && args.outcome === "calendar_change" && request.formatConfirmation?.attemptedAt && request.formatConfirmation.text === text
+          ? { formatConfirmation: { ...request.formatConfirmation, delivered: true } } : {}) }, Date.now());
     });
   } catch {
     return { error: "The answer is in the group, but its pending question could not be cleared. Do not resend; repair the ledger." };
