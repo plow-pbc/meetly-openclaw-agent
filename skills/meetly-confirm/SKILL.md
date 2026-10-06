@@ -135,6 +135,16 @@ Flagged contacts need the private confirmation in `meetly-pipeline`, then
   invitation was updated when the writer returns `invitationUpdated: true`;
   otherwise say the calendar event moved, without claiming an invitation.
   The writer releases every replacement hold after committing the move.
+- **Add an attendee:** only on the owner's instruction, resolve the person's
+  email from their message or Contacts; ask if missing or ambiguous. Call
+  `meetly_edit_attendee` with structured `requestId`, `operation: "add"`
+  and `email` fields. Never interpolate the address into a shell command. This updates the existing event with `sendUpdates: "all"`;
+  existing guests may receive an update. It preserves the booking, Meet link, travel and
+  replacement holds. No calendar write occurs when the attendee is already present.
+  Confirm the attendee addition only after success, using
+  the returned `confirmationTime` from the calendar event, including its time zone. Do not suggest new times or rebook.
+- **Remove an attendee:** say "Please remove the guest in your calendar app."
+  Never rewrite the attendee list or cancel/rebook the meeting to remove someone.
 - **Cancel:** run `calendar.ts cancel --id <id>`. It records `dropped`, clears
   the offer and pending question, and deletes the event with `sendUpdates: "all"`.
   If `holdCleanup` is nonempty, report pending cancellation/hold cleanup rather

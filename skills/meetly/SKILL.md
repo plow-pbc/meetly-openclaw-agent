@@ -29,6 +29,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `approve-time --id X --json '{"start":"<approved time>"}'` | `{approved,request,...}`; a time approval never grants an overlap. On `TIME_APPROVAL_BUSY`, use `slots.ts --request X --near <near> --no-overlap` |
 | | `book --id X --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, confirmationTime, meetUrl, warning?:"no-meet-link"}`: book and release the other holds |
 | | `format --id X --json '{"format":"meet", "travel":{"beforeMin":0,"afterMin":0}, "location":"<optional place>"}'` | save format/location and required explicit `travel`; resize booked children under the lock |
+| `meetly_edit_attendee` tool | structured `requestId`, `operation: "add"`, `email` | add an attendee to the existing booking, preserving time and travel; notifies invitees. Removal requires the owner’s calendar app. |
 | | `travel --id X --json '{"travel":{"beforeMin":30,"afterMin":30,"override":true}}'` | resize private travel only; meeting time and duration stay unchanged |
 | | `duration --id X --json '{"durationMin":60,"topic":"…","offered":[{"start":"…","end":"…"}]}'` | `{request}`: atomically replace duration, topic and holds on an open request |
 | | `resume-pending` | `{results:[{id, request?, error?}]}`: resume all pending writes, continuing past individual failures |
