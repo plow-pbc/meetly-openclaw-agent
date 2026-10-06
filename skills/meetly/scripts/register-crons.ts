@@ -86,8 +86,9 @@ export function registerFromConfig(
 
 if (isMain(import.meta.url)) {
   run(() => {
-    const { values } = parseArgs({ options: { pause: { type: "boolean" }, resume: { type: "boolean" } } });
+    const { values } = parseArgs({ options: { pause: { type: "boolean" }, resume: { type: "boolean" }, "if-ready": { type: "boolean" } } });
     if (values.pause && values.resume) throw new Error("pass --pause or --resume, not both");
+    if (values["if-ready"] && !readJson<StoredConfig | null>(file("config.json"), null)?.setupDoneAt) return { skipped: "not-ready" };
     const set = values.pause ? { paused: true } : values.resume ? { paused: false } : undefined;
     return registerFromConfig(cronBackend(), set);
   });

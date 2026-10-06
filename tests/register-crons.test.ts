@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { cronBackend, type CronJob, type Proc } from "../skills/meetly/scripts/cron-backend.ts";
 import { plan, POLL_ARGV, reconcile, registerFromConfig, SPEC } from "../skills/meetly/scripts/register-crons.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
-import { tmpHome } from "./helpers.ts";
+import { cli, tmpHome } from "./helpers.ts";
 import { join } from "node:path";
 
 const poll = (over: Partial<CronJob> = {}): CronJob => ({
@@ -175,5 +175,16 @@ test("registerFromConfig refuses before setup and writes nothing", () => {
     assert.throws(() => registerFromConfig(cronBackend(s.runner), { paused: true }), /setup is not finished/);
     assert.equal(readJson<{ paused?: boolean }>(join(home, "config.json"), {}).paused, undefined);
     assert.equal(s.calls.length, 0);
+  });
+});
+
+test("startup registration skips an install whose setup is incomplete", () => {
+  withHome(home => {
+    for (const configured of [false, true]) {
+      if (configured) writeJson(join(home, "config.json"), { ownerName: "Jean" });
+      const result = cli("register-crons.ts", ["--if-ready"], { MEETLY_HOME: home });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { skipped: "not-ready" });
+    }
   });
 });

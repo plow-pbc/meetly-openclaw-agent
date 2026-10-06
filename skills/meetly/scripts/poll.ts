@@ -8,7 +8,6 @@
 //
 // The cursor moves here only when nothing in the batch is for the model: the
 // first run, and rows that are all the owner's own or from group chats.
-import { rmSync } from "node:fs";
 import { isMain, run } from "./cli.ts";
 import { pendingCalendarWrites } from "./calendar.ts";
 import { holdHours, reminderLeadMin, type Config } from "./config.ts";
@@ -18,16 +17,16 @@ import { cleanupList, dueReminders, expiredRequests, type Ledger } from "./ledge
 import { runOnMacOutcome, type MacOutcome } from "./mac.ts";
 import { file } from "./paths.ts";
 import { pendingNudges } from "./pipeline.ts";
-import { readJson, updateJson, writeJson } from "./store.ts";
+import { readJson, removeFile, updateJson, writeJson } from "./store.ts";
 
 // A row of `plow-messages search`, one JSON object per line.
 export type Row = { rowid: number; chat_guid?: string; sender?: string; is_from_me?: boolean; at?: string; body?: string; [key: string]: unknown };
 export type Batch = {
-  id: string; wokeAt: string; upto?: number; rows: Row[]; reasons: string[];
+  id: string; wokeAt: string; upto?: number; rows: Pick<Row, "rowid" | "sender" | "at" | "body">[]; reasons: string[];
   readFailure?: "not-connected" | "refused";
 };
 
-// A woken turn has the run timeout to finish before the batch is rebuilt.
+// Give each wake attempt a turn timeout before retrying the same batch.
 export const TURN_MS = 10 * 60_000;
 const LIMIT = 50;
 const BATCH = () => file("poll-batch.json");
@@ -45,12 +44,13 @@ export function parseRows(output: string): Row[] {
 // Ledger work that needs the model: wording to send, or a calendar writer
 // only a turn reports on.
 export function ledgerReasons(ledger: Ledger, now: number): string[] {
+  const pending = pendingCalendarWrites();
   return [
     dueReminders(ledger, now, reminderLeadMin()).length ? "reminders" : "",
     expiredRequests(ledger, holdHours(), now).length ? "expired" : "",
     cleanupList(ledger).length ? "cleanup" : "",
-    pendingCalendarWrites().length ? "calendar-writes" : "",
-    pendingNudges(ledger, now, pendingCalendarWrites()).length ? "nudge" : "",
+    pending.length ? "calendar-writes" : "",
+    pendingNudges(ledger, now, pending).length ? "nudge" : "",
   ].filter(Boolean);
 }
 
@@ -73,6 +73,12 @@ export async function poll({ now = Date.now(), mac = messages, runner = spawnRun
   if (!config?.setupDoneAt || config.paused) return { woke: false, skipped: "not-ready" };
   const pending = readJson<Batch | null>(BATCH(), null);
   if (pending && now - Date.parse(pending.wokeAt) < TURN_MS) return { woke: false, skipped: "turn-running", batch: pending.id };
+  const dispatch = (batch: Batch) => {
+    writeJson(BATCH(), { ...batch, wokeAt: new Date(now).toISOString() });
+    wake(batch, runner);
+    return { woke: true, batch: batch.id, reasons: batch.reasons, rows: batch.rows.length };
+  };
+  if (pending) return dispatch(pending);
 
   const cursorPath = file("cursor.json");
   const cursor = readJson<Cursor>(cursorPath, EMPTY_CURSOR);
@@ -95,28 +101,17 @@ export async function poll({ now = Date.now(), mac = messages, runner = spawnRun
     } else {
       updateJson<Cursor>(cursorPath, EMPTY_CURSOR, markOk);
       const batch = parseRows(found.output);
-      rows = batch.filter(isInboundDirect);
+      rows = batch.filter(isInboundDirect).map(({ rowid, sender, at, body }) => ({ rowid, sender, at, body }));
       upto = batch.at(-1)?.rowid;
       if (rows.length) reasons.push("messages");
       else if (upto !== undefined) updateJson<Cursor>(cursorPath, EMPTY_CURSOR, c => setRowid(c, upto!, now));
     }
   }
 
-  if (!reasons.length) {
-    rmSync(BATCH(), { force: true });
-    return { woke: false };
-  }
+  if (!reasons.length) return { woke: false };
   const batch: Batch = { id: String(now), wokeAt: new Date(now).toISOString(), rows, reasons,
     ...(rows.length ? { upto } : {}), ...(readFailure ? { readFailure } : {}) };
-  writeJson(BATCH(), batch);
-  try {
-    wake(batch, runner);
-  } catch (error) {
-    // The next poll retries at once instead of waiting out a turn that never started.
-    rmSync(BATCH(), { force: true });
-    throw error;
-  }
-  return { woke: true, batch: batch.id, reasons, rows: rows.length };
+  return dispatch(batch);
 }
 
 if (isMain(import.meta.url)) {
@@ -127,7 +122,7 @@ if (isMain(import.meta.url)) {
     if (cmd === "done") {
       const pending = readJson<Batch | null>(BATCH(), null);
       if (pending && pending.id !== id) throw new Error(`batch ${id} is not the pending batch (${pending.id})`);
-      rmSync(BATCH(), { force: true });
+      removeFile(BATCH());
       return { done: id };
     }
     throw new Error("usage: poll.ts | poll.ts batch | poll.ts done <batch id>");

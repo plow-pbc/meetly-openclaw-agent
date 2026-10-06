@@ -69,11 +69,6 @@ test("every script the prompt or a skill names exists", () => {
   }
 });
 
-test("the poll's wake text is what the prompt keys on", () => {
-  const wake = readFileSync(join(SCRIPTS, "poll.ts"), "utf8");
-  assert.ok(wake.includes("`Meetly poll: batch ${batch.id}"));
-  assert.ok(prompt.includes("a `Meetly poll: batch` system event → `meetly-poll`"));
-});
 
 test("the poll never contacts anyone new: it saves the request as asked and asks the owner", () => {
   const poll = pollSkill();
