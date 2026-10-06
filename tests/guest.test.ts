@@ -371,7 +371,8 @@ test("pick invites the exact guest whose card has a full national number", async
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal("invitationSent" in result && result.invitationSent, true);
   const update = f.commands.find(c => c[2] === "update")!;
-  assert.equal(update[update.indexOf("--attendees") + 1], "guest@example.net");
+  assert.equal(update[update.indexOf("--add-attendee") + 1], "guest@example.net");
+  assert.ok(!update.includes("--attendees"));
 });
 
 for (const allowed of [true, false]) test(`pick rechecks conflicts; owner-approved=${allowed}`, async t => {

@@ -29,8 +29,11 @@ export type CalendarAction =
   | { action: "attendee"; operation: "add" | "remove"; email: string }
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
 type Step = { travel?: boolean; checkFrom?: string; checkTo?: string; verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
-type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" | "travel" | "attendee" }>; steps: Step[]; failed?: boolean };
-export type CalendarOptions = { overlapApproved?: boolean; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" | "travel" | "attendee" }>; steps: Step[]; overlapApproval?: { pending: PendingOwner; choice: number }; failed?: boolean };
+export type CalendarOptions = { overlapApproval?: { pending: PendingOwner; choice: number }; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+class OverlapDecisionChanged extends Error {
+  constructor() { super("Overlap decision changed."); }
+}
 class TimeApprovalBusy extends Error {
   start: string;
   constructor(start: string) { super("Time approval cannot book a busy slot; no overlap was authorized."); this.start = start; }

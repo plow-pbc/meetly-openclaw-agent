@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import plugin from "../plugin/index.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -25,7 +26,18 @@ test("new groups are untrusted and grant exactly the registered guest tools", ()
   assert.match(env, /PLOW_THREAD_TRUST=untrusted/);
   const names = env.match(/PLOW_GUEST_TOOLS=(\S+)/)?.[1]?.split(",");
   const manifest = JSON.parse(readFileSync(join(ROOT, "plugin", "openclaw.plugin.json"), "utf8"));
-  assert.deepEqual(names, manifest.contracts.tools.filter((name: string) => !["meetly_answer_owner", "meetly_offer_owner_group", "meetly_offer_owner_dm", "meetly_contact_preference", "meetly_confirm_contact", "meetly_edit_attendee"].includes(name)));
+  assert.deepEqual(names, manifest.contracts.tools.filter((name: string) => !["meetly_answer_owner", "meetly_offer_owner_group", "meetly_offer_owner_dm", "meetly_contact_preference", "meetly_confirm_contact", "meetly_edit_attendee", "meetly_movable"].includes(name)));
   assert.ok(!names?.includes("meetly_answer_owner"));
   assert.equal(new Set(names).size, 6);
+});
+
+
+test("the runtime registers every declared scheduling tool", () => {
+  const registered: string[] = [];
+  plugin.register({
+    registerTool(factory: (context: object) => { name: string }) { registered.push(factory({}).name); },
+    on() {}, logger: { info() {} },
+  });
+  const manifest = JSON.parse(readFileSync(join(ROOT, "plugin", "openclaw.plugin.json"), "utf8"));
+  assert.deepEqual(registered.sort(), [...manifest.contracts.tools].sort());
 });

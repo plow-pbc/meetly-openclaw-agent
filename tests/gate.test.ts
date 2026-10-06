@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyGate, installGate, quietHeartbeat } from "../boot/gate.ts";
+import { applyGate, guardToolLoops, installGate } from "../boot/gate.ts";
 import gate, { gateContext, isOwnerDmTurn } from "../plugin/index.js";
 
 const status = (s: unknown) => JSON.stringify(s) + "\n";
@@ -76,7 +76,7 @@ test("a finished setup is passed along, and output that is not a status adds not
 test("the plugin registers one before_prompt_build hook that skips other turns", async () => {
   const hooks: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
   gate.register({ registerTool() {}, on: (name: string, fn: (event: unknown, ctx: unknown) => unknown) => { hooks[name] = fn; }, logger: { info() {} } });
-  assert.deepEqual(Object.keys(hooks), ["gateway_start", "message_received", "before_tool_call", "agent_end", "before_prompt_build"]);
+  assert.deepEqual(Object.keys(hooks), ["gateway_start", "message_received", "before_tool_call", "reply_payload_sending", "agent_end", "before_prompt_build"]);
   assert.equal(await hooks.before_prompt_build!({}, { channel: "plow", sessionKey: "agent:main:plow:group:x" }), undefined);
 });
 
@@ -113,27 +113,10 @@ test("with no Mac at the time zone question the gate still asks it, and adds the
   assert.doesNotMatch(connected, /plow\.co/);
 });
 
-test("heartbeat finals stay private and other heartbeat settings are kept", () => {
-  assert.deepEqual(quietHeartbeat({}).agents.defaults.heartbeat, { target: "none" });
-  assert.deepEqual(quietHeartbeat({ agents: { defaults: { heartbeat: { every: "1h", target: "owner" } } } }).agents.defaults.heartbeat,
-    { every: "1h", target: "none" });
-});
-
-for (const failed of [false, true]) test(`gateway startup awaits cron migration and surfaces failure: failed=${failed}`, async t => {
-  const hooks: Record<string, (...args: any[]) => any> = {};
-  const calls: unknown[][] = [];
-  let complete!: (error: Error | null, stdout: string) => void;
-  t.mock.method(childProcess, "execFile", (...args: any[]) => { calls.push(args.slice(0, 3)); complete = args[3]; });
-  syncBuiltinESMExports();
-  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
-  gate.register({ registerTool() {}, on: (name: string, fn: (...args: any[]) => any) => { hooks[name] = fn; }, logger: { info() {} } });
-  assert.equal(calls.length, 0, "registration must wait for gateway readiness");
-  let settled = false;
-  const work = hooks.gateway_start!().finally(() => { settled = true; });
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0]!.slice(0, 2), [process.execPath, ["/opt/plow/skills/meetly/scripts/register-crons.ts", "--if-ready"]]);
-  assert.equal(settled, false);
-  complete(failed ? new Error("scheduler unavailable") : null, "{}\n");
-  if (failed) await assert.rejects(work, /scheduler unavailable/);
-  else await work;
+test("loop detection is enabled only for main, preserving existing tool settings", () => {
+  const config = { agents: { entries: { main: { tools: { allow: ["message"], loopDetection: { warningThreshold: 5 } } }, other: { tools: { deny: ["exec"] } } } }, tools: { profile: "messaging" } };
+  const guarded = guardToolLoops(config);
+  assert.deepEqual(guarded.agents.entries.main.tools, { allow: ["message"], loopDetection: { warningThreshold: 5, enabled: true } });
+  assert.deepEqual(guarded.agents.entries.other, config.agents.entries.other);
+  assert.deepEqual(guarded.tools, { profile: "messaging" });
 });

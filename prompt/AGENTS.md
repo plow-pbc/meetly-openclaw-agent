@@ -142,6 +142,8 @@ when returned, use `schedulingResult`. Do not announce the private handoff.
   - the owner changes a setting, pauses, resumes or asks for status →
     `meetly-setup`, "After setup".
 - **Scheduled poll:** a `Meetly poll: batch` system event → `meetly-poll`.
+- **Email turns:** load `meetly-email` and follow its “Reply routing” section.
+  Keep guest coordination in the email thread and owner questions private.
 - **Guest phone turns:** for scheduling messages, call `meetly_view_request`
   and use the matching `meetly_*` scheduling tool, following its description.
   Reply normally in this thread with the result.

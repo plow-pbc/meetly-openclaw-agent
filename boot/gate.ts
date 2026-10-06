@@ -24,14 +24,15 @@ export function applyGate(config: Record<string, any>): Record<string, any> {
 }
 
 /**
- * Keeps heartbeat turns' final text private. The poll wakes its turn with a
- * system event, which runs as a heartbeat: delivered to the owner, its final
- * reply would arrive as a heartbeat alert, and the owner binding would refuse
- * the poll's own sends to meeting threads as cross-context.
+ * OpenClaw's own guard against a model repeating one failing tool call: it
+ * warns, then blocks the repeat and lets the model answer instead. Off by
+ * default; the base owns `tools`, so it is set per agent.
  */
-export function quietHeartbeat(config: Record<string, any>): Record<string, any> {
+export function guardToolLoops(config: Record<string, any>): Record<string, any> {
   config.agents ??= {};
-  config.agents.defaults ??= {};
-  config.agents.defaults.heartbeat = { ...config.agents.defaults.heartbeat, target: "none" };
+  config.agents.entries ??= {};
+  config.agents.entries.main ??= {};
+  const tools = config.agents.entries.main.tools ?? {};
+  config.agents.entries.main.tools = { ...tools, loopDetection: { ...tools.loopDetection, enabled: true } };
   return config;
 }

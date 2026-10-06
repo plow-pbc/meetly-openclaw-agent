@@ -8,10 +8,13 @@
 // and preboot copies it into the state volume's plugin root on every boot.
 import { registerPipelineHooks } from "./pipeline.js";
 import { calendarPolicy } from "./calendar-policy.js";
+import { sendPolicy } from "./send-policy.js";
+import { movablePolicy } from "./movable-policy.js";
+import { silentRuns } from "./silent-runs.js";
 import { execFile } from "node:child_process";
 import { guestTurns } from "./guest-turn.js";
 import { registerGuestTools } from "./guest-tools.js";
-import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool, registerContactTools, registerAttendeeTool } from "./owner-tools.js";
+import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool, registerContactTools, registerAttendeeTool, registerMovableTool } from "./owner-tools.js";
 
 export const OWNER_DM_SESSION = "agent:main:main";
 export const SETUP_STATUS = "/opt/plow/skills/meetly/scripts/setup-status.ts";
@@ -90,6 +93,14 @@ const runStatus = () => new Promise((resolve, reject) => {
     (error, stdout) => error ? reject(error) : resolve(stdout));
 });
 
+// Operator-facing runtime errors get a plain phone-chat reply.
+export const FAILURE_TEXT = "Sorry, I couldn't finish that just now. Please send it again in a moment.";
+
+export function plainFailure(event) {
+  if (event?.payload?.isError !== true) return undefined;
+  return { payload: { ...event.payload, text: FAILURE_TEXT, isError: false } };
+}
+
 export default {
   id: "meetly",
   name: "Meetly",
@@ -110,8 +121,13 @@ export default {
     registerOwnerDmTool(api);
     registerContactTools(api);
     registerAttendeeTool(api);
-    api.on("before_tool_call", calendarPolicy);
-    api.on("agent_end", guestTurns.end);
+    registerMovableTool(api);
+    api.on("before_tool_call", (event, ctx) => calendarPolicy(event) ?? sendPolicy(event, ctx) ?? movablePolicy(event));
+    api.on("reply_payload_sending", event => silentRuns.sending(event) ?? plainFailure(event));
+    api.on("agent_end", (event, ctx) => {
+      guestTurns.end(event, ctx);
+      silentRuns.end(event);
+    });
     api.on("before_prompt_build", async (_event, ctx) => {
       guestTurns.begin(ctx);
       if (!isOwnerDmTurn(ctx)) return undefined;
