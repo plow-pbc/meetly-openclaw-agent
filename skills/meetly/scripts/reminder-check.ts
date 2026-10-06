@@ -15,6 +15,7 @@ export type Send = {
   meetUrl: string;
   name?: string;
   locale: string;
+  start: string; // the event start this send belongs to
   time: string; // the start, as the person reads it
   minutesToStart: number;
 };
@@ -23,7 +24,7 @@ export type Decision = {
   patch: Patch;
   send?: Send;
 };
-export type Options = { leadMin: number; tz: string; graceMin?: number };
+export type Options = { expectedStart: string; leadMin: number; tz: string; graceMin?: number };
 
 const MIN = 60_000;
 
@@ -32,7 +33,8 @@ function timeLabel(ms: number, locale: string, tz: string): string {
 }
 
 export function checkReminder(request: Request, event: EventInfo, now: number, opts: Options): Decision {
-  if (request.status !== "booked" || request.format !== "meet" || request.reminder) return { action: "skip", patch: {} };
+  if (Date.parse(request.booked?.start ?? "") !== Date.parse(opts.expectedStart)
+    || request.status !== "booked" || request.format !== "meet" || request.reminder) return { action: "skip", patch: {} };
   if (event.id !== request.eventId) throw new Error(`event ${event.id} is not this request's event (${request.eventId})`);
   const at = new Date(now).toISOString();
   if (event.status === "cancelled") return { action: "cancelled", patch: { reminder: { at, outcome: "cancelled" } } };
@@ -57,15 +59,17 @@ export function checkReminder(request: Request, event: EventInfo, now: number, o
       meetUrl: event.meetUrl,
       ...(request.name ? { name: request.name } : {}),
       locale,
+      start: event.start,
       time: timeLabel(start, locale, opts.tz),
       minutesToStart: Math.max(0, Math.round((start - now) / MIN)),
     },
   };
 }
 
-export function markSent(ledger: Ledger, id: string, now: number): Ledger {
+export function markSent(ledger: Ledger, id: string, now: number, expectedStart: string): Ledger {
   const request = ledger.requests.find((r) => r.id === id);
   if (!request) throw new Error(`no request ${id}`);
+  if (request.status !== "booked" || Date.parse(request.booked?.start ?? "") !== Date.parse(expectedStart)) return ledger;
   if (request.reminder) throw new Error(`request ${id}'s reminder was already handled (${request.reminder.outcome})`);
   return updateRequest(ledger, id, { reminder: { at: new Date(now).toISOString(), outcome: "sent" } }, now);
 }
@@ -73,16 +77,18 @@ export function markSent(ledger: Ledger, id: string, now: number): Ledger {
 if (isMain(import.meta.url)) {
   run(() => {
     const { values } = parseArgs({
-      options: { id: { type: "string" }, "event-file": { type: "string" }, sent: { type: "boolean" }, "lead-min": { type: "string" } },
+      options: { id: { type: "string" }, "expected-start": { type: "string" }, "event-file": { type: "string" }, sent: { type: "boolean" }, "lead-min": { type: "string" } },
     });
+    const expectedStart = values["expected-start"];
+    if (!expectedStart || !Number.isFinite(Date.parse(expectedStart))) throw new Error("usage: --expected-start requires the booking snapshot start");
     const path = file("ledger.json");
     const empty: Ledger = { requests: [] };
     if (values.id && values.sent) {
-      const ledger = updateJson<Ledger>(path, empty, (l) => markSent(l, values.id!, Date.now()));
+      const ledger = updateJson<Ledger>(path, empty, (l) => markSent(l, values.id!, Date.now(), expectedStart));
       return { request: ledger.requests.find((r) => r.id === values.id) };
     }
     if (!values.id || !values["event-file"]) {
-      throw new Error("usage: reminder-check.ts --id X --event-file F [--lead-min N] | --id X --sent");
+      throw new Error("usage: reminder-check.ts --id X --expected-start S --event-file F [--lead-min N] | --id X --expected-start S --sent");
     }
     const leadMin = values["lead-min"] !== undefined ? Number(values["lead-min"]) : reminderLeadMin();
     if (!Number.isFinite(leadMin) || leadMin <= 0) throw new Error(`--lead-min must be a number > 0, got ${values["lead-min"]}`);
@@ -93,7 +99,7 @@ if (isMain(import.meta.url)) {
     updateJson<Ledger>(path, empty, (l) => {
       const request = l.requests.find((r) => r.id === values.id);
       if (!request) throw new Error(`no request ${values.id}`);
-      decision = checkReminder(request, event, now, { leadMin, tz: timezone });
+      decision = checkReminder(request, event, now, { leadMin, tz: timezone, expectedStart });
       return Object.keys(decision.patch).length ? updateRequest(l, request.id, decision.patch, now) : l;
     });
     const { patch: _patch, ...out } = decision!;

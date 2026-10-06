@@ -32,8 +32,8 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `resume-pending` | `{results:[{id, request?, error?}]}`: resume all pending writes, continuing past individual failures |
 | | `pending` | `{ids}`: requests with a durable write awaiting reconciliation |
 | | `drop\|expire\|cancel\|cleanup\|resume --id X` | `{request, skipped?}`: close an offer, cancel a booked event, retry cleanup, or reconcile an unresolved write |
-| `reminder-check.ts` | `--id X --event-file F [--lead-min N]` | `{action:"send"\|"wait"\|"cancelled"\|"no-link"\|"skip", send?:{chatUid, meetUrl, name, locale, time, minutesToStart}}` |
-| | `--id X --sent` | `{request}`: the reminder went out; refused if already handled |
+| `reminder-check.ts` | `--id X --expected-start S --event-file F [--lead-min N]` | `S` is the listed `booked.start`; `{action:"send"\|"wait"\|"cancelled"\|"no-link"\|"skip", send?:{chatUid, meetUrl, name, locale, start, time, minutesToStart}}` |
+| | `--id X --expected-start S --sent` | `S` is `send.start`; `{request}`: the reminder went out; stale acknowledgements are skipped, already-handled reminders refused |
 | `busy.ts` | `--fetch [--from ISO --to ISO] [--allow-overlap-title <owner-supplied name>]` (reads the Mac, writes `tmp/busy.json`) | `{file, busy:<count>, degraded, unknownAfter?}` |
 | | `--in F [--in F2…] [--max 100]` | `{busy:[{start,end,id,account}], unknownAfter?, degraded}` |
 | `time.ts` | `next_week --anchor ISO` | `{from,to}` in the owner's timezone, anchored to the source message timestamp; pass weekdays separately |

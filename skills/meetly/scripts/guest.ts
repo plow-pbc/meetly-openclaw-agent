@@ -131,7 +131,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   try {
     if (typeof args.start === "string") parseStart(args.start, config.timezone);
     if (args.start !== undefined && typeof args.start !== "string") {
-      resolveWeekday(args.start!, request.offered, config.timezone);
+      resolveWeekday(args.start!, referenceTimes(request), config.timezone);
     }
   } catch (error) {
     if (error instanceof WeekdayDateRequired) throw error;
