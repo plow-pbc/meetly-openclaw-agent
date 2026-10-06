@@ -767,7 +767,8 @@ test("owner DM lookup and exact-time check select the booked record and move its
   assert.equal(listed.json.requests.length, 1);
   assert.equal(listed.json.requests[0].id, "r_one");
   const busyFile = join(f.home, "busy.json");
-  writeJson(busyFile, { busy: [{ id: "hold-one", account, start, end }], degraded: [] });
+  writeJson(busyFile, { busy: [{ id: "hold-one", account, start, end }], degraded: [],
+    coverage: { from: "2026-10-05T00:00:00Z", to: "2026-10-06T00:00:00Z" } });
   const checked = cli("slots.ts", ["--in", busyFile, "--request", "r_one", "--at", "2026-10-05T10:15:00Z", "--now", new Date(now).toISOString()], env);
   assert.equal(checked.status, 0, checked.stderr);
   assert.equal(checked.json.free, true, "the original event is not a conflict with its own move");
