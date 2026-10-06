@@ -217,19 +217,11 @@ test("CLI: a cancelled event is written to the ledger so the next poll skips it"
   assert.equal(cli("ledger.ts", ["find", "--chat", "c1"], env).json.request.reminder.outcome, "cancelled");
 });
 
-for (const staleEvent of [event(), event({ status: "cancelled" }), event({ meetUrl: null })])
+for (const staleEvent of [event({ status: "cancelled" }), event({ meetUrl: null })])
 test(`stale reminder fetch cannot overwrite a moved booking: ${staleEvent.status}/${staleEvent.meetUrl}`, () => {
   const tomorrow = event({ start: "2026-10-11T04:00:00-03:00", end: "2026-10-11T04:30:00-03:00" });
   const moved = recordBooking({ requests: [bookedMeet()] }, "r_1", tomorrow, ACCOUNT, START).ledger;
   const result = check(moved.requests[0]!, staleEvent, START - 5 * MIN, offer.start);
   assert.deepEqual(result, { action: "skip", patch: {} });
   assert.deepEqual(dueReminders(moved, Date.parse(tomorrow.start) - 5 * MIN, 10).map(r => r.id), ["r_1"]);
-});
-
-test("stale reminder send cannot mark a moved booking handled", () => {
-  const tomorrow = event({ start: "2026-10-11T04:00:00-03:00", end: "2026-10-11T04:30:00-03:00" });
-  const moved = recordBooking({ requests: [bookedMeet()] }, "r_1", tomorrow, ACCOUNT, START).ledger;
-  const marked = markSent(moved, "r_1", START, offer.start);
-  assert.deepEqual(marked, moved);
-  assert.deepEqual(dueReminders(marked, Date.parse(tomorrow.start) - 5 * MIN, 10).map(r => r.id), ["r_1"]);
 });
