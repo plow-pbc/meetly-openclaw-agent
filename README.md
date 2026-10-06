@@ -223,7 +223,8 @@ Existing model settings in the state volume are left unchanged.
 - Groups require a phone number; Meetly asks you for one before reading the
   calendar or creating holds if only an email is known.
 - Ask Meetly to cancel a booked meeting; it deletes the event and notifies invitees.
-  Rescheduling a booked meeting is still left to you.
+  Guests can hold replacement times while the current booking stays intact;
+  a later guest choice moves the existing event.
 - If the model provider is unreachable, that five-minute check is skipped and
   the next one catches up from the same cursor.
 

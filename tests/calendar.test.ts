@@ -657,9 +657,11 @@ test("booked replacement holds preserve the event, expire independently and clea
   assert.deepEqual(f.read().booked, booked);
   assert.equal(f.events.get("hold-one")!.start.dateTime, start);
   const early = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 47 * 3600_000 });
+  assert.ok(!("error" in early));
   assert.equal(early.skipped, true, "expiry uses the replacement timestamp, not the original offer");
   assert.equal(early.groupNotice, undefined);
   const expired = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
+  assert.ok(!("error" in expired));
   assert.equal(expired.request.status, "booked");
   assert.deepEqual(expired.request.offered, []);
   assert.equal(f.events.get("hold-one")!.status, "confirmed");
@@ -669,6 +671,7 @@ test("booked replacement holds preserve the event, expire independently and clea
   assert.match(expired.groupNotice?.text ?? "", /replacement times were released.*booking.*unchanged/i);
   t.diagnostic(`Group expiry notice: ${expired.groupNotice?.text}`);
   const again = await calendarAction("r_one", { action: "expire" }, { ...f.options, now: () => now + 49 * 3600_000 });
+  assert.ok(!("error" in again));
   assert.equal(again.skipped, true);
   assert.equal(again.groupNotice, undefined);
   await calendarAction("r_one", { action: "offer", request: replacement }, f.options);

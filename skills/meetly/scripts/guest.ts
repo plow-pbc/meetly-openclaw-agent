@@ -7,7 +7,7 @@ import { currentOffers, requestEvents, findByChat, intersectConstraints, sameHan
 import { file } from "./paths.ts";
 import { checkTime, findPreferredSlots, preferredSearchCoverage, localeFormatter, withinConstraints, type Slot, type SlotQuery } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
-import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, wallParts, type WeekdayTime } from "./time.ts";
+import { DAYS, localIso, nextWeek, offerDateWindow, resolveWeekday, WeekdayDateRequired, type WeekdayTime } from "./time.ts";
 import { view } from "./request-view.ts";
 
 export type GuestContext = { turnStartedAt?: number; messageChannel?: string; agentAccountId?: string; nativeChannelId?: string; deliveryContext?: { to?: string }; requesterSenderId?: string };
@@ -144,14 +144,9 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     preferred.from = preferred.to = resolveWeekday({ weekday: start.weekday }, referenceTimes(request), config.timezone);
     start = undefined;
   }
-  const bookedDate = request.status === "booked" && request.booked
-    ? localIso(Date.parse(request.booked.start), config.timezone).slice(0, 10) : undefined;
-  let requestedBookedDate = bookedDate !== undefined && (preferred.from === preferred.to && preferred.from === bookedDate
-    || args.days?.length === 1 && args.days[0] === wallParts(Date.parse(request.booked!.start), config.timezone).weekday);
   let exact: Slot | undefined;
   if (start) {
     const checked = await check(request, config, start);
-    requestedBookedDate = checked.slot.start.slice(0, 10) === bookedDate;
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) {
       return { error: "That weekday was ruled out. Choose a different day." };
     }
@@ -165,7 +160,6 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   const now = Date.now();
   const query: SlotQuery = { busy: [], ...bounds, now, config,
-    excludeDates: bookedDate && !requestedBookedDate ? [bookedDate] : [],
     meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
   const range = preferredSearchCoverage(query, preferred);
   const fromDate = localIso(Date.parse(range.from), config.timezone).slice(0, 10);
