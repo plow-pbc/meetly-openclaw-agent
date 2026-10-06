@@ -27,21 +27,6 @@ test("system sends name missing arguments; owner DM sends retain their implicit 
   assert.equal(before({ toolName: "exec", params: {} }, {}), undefined);
 });
 
-test("movable refusals tell the model how to correct incomplete inspection arguments", () => {
-  const before = hooks().before_tool_call!;
-  for (const params of [{}, { action: "inspect", candidates: [] },
-    { action: "inspect", candidates: [{ start: "bad", end: "bad" }] }]) {
-    const refusal = before({ toolName: "meetly_movable", params }, {});
-    assert.equal(refusal?.block, true);
-    assert.match(refusal.blockReason, /INVALID_ARGUMENTS/);
-    assert.match(refusal.blockReason, /inspect|ISO start/);
-  }
-  assert.equal(before({ toolName: "meetly_movable", params: { action: "inspect" } }, {}), undefined, "the tool may recover the latest busy candidate");
-  assert.equal(before({ toolName: "meetly_movable", params: { action: "inspect", candidates: [
-    { start: "2026-10-20T12:00:00Z", end: "2026-10-20T12:30:00Z" },
-  ] } }, {}), undefined);
-});
-
 test("error replies are rewritten as a plain failure while ordinary replies pass", () => {
   const sending = hooks().reply_payload_sending;
   assert.equal(typeof sending, "function");

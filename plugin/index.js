@@ -9,7 +9,6 @@
 import { registerPipelineHooks } from "./pipeline.js";
 import { calendarPolicy } from "./calendar-policy.js";
 import { sendPolicy } from "./send-policy.js";
-import { movablePolicy } from "./movable-policy.js";
 import { silentRuns } from "./silent-runs.js";
 import { execFile } from "node:child_process";
 import { guestTurns } from "./guest-turn.js";
@@ -112,7 +111,7 @@ export default {
     registerOwnerGroupTool(api);
     registerOwnerDmTool(api);
     registerContactTools(api);
-    api.on("before_tool_call", (event, ctx) => calendarPolicy(event) ?? sendPolicy(event, ctx) ?? movablePolicy(event));
+    api.on("before_tool_call", (event, ctx) => calendarPolicy(event) ?? sendPolicy(event, ctx));
     api.on("reply_payload_sending", event => silentRuns.sending(event) ?? plainFailure(event));
     api.on("agent_end", (event, ctx) => {
       guestTurns.end(event, ctx);
