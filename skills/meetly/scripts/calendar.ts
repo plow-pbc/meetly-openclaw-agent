@@ -50,7 +50,7 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   if (validated.status !== "offered") throw new Error("replacement needs offered times");
   return updateRequest(l, id, {
-    offered: validated.offered, allowOverlap: validated.allowOverlap ?? [], constraints: validated.constraints ?? {},
+    offered: validated.offered, bookedReplacement: true, allowOverlap: validated.allowOverlap ?? [], constraints: validated.constraints ?? {},
     holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
   }, now);
 }
@@ -59,6 +59,25 @@ const checkedEvent = (step: Step) => {
   if (event.status === "cancelled" || Date.parse(event.start) !== Date.parse(step.start) || Date.parse(event.end) !== Date.parse(step.end)
     || (step.verb === "update" && event.id !== step.eventId)) throw new Error("unexpected calendar event; operation kept for reconciliation");
   return event;
+};
+
+const bookingResult = (request: Request, { input, steps }: Intent) => {
+  let invitationUpdated = false;
+  if (input.action === "book") {
+    const step = steps[0]!;
+    const raw = parseCalendarObject(step.output!);
+    const event = (raw.event ?? raw) as { attendees?: { email?: string; organizer?: boolean; self?: boolean }[] };
+    invitationUpdated = step.verb === "update" && Array.isArray(event.attendees)
+      && event.attendees.some(a => typeof a?.email === "string" && !a.organizer && !a.self && !sameHandle(a.email, step.account));
+  }
+  return {
+    request,
+    ...(input.action === "book" && input.timeApproval ? { approved: true } : {}),
+    invitationSent: input.action === "book" && !!input.attendees,
+    invitationUpdated,
+    meetUrl: request.meetUrl ?? null,
+    ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}),
+  };
 };
 
 // A live process owns its lock for the entire remote operation. Never expire
@@ -151,7 +170,14 @@ export async function calendarAction(id: string, action: CalendarAction, options
     let request = requestById(id);
     let input: CalendarAction = action;
     options.validate?.(request);
-    if (intent && request.calendarRevision === intent.id) { rmSync(journal); intent = undefined; }
+    if (intent && request.calendarRevision === intent.id) {
+      if (input.action === "resume") {
+        await cleanup();
+        rmSync(journal);
+        return bookingResult(requestById(id), intent);
+      }
+      rmSync(journal); intent = undefined;
+    }
     if (intent && input.action !== "resume") throw new Error(`calendar operation unresolved for ${id}; run resume first`);
     if (!intent) {
       if (input.action === "resume" || input.action === "cleanup") { await cleanup(); return { request: requestById(id) }; }
@@ -159,7 +185,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (input.action === "expire" || input.action === "drop" || input.action === "cancel") {
         if (request.status === "booked" && input.action === "drop") return { request, skipped: true };
         if (request.status === "booked" && input.action === "expire") {
-          patch({ offered: [], holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]) });
+          patch({ offered: [], bookedReplacement: false, allowOverlap: [], holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]) });
           await cleanup();
           request = requestById(id);
           return { request, groupNotice: request.chatUid ? {
@@ -171,7 +197,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         }
         const refs: HoldCleanup[] = holds(request);
         if (input.action === "cancel" && request.eventId && request.booked) refs.push({ holdId: request.eventId, account: request.booked.account, sendUpdates: "all" });
-        patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null, offered: [],
+        patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null, offered: [], bookedReplacement: false,
           holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...refs]) }); await cleanup(); return { request: requestById(id) };
       }
       if (input.action === "format" && request.status === "offered") {
@@ -352,7 +378,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         const before = l.requests.find(r => r.id === id)!;
         next = recordBooking(l, id, parseEvent(step.output!), step.account, now()).ledger;
         if (completed.input.action === "book") next = updateRequest(next, id, {
-          offered: [], allowOverlap: [], holdCleanup: uniqueCleanup([...(before.holdCleanup ?? []), ...holds(before)]),
+          offered: [], bookedReplacement: false, allowOverlap: [], holdCleanup: uniqueCleanup([...(before.holdCleanup ?? []), ...holds(before)]),
         }, now());
       }
       return { requests: next.requests.map(r => {
@@ -362,21 +388,9 @@ export async function calendarAction(id: string, action: CalendarAction, options
         return { ...r, calendarRevision: completed.id, holdCleanup: cleanup };
       }) };
     });
-    rmSync(journal);
     await cleanup();
-    request = requestById(id);
-    let invitationUpdated = false;
-    if (completed.input.action === "book") {
-      const step = completed.steps[0]!;
-      const raw = parseCalendarObject(step.output!);
-      const event = (raw.event ?? raw) as { attendees?: { email?: string; organizer?: boolean; self?: boolean }[] };
-      invitationUpdated = step.verb === "update" && Array.isArray(event.attendees)
-        && event.attendees.some(a => typeof a?.email === "string" && !a.organizer && !a.self && !sameHandle(a.email, step.account));
-    }
-    return { request, ...(completed.input.action === "book" && completed.input.timeApproval ? { approved: true } : {}), invitationSent: completed.input.action === "book" && !!completed.input.attendees,
-      invitationUpdated,
-      meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
-
+    rmSync(journal);
+    return bookingResult(requestById(id), completed);
   }).then(result => ({
     ...result,
     ...(result.request.booked ? { confirmationTime: formatMeetingTime(result.request.booked.start, loadConfig().timezone, result.request.locale) } : {}),
@@ -453,7 +467,7 @@ if (isMain(import.meta.url)) run(async () => {
   if (action === "resume-pending") return resumePending();
   if (action === "pending") return { ids: pendingCalendarWrites() };
   if ("allowOverlap" in args || "allowOverlapTitles" in args) throw new Error("Overlap authorization requires the owner DM tool meetly_offer_owner_dm.");
-  if (action === "offer") return values.id ? calendarAction(values.id, { action: "offer", request: args }) : offerRequest(args);
+  if (action === "offer") return offerRequest({ ...args, requestId: values.id });
   if (action === "approve-time" && values.id) return approveTime(values.id, args);
   if (!values.id || !["duration", "book", "format", "drop", "expire", "cancel", "cleanup", "resume"].includes(action ?? "")) throw new Error("usage: calendar.ts resume-pending | offer --json '<request>' | approve-time|duration|book|format|drop|expire|cancel|cleanup|resume --id X [--json '<args>']");
   return calendarAction(values.id, { ...args, action } as CalendarAction);

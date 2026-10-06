@@ -383,3 +383,10 @@ test("request CLI re-offers retain saved excluded weekdays", () => {
   assert.ok(result.json.slots.length);
   assert.ok(result.json.slots.every((s: { dayOfWeek: string }) => s.dayOfWeek === "tue"), JSON.stringify(result.json));
 });
+
+test("exact starts preserve fractional owner-zone times", () => {
+  const checked = checkTime({ ...q(), start: "2026-10-05T10:00:01.25" });
+  assert.equal(checked.slot.start, "2026-10-05T10:00:01.250-03:00");
+  assert.equal(Date.parse(checked.slot.start), Date.parse("2026-10-05T13:00:01.250Z"));
+  assert.equal(Date.parse(checked.slot.end) - Date.parse(checked.slot.start), q().config.durationMin * 60_000);
+});
