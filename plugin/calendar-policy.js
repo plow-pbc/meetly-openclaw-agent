@@ -5,7 +5,7 @@ const blocked = { block: true, blockReason: "Calendar writes must use calendar.t
 
 export function calendarPolicy(event) {
   const tool = event.toolName.split("__").at(-1);
-  if (tool === "plow_run_applescript" && /\b(?:calendar|ical)\b/i.test(`${event.params?.app ?? ""}\n${event.params?.script ?? ""}`)) return blocked;
+  if (tool === "plow_run_applescript" || (tool === "plow_run_command" && event.params?.apple_events === true)) return blocked;
   const argv = event.params?.argv;
   if (tool !== "plow_run_command" || !Array.isArray(argv) || !["plow-gog", "gog"].includes(argv[0])) return;
   // Latch accepts account selectors anywhere, including attached short forms.

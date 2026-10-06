@@ -643,3 +643,41 @@ test("a time approval never sends a conflict override even across its own hold",
   assert.equal(writes.length, 1);
   assert.equal(writes.some(c => c.includes("--confirm-conflict")), false);
 });
+
+
+test("time approval uses the duration committed while it waits for the calendar lock", async t => {
+  const f = fixture(t);
+  let entered!: () => void, release!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const replacement = calendarAction("r_one", { action: "duration", durationMin: 60, topic: "Hour",
+    offered: [{ start: "2026-10-07T10:00:00Z", end: "2026-10-07T11:00:00Z" }] }, { ...f.options,
+    command: async cmd => { if (cmd.argv[2] === "create") { entered(); await gate; } return f.command(cmd); } });
+  await waiting;
+  const approval = approveTime("r_one", { start }, f.options);
+  release();
+  await replacement;
+  const result = await approval;
+  assert.equal(result.approved, true);
+  assert.equal(f.read().durationMin, 60);
+  assert.equal(Date.parse(f.read().booked!.end) - Date.parse(f.read().booked!.start), 60 * 60_000);
+  t.diagnostic(JSON.stringify({ durationMin: f.read().durationMin, booked: f.read().booked }));
+});
+
+for (const batch of [false, true]) test(`deferred time approval preserves structured busy recovery on resume: batch=${batch}`, async t => {
+  const f = fixture(t);
+  const options = { ...f.options,
+    command: async (cmd: MacCommand) => cmd.argv[2] === "update" ? { handle: "approval" } : f.command(cmd),
+    poll: async () => ({ handle: "approval" }) };
+  await assert.rejects(approveTime("r_one", { start }, options), /unresolved/);
+  const resumed = { ...options, poll: async () => ({ error: "PRIVATE CONFLICT DETAILS", code: "calendar-conflict" as const }) };
+  const result = batch ? (await resumePending(resumed)).results[0]! : await calendarAction("r_one", { action: "resume" }, resumed);
+  assert.equal("code" in result && result.code, "TIME_APPROVAL_BUSY");
+  assert.equal("approved" in result && result.approved, false);
+  assert.equal("near" in result && Date.parse(result.near as string), Date.parse(start));
+  assert.deepEqual("recovery" in result && result.recovery, { action: "find_nearest", allowOverlap: false });
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE CONFLICT/);
+  assert.equal(f.read().status, "offered");
+  assert.deepEqual(pendingCalendarWrites(), []);
+  t.diagnostic(JSON.stringify(result));
+});

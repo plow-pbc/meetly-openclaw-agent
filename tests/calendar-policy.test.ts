@@ -38,7 +38,7 @@ for (const executable of ["plow-gog", "gog"]) {
   }
 }
 
-test("Calendar AppleScript is blocked by app name, bundle ID and script target", () => {
+test("all model-issued AppleScript is blocked regardless of source or target", () => {
   const hooks: Record<string, Function> = {};
   plugin.register({ on: (name: string, fn: Function) => { hooks[name] = fn; }, registerTool() {}, logger: { info() {} } });
   for (const toolName of ["plow_run_applescript", "plow__plow_run_applescript"]) {
@@ -49,6 +49,18 @@ test("Calendar AppleScript is blocked by app name, bundle ID and script target",
       { app: "System Events", script: 'tell application id "com.apple.iCal" to make new event' },
       { app: "System Events", script: 'tell application "calendar" to delete every event' },
     ]) assert.equal(hooks.before_tool_call!({ toolName, params }, {})?.block, true, JSON.stringify(params));
-    assert.equal(hooks.before_tool_call!({ toolName, params: { app: "Finder", script: 'tell application "Finder" to get name of startup disk' } }, {}), undefined);
+    assert.equal(hooks.before_tool_call!({ toolName, params: { app: "Finder", script: 'tell application ("Cal" & "endar") to activate' } }, {})?.block, true);
+  }
+});
+
+
+test("model commands cannot request Apple events even outside gog", () => {
+  const hooks: Record<string, Function> = {};
+  plugin.register({ on: (name: string, fn: Function) => { hooks[name] = fn; }, registerTool() {}, logger: { info() {} } });
+  for (const toolName of ["plow_run_command", "plow__plow_run_command"]) {
+    for (const argv of [["/usr/bin/osascript", "-e", 'tell application ("Cal" & "endar") to activate'], ["plow-gog", "calendar", "events"], ["custom-helper"]]) {
+      assert.equal(hooks.before_tool_call!({ toolName, params: { argv, apple_events: true } }, {})?.block, true);
+    }
+    assert.equal(hooks.before_tool_call!({ toolName, params: { argv: ["plow-gog", "calendar", "events"], apple_events: false } }, {}), undefined);
   }
 });
