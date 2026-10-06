@@ -266,6 +266,9 @@ export async function calendarAction(id: string, action: CalendarAction, options
     };
     if (intent.failed) await fail();
     const authorize = (current = ledger()) => {
+      // A sent update must be reconciled even after revocation: its event may
+      // already be booked and must not remain eligible for hold expiry.
+      if (intent.steps.some(s => s.verb === "update" && s.sentAt !== undefined)) return;
       if (["offer", "book"].includes(intent.input.action)) checkContact(current, request.handle,
         current.requests.find(r => r.id === id), intent.input.action === "offer" ? intent.input.request : undefined);
     };
