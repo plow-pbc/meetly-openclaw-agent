@@ -11,7 +11,7 @@ import { isMeetUrl } from "./event.ts";
 import { DAYS } from "./time.ts";
 import { file } from "./paths.ts";
 import { uniqueEvents, type EventRef } from "./busy.ts";
-import { checkTravel, type Travel } from "./travel.ts";
+import { checkTravel, travelFor, type Travel } from "./travel.ts";
 import type { Constraints } from "./slots.ts";
 export type { Constraints } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
@@ -67,7 +67,7 @@ export type Request = {
   lastNudge?: { fingerprint: string; at: string };
   topic: string;
   location?: string;
-  travel?: Travel;
+  travel: Travel;
   travelEvents?: HoldRef[];
   durationMin: number;
   meal?: Meal;
@@ -193,8 +193,8 @@ export function checkContact(ledger: Ledger, handle: string, request?: Request, 
 }
 
 export function contactRequest(request: Request): NewRequest {
-  const { channel, origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails } = request;
-  return { channel, origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails, offered: [] };
+  const { travel, channel, origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails } = request;
+  return { travel, channel, origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails, offered: [] };
 }
 
 export const nudgeFingerprint = (reason: string, since: string): string => JSON.stringify([reason, since]);
@@ -310,7 +310,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   const format = input.format === undefined ? "unknown" : input.format;
   checkFormat(format);
   if (input.locale !== undefined) checkLocale(input.locale);
-  if (input.travel !== undefined) checkTravel(input.travel);
+  travelFor(input);
   const open = findOpenByHandle(ledger, input.handle);
   if (open) throw new Error(`open request ${open.id} already exists for this person; update it instead`);
   const at = new Date(now).toISOString();
@@ -421,6 +421,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
     delete updated.meetUrl;
   }
   if (patch.offered !== undefined) updated.offeredAt = at;
+  if (updated.status === "booked" || updated.status === "offered") travelFor(updated);
   const requests = [...ledger.requests];
   requests[index] = updated;
   return { ...ledger, requests };

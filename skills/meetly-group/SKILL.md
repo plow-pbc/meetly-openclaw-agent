@@ -57,7 +57,6 @@ selects it (`meetly-confirm`, "Book the event"). Overlap permission does not aut
 ## Offer times
 
 Before searching, read `meetly-travel` to prepare format and an explicit travel estimate.
-If an in-person meeting needs a missing owner base, ask privately and stop.
 Pass the same `travel` to the group tool, slot search (`--format` and `--travel`), and saved offer.
 Use zero minutes for virtual meetings. Never disclose private travel in a group.
 

@@ -29,7 +29,7 @@ export function recordBooking(ledger: Ledger, id: string, event: EventInfo, acco
     && Date.parse(request.pendingOwner.start) !== Date.parse(event.start)) patch.pendingOwner = null;
   const durationMin = (Date.parse(event.end) - Date.parse(event.start)) / 60_000;
   if (!Number.isInteger(durationMin) || durationMin <= 0) throw new Error("booking duration must be positive whole minutes");
-  const next = updateRequest({ requests: ledger.requests.map(r => r.id === id ? { ...r, durationMin } : r) }, id, patch, now);
+  const next = updateRequest({ ...ledger, requests: ledger.requests.map(r => r.id === id ? { ...r, durationMin } : r) }, id, patch, now);
   const meetUrl = (next.requests.find((r) => r.id === id) as Request).meetUrl ?? null;
   return { ledger: next, meetUrl, ...(isMeet && !meetUrl ? { warning: "no-meet-link" as const } : {}) };
 }

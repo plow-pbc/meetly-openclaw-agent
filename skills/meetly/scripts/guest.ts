@@ -1,5 +1,5 @@
 // Scheduling actions scoped to the sender and conversation supplied by OpenClaw.
-import { checkTravel, TravelBaseRequired, travelNote, travelRange, type Travel } from "./travel.ts";
+import { checkTravel, travelNote, travelRange, type Travel } from "./travel.ts";
 import { allowsOverlap, fetchBusy, type BusyResult } from "./busy.ts";
 import { loadConfig, parseTime, type Config } from "./config.ts";
 import { lookupContact } from "./contact.ts";
@@ -79,7 +79,8 @@ async function check(request: Request, config: Config, requested: string | Weekd
   return { ...checked, overlap };
 }
 
-async function notifyOwner(request: Request, config: Config, change: "moved" | "cancelled" | "declined" | "travel", sendOwner?: SendOwner, note = travelNote(request)) {
+async function notifyOwner(request: Request, config: Config, change: "moved" | "cancelled" | "declined" | "travel", sendOwner?: SendOwner, note?: string) {
+  if (change === "moved" || change === "travel") note ??= travelNote(request);
   const when = request.booked ? localeFormatter(request.locale ?? "en-US", config.timezone).format(new Date(request.booked.start)) : undefined;
   const subject = `${request.topic} with ${request.name ?? request.handle}`;
   if (change === "travel" && !note) return {};
@@ -288,9 +289,6 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     if (typeof args.start !== "string" || !args.start) return { error: "Provide an offered start time." };
     return await pick(request, config, args.start, args.attendees, sendOwner, ctx.turnStartedAt);
   } catch (error) {
-    if (error instanceof TravelBaseRequired) return { error: "The owner needs to provide travel information privately before scheduling can continue.",
-      code: "TRAVEL_BASE_REQUIRED", recovery: { action: "ask_owner", tool: "meetly_ask_owner", retry: false,
-        question: "What home or office base should I use to estimate travel? Please reply in your private DM." } };
     if (error instanceof WeekdayDateRequired) return { error: error.message, code: "DATE_REQUIRED",
       recovery: { action: "ask_date" } };
     const message = error instanceof Error ? error.message : "";

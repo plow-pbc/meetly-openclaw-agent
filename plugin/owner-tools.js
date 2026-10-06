@@ -41,7 +41,7 @@ const runGroup = async (context, args, sendOwner) => {
 };
 
 export function registerOwnerGroupTool(api, execute = runGroup, outbound) {
-  const required = ["topic", "durationMin", "introduction"];
+  const required = ["topic", "durationMin", "introduction", "travel"];
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_group", label: "Offer times in the owner's group",
@@ -82,7 +82,7 @@ const runDm = async args => {
 };
 
 export function registerOwnerDmTool(api, execute = runDm) {
-  const required = ["origin", "handle", "topic", "offered"];
+  const required = ["origin", "handle", "topic", "offered", "travel"];
   const string = { type: "string" };
   api.registerTool(context => ({
     name: "meetly_offer_owner_dm", label: "Offer owner-authorized times",

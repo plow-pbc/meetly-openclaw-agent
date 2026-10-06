@@ -43,7 +43,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   process.env.MEETLY_HOME = home;
   process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture";
   t.mock.method(Date, "now", () => now);
-  const config = { ...DEFAULTS, travelBase: "Office", ownerName: "Alex", timezone, defaultAccount: "owner@example.com",
+  const config = { ...DEFAULTS, ownerName: "Alex", timezone, defaultAccount: "owner@example.com",
     calendars: [{ account: "owner@example.com", id: "owner@example.com" }], setupDoneAt: new Date(now).toISOString() };
   writeJson(join(home, "config.json"), config);
   const ledger = addRequest({ requests: [] }, {
@@ -844,7 +844,7 @@ test("owner-group ignores injected overlap permission before creating holds", as
 test("owner DM offers still resolve named overlap permission", async t => {
   const f = fixture(t);
   f.save({ requests: [] });
-  const saved = cli("ledger.ts", ["save", "--json", JSON.stringify({ origin: "owner", status: "asked",
+  const saved = cli("ledger.ts", ["save", "--json", JSON.stringify({ travel: { beforeMin: 0, afterMin: 0 }, origin: "owner", status: "asked",
     handle: context.requesterSenderId, topic: "Lunch", durationMin: 45, offered: [] })], { MEETLY_HOME: f.home });
   assert.equal(saved.status, 0, saved.stderr);
   f.events.clear();
@@ -1300,7 +1300,7 @@ for (const caller of ["guest", "owner"] as const) test(`${caller} preserves safe
   });
   const result = caller === "guest"
     ? await f.act(context, "other_times", { offer_week: false })
-    : await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { topic: "Call", durationMin: 30 });
+    : await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { travel: { beforeMin: 0, afterMin: 0 }, topic: "Call", durationMin: 30 });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.ok(f.request().offered.length > 0);
   assert.ok(f.request().offered.every(o => Date.parse(o.end) <= Date.parse(cutoff)));
@@ -1391,7 +1391,7 @@ for (const constraints of [undefined, {}, { days: ["wed"], after: "14:00" }]) {
     f.ledger.requests[0]!.constraints = saved;
     f.save(f.ledger);
     const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-      { topic: "Call", durationMin: 30, week: "next", ...(constraints === undefined ? {} : { constraints }) });
+      { travel: { beforeMin: 0, afterMin: 0 }, topic: "Call", durationMin: 30, week: "next", ...(constraints === undefined ? {} : { constraints }) });
     assert.ok(!("error" in result), JSON.stringify(result));
     const { from, to, ...policy } = saved;
     const expected = { ...(constraints ?? policy), from: "2026-10-05", to: "2026-10-11" };
@@ -1480,7 +1480,7 @@ test("owner-group re-offers respect saved excluded weekdays", async t => {
   f.ledger.requests[0]!.excludedDays = ["mon"];
   f.save(f.ledger);
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" },
-    { topic: "Call", durationMin: 30 });
+    { travel: { beforeMin: 0, afterMin: 0 }, topic: "Call", durationMin: 30 });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.ok(f.request().offered.every(o => o.start.startsWith("2026-10-06")), JSON.stringify(f.request().offered));
 });
@@ -1747,7 +1747,7 @@ test("owner DM overlap replacement stays on the selected booked request", async 
   let tool: any;
   registerOwnerDmTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:main" }); } }, offerRequest);
   const result = await tool.execute("replace", { requestId: original.id, origin: original.origin,
-    handle: original.handle, topic: original.topic,
+    travel: original.travel, handle: original.handle, topic: original.topic,
     allowOverlapTitles: ["Weekly Claw"], offered: [slot] });
   assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(f.read().requests.length, 1);
@@ -2054,7 +2054,7 @@ test("an invalidated travel pick searches alternatives then exposes bounded exha
   assert.equal(picked.recovery.action, "other_times");
   const result = await guestAction(context, "other_times", { offer_week: false }) as any;
   assert.equal(result.code, "NO_ALTERNATIVES");
-  assert.deepEqual(result.conditions, ledger.requests[0]!.constraints);
+  assert.equal(result.conditions, undefined, "conditions remain private");
   assert.equal(result.recovery.action, "wait");
   assert.doesNotMatch(JSON.stringify(result), /blocker|owner@example/);
   assert.equal(f.read().requests[0]!.status, "offered");
@@ -2108,7 +2108,7 @@ test("contact tools deny group and guest callers; private confirmation resumes t
   contactPreference({ handle: context.requesterSenderId, blocked: true });
   const owner = { ...context, senderIsOwner: true, requesterSenderId: "plow-owner", sessionKey: "agent:main:main" };
   const group = { ...owner, sessionKey: "agent:main:plow:group:chat-one" };
-  await offerOwnerGroup(group, { topic: "Coffee", durationMin: 30, constraints: { days: ["mon"], from: "2026-10-05", to: "2026-10-05" } }, async () => {});
+  await offerOwnerGroup(group, { travel: { beforeMin: 0, afterMin: 0 }, topic: "Coffee", durationMin: 30, constraints: { days: ["mon"], from: "2026-10-05", to: "2026-10-05" } }, async () => {});
   const saved = f.request();
   assert.ok(saved.pendingOwner && "contact" in saved.pendingOwner);
   const contact = saved.pendingOwner.contact;
@@ -2154,4 +2154,49 @@ test("unmarked booked offers cannot be viewed, picked or expired as replacements
   assert.deepEqual(f.read(), before);
   assert.equal(f.commands.length, commands);
   t.diagnostic(JSON.stringify({ view, pick }));
+});
+
+for (const booked of [false, true]) test(`decline notifies the owner for a legacy ${booked ? "booking" : "offer"} without travel`, async t => {
+  const f = fixture(t);
+  if (booked) await f.act(context, "pick", { start: offers[0]!.start });
+  const ledger = f.read();
+  delete (ledger.requests[0] as any).travel;
+  f.save(ledger);
+  const result = await f.act(context, "decline") as any;
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.equal(result.ownerNotified, true);
+  assert.equal(f.request().status, "dropped");
+  assert.match(f.ownerLines.at(-1)!, booked ? /cancelled/ : /declined/);
+});
+
+test("owner offer schemas require an explicit travel decision", () => {
+  for (const register of [registerOwnerGroupTool, registerOwnerDmTool]) {
+    let tool: any;
+    register({ registerTool(factory: any) { tool = factory(context); } });
+    assert.ok(tool.parameters.required.includes("travel"), tool.name);
+  }
+});
+
+for (const override of [false, true]) test(`booked replacement persists its travel estimate with owner override=${override}`, async t => {
+  const f = fixture(t);
+  const oldTravel = { beforeMin: 15, afterMin: 15, ...(override ? { override: true } : {}) };
+  assert.ok(!("error" in await f.act(context, "format", { format: "in_person", location: "Library", travel: oldTravel })));
+  if (override) await calendarAction(f.request().id, { action: "travel", travel: oldTravel });
+  assert.ok(!("error" in await f.act(context, "pick", { start: offers[0]!.start })));
+  const original = f.request();
+  const estimate = { beforeMin: 40, afterMin: 25 };
+  const result = await f.act(context, "other_times", { offer_week: false, travel: estimate }) as any;
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  const expected = override ? oldTravel : estimate;
+  assert.deepEqual(f.request().travel, expected);
+  assert.deepEqual(f.request().booked, original.booked);
+  assert.equal(f.request().eventId, original.eventId);
+  const moved = await f.act(context, "pick", { start: result.offered[0].start }) as any;
+  assert.equal(moved.error, undefined, JSON.stringify(moved));
+  assert.equal(f.request().eventId, original.eventId);
+  const request = f.request();
+  const children = request.travelEvents!.map(ref => f.events.get(ref.holdId)!);
+  assert.deepEqual(children.map(e => (Date.parse(e.end.dateTime) - Date.parse(e.start.dateTime)) / 60_000), [expected.beforeMin, expected.afterMin]);
+  assert.doesNotMatch(JSON.stringify(moved), /beforeMin|afterMin|travelEvents/);
+  t.diagnostic(JSON.stringify({ replacement: result, moved, privateTravel: request.travel, children, ownerNotice: f.ownerLines.at(-1) }));
 });

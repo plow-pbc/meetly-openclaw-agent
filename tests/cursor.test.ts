@@ -103,7 +103,7 @@ test("a request saved as asked releases its held row", () => {
   const env = { MEETLY_HOME: tmpHome() };
   cli("cursor.ts", ["set", "1828"], env);
   cli("cursor.ts", ["hold", "1829"], env);
-  const asked = { status: "asked", origin: "inbound", handle: "+15551234567", topic: "coffee", durationMin: 30, sourceRowid: 1829 };
+  const asked = { travel: { beforeMin: 0, afterMin: 0 }, status: "asked", origin: "inbound", handle: "+15551234567", topic: "coffee", durationMin: 30, sourceRowid: 1829 };
   assert.equal(cli("ledger.ts", ["save", "--json", JSON.stringify(asked)], env).status, 0);
   const r = cli("cursor.ts", ["set", "1831"], env).json;
   assert.deepEqual([r.rowid, r.held], [1831, undefined]);

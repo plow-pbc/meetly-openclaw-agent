@@ -9,7 +9,6 @@ export type Calendar = { account: string; id: string };
 
 export type Config = {
   overlapDecisions?: Record<string, { allowed: boolean; at: string }>;
-  travelBase?: string;
   ownerName: string;
   timezone: string;
   days: Day[];
@@ -24,7 +23,7 @@ export type Config = {
 };
 
 // Every setting the owner can change.
-export const FIELDS = ["travelBase", "ownerName", "timezone", "days", "window", "durationMin", "horizonDays", "calendars"] as const;
+export const FIELDS = ["ownerName", "timezone", "days", "window", "durationMin", "horizonDays", "calendars"] as const;
 export type Field = (typeof FIELDS)[number];
 
 // What setup cannot start without, in the order it asks: nobody but the owner,
@@ -118,11 +117,6 @@ export function readableCalendars(calendars: Calendar[], defaultAccount: string)
 
 export function parseField(field: string, value: string): Partial<Config> {
   switch (field) {
-    case "travelBase": {
-      const travelBase = value.trim();
-      if (!travelBase || travelBase.length > 300) throw new Error("travel base must be 1 to 300 characters");
-      return { travelBase };
-    }
     case "ownerName": {
       const name = value.trim();
       if (name.length < 1 || name.length > 60) throw new Error("the name must be 1 to 60 characters");
@@ -213,7 +207,6 @@ export function validateConfig(partial: Partial<Config>): Config {
     defaultAccount: p.defaultAccount,
   };
   if (p.overlapDecisions !== undefined) config.overlapDecisions = p.overlapDecisions;
-  if (p.travelBase !== undefined) config.travelBase = parseField("travelBase", p.travelBase).travelBase;
   if (p.setupDoneAt !== undefined) config.setupDoneAt = p.setupDoneAt;
   if (p.paused !== undefined) config.paused = p.paused;
   return config;

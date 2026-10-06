@@ -14,6 +14,7 @@ const T0 = Date.parse("2026-09-28T12:00:00Z");
 const HOUR = 3600_000;
 const offer = { start: "2026-09-29T12:00:00-03:00", end: "2026-09-29T12:30:00-03:00", holdId: "h1", account: "jean@example.com" };
 const input = (over: Record<string, unknown> = {}) => ({
+  travel: { beforeMin: 0, afterMin: 0 },
   origin: "inbound", handle: "+15551234567", topic: "coffee", durationMin: 30, offered: [offer], ...over,
 }) as NewRequest;
 const empty = (): Ledger => ({ requests: [] });
@@ -463,7 +464,7 @@ test("inbound meal classification applies code defaults and preserves explicit l
     const home = tmpHome();
     writeJson(join(home, "config.json"), { ...DEFAULTS, durationMin: 45, ownerName: "Alex", timezone: "UTC", defaultAccount: "owner@example.com", calendars: [{ account: "owner@example.com", id: "primary" }], setupDoneAt: new Date(T0).toISOString() });
     const result = cli("ledger.ts", ["save", "--json", JSON.stringify({
-      origin: "inbound", status: "asked", handle: "+15551234567", topic: "Catch up", meal,
+      travel: { beforeMin: 0, afterMin: 0 }, origin: "inbound", status: "asked", handle: "+15551234567", topic: "Catch up", meal,
       ...(explicit === undefined ? {} : { durationMin: explicit }), sourceRowid: 1,
     })], { MEETLY_HOME: home });
     assert.equal(result.status, 0, result.stderr);
