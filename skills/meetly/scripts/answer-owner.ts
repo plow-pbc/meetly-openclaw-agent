@@ -47,18 +47,18 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (!emailReceipt && pending.answerAttemptedAt) return { error: "Answer delivery already attempted. Retry only after the owner explicitly authorizes clearing the attempt." };
   if (alternatives && !declined && !emailReceipt) {
     try {
+      const before = request;
       const config = loadConfig(), now = Date.now();
       if (config.paused || !["offered", "booked"].includes(request.status)) throw new Error("Scheduling is paused or this offer is no longer open.");
       const constraints = { ...request.constraints, ...args.constraints };
       const query = { ...constraints, now, config, busy: [], travel: request.travel, format: request.format, meal: request.meal, durationMin: request.durationMin,
         locale: request.locale, exclude: alternatives.previousStarts,
-        days: (constraints.days ?? DAYS).filter(day => !request.excludedDays?.includes(day)) };
+        days: (constraints.days ?? DAYS).filter(day => !before.excludedDays?.includes(day)) };
       const busy = await fetchBusy(config, searchCoverage(query));
       if (busy.degraded.length) throw new Error("Calendar unavailable. The alternative-search decision remains pending.");
-      busy.busy = busy.busy.filter(b => !requestEvents(request).some(o => o.holdId === b.id && o.account === b.account));
+      busy.busy = busy.busy.filter(b => !requestEvents(before).some(o => o.holdId === b.id && o.account === b.account));
       const { slots } = findSlots({ ...query, ...busy });
       if (!slots.length) throw new Error("No new times are available in the checked calendar range. The alternative-search decision remains pending.");
-      const before = request;
       const { origin, handle, name, sourceRowid, chatUid, channel, topic, location, travel, meal, durationMin, proposed, format, locale } = request;
       request = (await calendarAction(request.id, { action: "offer", request: {
         origin, handle, name, sourceRowid, chatUid, channel, topic, location, travel, meal, durationMin, constraints, proposed, format, locale,

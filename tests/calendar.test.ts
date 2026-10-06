@@ -663,7 +663,7 @@ test("a time approval never sends a conflict override even across its own hold",
   assert.equal(writes.some(c => c.includes("--confirm-conflict")), false);
 });
 
-for (const allowOverlap of [[], [{ account, id: "private-conflict" }]]) test(`booked replacement holds preserve the event, expire independently and clean up after a move: grant=${!!allowOverlap.length}`, async t => {
+for (const allowOverlap of [[], [{ account, id: "private-conflict", start, end }]]) test(`booked replacement holds preserve the event, expire independently and clean up after a move: grant=${!!allowOverlap.length}`, async t => {
   const f = fixture(t, "chat-one");
   await calendarAction("r_one", { action: "book", start }, f.options);
   const booked = f.read().booked;
@@ -671,9 +671,9 @@ for (const allowOverlap of [[], [{ account, id: "private-conflict" }]]) test(`bo
     { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z", account },
     { start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z", account },
   ] };
-  await calendarAction("r_one", { action: "offer", request: replacement }, { ...f.options, overlapApproved: !!allowOverlap.length });
+  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
   assert.equal(f.read().status, "booked");
-  assert.deepEqual(f.read().allowOverlap, allowOverlap);
+  assert.deepEqual(f.read().allowOverlap, [], "replacement grants require a fresh pending approval");
   assert.equal(f.read().bookedReplacement, true);
   assert.deepEqual(f.read().booked, booked);
   assert.equal(f.events.get("hold-one")!.start.dateTime, start);
@@ -701,7 +701,7 @@ for (const allowOverlap of [[], [{ account, id: "private-conflict" }]]) test(`bo
   assert.ok("skipped" in again);
   assert.equal(again.skipped, true);
   assert.equal("groupNotice" in again ? again.groupNotice : undefined, undefined);
-  await calendarAction("r_one", { action: "offer", request: replacement }, { ...f.options, overlapApproved: !!allowOverlap.length });
+  await calendarAction("r_one", { action: "offer", request: replacement }, f.options);
   await calendarAction("r_one", { action: "book", start: replacement.offered[0]!.start }, f.options);
   assert.equal(f.read().eventId, "hold-one");
   assert.equal(f.read().booked!.start, replacement.offered[0]!.start);

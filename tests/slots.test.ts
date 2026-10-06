@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import type { Config } from "../skills/meetly/scripts/config.ts";
-import { checkTime, findSlots, resolveSearchConstraints, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
+import { checkTime, findSlots, nearbyAlternatives, resolveSearchConstraints, type SlotQuery } from "../skills/meetly/scripts/slots.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { addRequest } from "../skills/meetly/scripts/ledger.ts";
 import { cli, tmpHome } from "./helpers.ts";
