@@ -22,7 +22,7 @@ import { readJson, updateJson, withLock, writeJson } from "./store.ts";
 export type CalendarAction =
   | { action: "offer"; request: NewRequest; provisional?: boolean }
   | { action: "duration"; durationMin: number; topic: string; offered: OfferInput["offered"] }
-  | { action: "book"; start: string; end?: string; attendees?: string; timeApproval?: boolean; travel?: Travel }
+  | { action: "book"; start: string; end?: string; attendees?: string; timeApproval?: boolean; travel?: Travel; format?: Request["format"]; location?: string }
   | { action: "approve-time"; start?: string; attendees?: string }
   | { action: "format"; format: Request["format"]; location?: string; travel?: Travel }
   | { action: "travel"; travel: Travel }
@@ -55,10 +55,12 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
   }
   if (request?.status !== "booked") return saveRequest(l, input, now, id);
   if (!sameHandle(request.handle, input.handle) || request.chatUid !== input.chatUid || (input.channel !== undefined && (request.channel ?? "text") !== input.channel)) throw new Error("offer belongs to another request");
-  const validated = addRequest(EMPTY, input, now, id).requests[0]!;
+  const format = input.format ?? request.format;
+  const validated = addRequest(EMPTY, { ...input, format, location: input.location ?? request.location,
+    travel: request.travel?.override && format !== "meet" && format !== "phone" ? request.travel : input.travel }, now, id).requests[0]!;
   if (validated.status !== "offered") throw new Error("replacement needs offered times");
   return updateRequest(l, id, {
-    travel: request.travel?.override ? request.travel : validated.travel,
+    replacement: { format: validated.format, location: validated.location, travel: validated.travel },
     offered: validated.offered, bookedReplacement: true, allowOverlap: validated.allowOverlap ?? [], constraints: validated.constraints ?? {},
     holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
   }, now);
@@ -177,7 +179,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (input.action === "expire" || input.action === "drop" || input.action === "cancel") {
         if (request.status === "booked" && input.action === "drop") return { request, skipped: true };
         if (request.status === "booked" && input.action === "expire") {
-          patch({ offered: [], bookedReplacement: false, allowOverlap: [], holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]) });
+          patch({ offered: [], bookedReplacement: false, replacement: null, allowOverlap: [], holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]) });
           await cleanup();
           request = requestById(id);
           return { request, groupNotice: request.channel !== "email" && request.chatUid ? {
@@ -192,7 +194,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           refs.push(...(request.travelEvents ?? []));
           if (request.eventId && request.booked) refs.push({ holdId: request.eventId, account: request.booked.account, sendUpdates: "all" });
         }
-        patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null, offered: [], bookedReplacement: false,
+        patch({ status: input.action === "expire" ? "expired" : "dropped", pendingOwner: null, offered: [], bookedReplacement: false, replacement: null,
           holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...refs]) }); await cleanup(); return { request: requestById(id) };
       }
       if (input.action === "offer") travelFor(input.request);
@@ -232,6 +234,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (input.action === "book" && request.channel === "email" && request.status !== "booked") {
         input = { ...input, attendees: [...new Set([request.handle, ...(input.attendees?.split(",") ?? [])].map(value => value.trim().toLowerCase()).filter(Boolean))].join(",") };
       }
+      if (input.action === "book" && request.bookedReplacement && request.replacement
+        && request.offered.some(slot => input.action === "book" && Date.parse(slot.start) === Date.parse(input.start))) input = { ...input, ...request.replacement };
       const steps: Step[] = [];
       const add = (verb: Step["verb"], slot: Offer, args: string[], range: { from: string; to: string }, travel = false) => steps.push({ verb, account: slot.account, eventId: slot.holdId, start: slot.start, end: slot.end, args, token: randomUUID(), checkFrom: range.from, checkTo: range.to, travel });
       if (input.action === "offer") {
@@ -244,10 +248,10 @@ export async function calendarAction(id: string, action: CalendarAction, options
         const validated = saveOffer(before, input.request, now(), id);
         const saved = validated.requests.find(r => r.id === id)!;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
-        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${saved.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, saved));
+        for (const slot of input.request.offered) add("create", slot, ["--summary", `Hold: ${input.request.topic} with ${saved.name ?? input.request.handle}`, "--send-updates", "none"], travelRange(slot.start, slot.end, saved.replacement ?? saved));
       } else {
         const config = loadConfig();
-        if (input.action === "format") updateRequest(ledger(), id, { format: input.format, location: input.location, travel: input.travel }, now());
+        if ("format" in input && input.format !== undefined) updateRequest(ledger(), id, { format: input.format, location: input.location, travel: input.travel }, now());
         const start = input.action === "book" ? input.start : undefined;
         const slot: Offer = input.action === "format" || input.action === "travel"
           ? { start: request.booked!.start, end: request.booked!.end, account: request.booked!.account, holdId: request.eventId }
@@ -263,13 +267,19 @@ export async function calendarAction(id: string, action: CalendarAction, options
           const output = await call(["event", "primary", slot.holdId, "--json"], slot.account);
           if (output === undefined) throw new Error("cannot read existing calendar event");
           const raw = parseCalendarObject(output) as any;
+          if (input.action === "travel") {
+            const live = parseEvent(output);
+            if (Date.parse(live.start) !== Date.parse(slot.start) || Date.parse(live.end) !== Date.parse(slot.end))
+              throw new Error("Booking times changed in Calendar; reconcile the booking before correcting travel.");
+          }
           if ((raw.event ?? raw).status === "cancelled") {
             if (request.status === "booked") throw new Error("booked event was cancelled");
             verb = "create";
           }
         }
-        const effective = { ...request, ...(input.action === "format" ? { format: input.format, location: input.location ?? "" } : {}),
-          travel: request.travel?.override && !input.travel?.override && (input.action !== "format" || !["meet", "phone"].includes(input.format ?? "")) ? request.travel : input.travel ?? request.travel };
+        const format = "format" in input ? input.format ?? request.format : request.format;
+        const effective = { ...request, ...("format" in input && input.format !== undefined ? { format, location: input.location ?? "" } : {}),
+          travel: request.travel?.override && !input.travel?.override && !["meet", "phone"].includes(format ?? "") ? request.travel : input.travel ?? request.travel };
         travelFor(effective);
         input.travel = effective.travel;
         const range = travelRange(slot.start, slot.end, effective);
@@ -284,8 +294,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           ["--summary", `Travel ${side === "before" ? "→" : "←"} ${effective.location || request.topic} (${min} min)`,
             "--send-updates", "none", "--visibility", "private", "--transparency", "opaque"], range, true);
         }
-        const format = effective.format;
-        const location = input.action === "format" ? input.location ?? "" : request.location;
+        const location = effective.location;
         if (input.action !== "travel") add(verb, slot, ["--summary", `${request.topic} with ${request.name ?? request.handle}`, "--send-updates", "all",
           ...(format === "meet" ? ["--with-meet"] : []),
           ...(format === "phone" ? ["--location=Phone call"] : location !== undefined ? [`--location=${location}`] : []),
@@ -413,7 +422,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         next = saveOffer(l, { ...completed.input.request, offered }, now(), id);
 
       } else {
-        if (completed.input.action === "format") l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location ?? "", travel: completed.input.travel }, now());
+        if ("format" in completed.input && completed.input.format !== undefined) l = updateRequest(l, id, { format: completed.input.format, location: completed.input.location ?? "", travel: completed.input.travel }, now());
         const step = completed.steps.find(s => !s.travel);
         const before = l.requests.find(r => r.id === id)!;
         next = step ? recordBooking(l, id, parseEvent(step.output!), step.account, now()).ledger : l;
@@ -422,7 +431,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           holdCleanup: uniqueCleanup([...(before.holdCleanup ?? []), ...(before.travelEvents ?? [])]),
         }, now());
         if (completed.input.action === "book") next = updateRequest(next, id, {
-          offered: [], bookedReplacement: false, allowOverlap: [], holdCleanup: uniqueCleanup([...(before.holdCleanup ?? []), ...(before.travelEvents ?? []), ...holds(before)]),
+          offered: [], bookedReplacement: false, replacement: null, allowOverlap: [], holdCleanup: uniqueCleanup([...(before.holdCleanup ?? []), ...(before.travelEvents ?? []), ...holds(before)]),
         }, now());
       }
       return { ...next, requests: next.requests.map(r => {

@@ -1262,3 +1262,19 @@ test("saved exact starts cannot be omitted on reoffer or bypassed at booking", a
   await calendarAction("r_one", { action: "offer", request: { ...f.offer, offered } }, f.options);
   assert.equal(f.read().constraints?.startTime, "11:30");
 });
+
+for (const change of ["start", "end"] as const) test(`travel correction rejects a live booking with changed ${change} before writes`, async t => {
+  const f = fixture(t);
+  await calendarAction("r_one", { action: "format", format: "in_person", location: "Library", travel }, f.options);
+  await calendarAction("r_one", { action: "book", start }, f.options);
+  const saved = f.read(), before = structuredClone(saved);
+  const live = f.events.get(saved.eventId!)!;
+  live[change].dateTime = change === "start" ? "2026-10-05T10:15:00Z" : "2026-10-05T11:00:00Z";
+  const events = structuredClone([...f.events]);
+  f.calls.length = 0;
+  await assert.rejects(calendarAction("r_one", { action: "travel", travel: { beforeMin: 45, afterMin: 45, override: true } }, f.options), /times.*changed.*reconcile/i);
+  assert.deepEqual(f.read(), before);
+  assert.deepEqual([...f.events], events);
+  assert.ok(f.calls.every(argv => !["create", "update", "delete"].includes(argv[2]!)));
+  assert.deepEqual(pendingCalendarWrites(), []);
+});
