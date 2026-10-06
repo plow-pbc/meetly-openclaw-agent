@@ -357,10 +357,10 @@ if (isMain(import.meta.url)) {
       for (const e of values.exclude) if (Number.isNaN(Date.parse(e))) throw new Error(`--exclude is not a time: ${e}`);
       q.exclude = values.exclude;
     }
+    const mergedConditions = { ...request?.constraints, ...requestedConditions };
     if (request) {
       const { from: _from, to: _to, ...savedPolicy } = request.constraints ?? {};
-      const narrowed = intersectConstraints(values.week === undefined ? request.constraints : savedPolicy, q);
-      Object.assign(q, narrowed);
+      Object.assign(q, values.at !== undefined ? mergedConditions : intersectConstraints(values.week === undefined ? request.constraints : savedPolicy, q));
       q.days = (q.days ?? DAYS).filter(day => !request.excludedDays?.includes(day));
       q.meal ??= request.meal;
       q.format ??= request.format;
@@ -381,7 +381,6 @@ if (isMain(import.meta.url)) {
       const result = checkTime({ ...q, start });
       const busy = result.reason === "busy" && !degraded.length;
       const resolvedConstraints = busy ? unpinBusyStart(resolveSearchConstraints(q, undefined, now, config.timezone), result.slot.start, config.timezone) : undefined;
-      const mergedConditions = resolveSearchConstraints(intersectConstraints(request?.constraints, requestedConditions), undefined, now, config.timezone);
       const conditions = busy ? unpinBusyStart(mergedConditions, result.slot.start, config.timezone) : mergedConditions;
       if (request && JSON.stringify(conditions) !== JSON.stringify(request.constraints ?? {})) updateJson<Ledger>(file("ledger.json"), { requests: [] }, latest => {
         if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed; check its time again");

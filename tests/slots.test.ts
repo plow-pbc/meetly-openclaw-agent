@@ -96,6 +96,40 @@ test("Kelp busy exact time returns covered nearby alternatives without its saved
     assert.equal(rejected.status, 1);
     assert.equal(readJson<typeof ledger>(join(home, "ledger.json"), { requests: [] }).requests.find(r => r.id === "kelp")!.constraints?.startTime, undefined);
   });
+  await t.test("an exact-time owner day replaces saved days and preserves omitted conditions", () => {
+    const conditions = { startTime: "14:00", days: ["mon"], after: "13:00", before: "16:00", from: "2026-10-29", to: "2026-10-29" };
+    writeJson(join(home, "ledger.json"), { ...ledger, requests: ledger.requests.map(r => r.id === "kelp" ? { ...r, constraints: conditions } : r) });
+    const replaced = cli("slots.ts", [...args, "--request", "kelp", "--days", "thu"], env);
+    assert.equal(replaced.status, 0, replaced.stderr);
+    assert.equal(replaced.json.outsideHours, false);
+    assert.equal(replaced.json.reason, "busy");
+    assert.deepEqual(replaced.json.alternatives.map((s: { start: string }) => s.start), ["2026-10-29T14:30:00-07:00", "2026-10-29T15:00:00-07:00"]);
+    const expected = { days: ["thu"], after: "13:00", before: "16:00", from: "2026-10-29", to: "2026-10-29" };
+    assert.deepEqual(replaced.json.resolvedConstraints, expected);
+    const saved = readJson<typeof ledger>(join(home, "ledger.json"), { requests: [] });
+    assert.deepEqual(saved.requests.find(r => r.id === "kelp")!.constraints, expected);
+    assert.deepEqual(saved.requests.find(r => r.id === "other"), ledger.requests.find(r => r.id === "other"));
+  });
+  await t.test("an exact-time owner deadline replaces the saved deadline for checking, alternatives and persistence", () => {
+    const conditions = { days: ["thu"], after: "13:00", before: "16:00", from: "2026-10-29", to: "2026-10-29" };
+    const seeded = { ...ledger, requests: ledger.requests.map(r => r.id === "kelp" ? { ...r, constraints: conditions } : r) };
+    writeJson(busyFile, { busy: [busy], coverage, degraded: [] });
+    writeJson(join(home, "ledger.json"), seeded);
+    const free = cli("slots.ts", [...args.slice(0, 2), "--at", "2026-10-29T15:30:00-07:00", ...args.slice(4), "--request", "kelp", "--before", "17:00"], env);
+    assert.equal(free.status, 0, free.stderr);
+    assert.equal(free.json.free, true);
+    assert.equal(free.json.outsideHours, false);
+    const expected = { ...conditions, before: "17:00" };
+    assert.deepEqual(readJson<typeof ledger>(join(home, "ledger.json"), { requests: [] }).requests.find(r => r.id === "kelp")!.constraints, expected);
+    writeJson(join(home, "ledger.json"), seeded);
+    const busyCheck = cli("slots.ts", [...args, "--request", "kelp", "--before", "17:00"], env);
+    assert.equal(busyCheck.status, 0, busyCheck.stderr);
+    assert.equal(busyCheck.json.reason, "busy");
+    assert.equal(busyCheck.json.outsideHours, false);
+    assert.deepEqual(busyCheck.json.alternatives, check.json.alternatives);
+    assert.deepEqual(busyCheck.json.resolvedConstraints, expected);
+    assert.deepEqual(readJson<typeof ledger>(join(home, "ledger.json"), { requests: [] }).requests.find(r => r.id === "kelp")!.constraints, expected);
+  });
   await t.test("a busy check never saves its matching start pin outside the passed date range", () => {
     writeJson(join(home, "ledger.json"), ledger);
     const outside = cli("slots.ts", [...args, "--request", "kelp", "--from", "2026-10-06", "--to", "2026-10-21"], env);
