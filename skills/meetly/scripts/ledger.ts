@@ -82,6 +82,7 @@ export type Request = {
   offered: Offer[];
   // Only committed replacement holds are actionable on a booked request.
   bookedReplacement?: boolean;
+  replacement?: Pick<Request, "format" | "location" | "travel">;
   status: Status;
   eventId?: string;
   holdCleanup?: HoldCleanup[];
@@ -113,11 +114,12 @@ export const requestEvents = (request: Request): HoldRef[] => [
 export type Ledger = { requests: Request[]; blockedHandles?: string[] };
 
 export type NewRequest = Omit<Request,
-  "travelEvents" | "id" | "channel" | "contactApproved" | "lastGuestReplyAt" | "lastNudge" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "bookedReplacement" | "meetUrl" | "reminder"
+  "replacement" | "travelEvents" | "id" | "channel" | "contactApproved" | "lastGuestReplyAt" | "lastNudge" | "calendarRevision" | "status" | "eventId" | "holdCleanup" | "pendingOwner" | "booked" | "bookedReplacement" | "meetUrl" | "reminder"
   | "startedAt" | "startCompletedAt" | "detailsAskedAt"
   | "offeredAt" | "createdAt" | "updatedAt"> & { channel?: Request["channel"]; status?: "asked" | "offered" };
 export type Patch = Partial<Pick<Request,
   "travel" | "travelEvents" | "status" | "chatUid" | "eventId" | "offered" | "bookedReplacement" | "holdCleanup" | "name" | "location" | "allowOverlap" | "constraints" | "excludedDays" | "topic" | "format" | "locale">> & {
+  replacement?: Request["replacement"] | null;
   pendingOwner?: PendingOwner | null;
   booked?: Booked | null;
   meetUrl?: string | null;
@@ -130,10 +132,10 @@ const FORMATS: readonly Format[] = ["meet", "in_person", "phone", "unknown"];
 const OUTCOMES: readonly Reminder["outcome"][] = ["sent", "cancelled", "no-link"];
 const PATCH_KEYS = [
   "travel", "travelEvents", "status", "chatUid", "eventId", "offered", "bookedReplacement", "holdCleanup", "name", "location", "allowOverlap", "constraints", "excludedDays", "topic", "pendingOwner",
-  "format", "locale", "booked", "meetUrl", "reminder",
+  "format", "locale", "booked", "meetUrl", "reminder", "replacement",
 ];
 // Keys a patch can clear with null.
-const NULLABLE = ["pendingOwner", "booked", "meetUrl", "reminder"] as const;
+const NULLABLE = ["replacement", "pendingOwner", "booked", "meetUrl", "reminder"] as const;
 
 const isDate = (t: unknown) => typeof t === "string" && !Number.isNaN(Date.parse(t));
 
@@ -291,7 +293,7 @@ export function addRequest(ledger: Ledger, input: NewRequest, now: number, id: s
   const channel = input.channel ?? "text";
   if (channel !== "text" && channel !== "email") throw new Error("channel must be text or email");
   if (channel === "email" && !input.handle.includes("@")) throw new Error("email requests need an email address");
-  for (const key of ["calendarRevision", "travelEvents"]) {
+  for (const key of ["calendarRevision", "travelEvents", "replacement"]) {
     if (key in input) throw new Error(`${key} is managed by calendar.ts`);
   }
   if ("detailsAskedAt" in input) throw new Error("detailsAskedAt is managed by request-view.ts");
@@ -396,6 +398,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
       throw new Error("pendingOwner needs askedAt and a contact request, short question or valid start and end");
     }
   }
+  if (patch.replacement) { checkFormat(patch.replacement.format); travelFor(patch.replacement); }
   if (patch.travel !== undefined) checkTravel(patch.travel);
   if (patch.format !== undefined) checkFormat(patch.format);
   if (patch.locale !== undefined) checkLocale(patch.locale);
@@ -574,7 +577,7 @@ if (isMain(import.meta.url)) {
         if (!values.id) throw new Error("usage: ledger.ts update --id X --json '<patch>'");
         const patch = jsonArg(values);
         if (patch.pendingOwner && ("contact" in patch.pendingOwner || ("question" in patch.pendingOwner && patch.pendingOwner.overlap))) throw new Error("Contact and overlap decisions require the owner DM tools.");
-        for (const key of ["travel", "travelEvents", "status", "eventId", "offered", "bookedReplacement", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location", "durationMin", "allowOverlap"]) {
+        for (const key of ["replacement", "travel", "travelEvents", "status", "eventId", "offered", "bookedReplacement", "holdCleanup", "booked", "meetUrl", "reminder", "calendarRevision", "format", "location", "durationMin", "allowOverlap"]) {
           if (key in patch) throw new Error(`${key} is managed by calendar.ts or reminder-check.ts`);
         }
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => updateRequest(l, values.id!, patch, now));

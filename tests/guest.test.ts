@@ -256,6 +256,8 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
   const names: string[] = [];
   plugin.register({ on() {}, registerTool(factory: (ctx: object) => { name: string; parameters: { properties: object; required: string[] } }) {
     const tool = factory(context); names.push(tool.name);
+    if (["meetly_offer_owner_group", "meetly_offer_owner_dm"].includes(tool.name))
+      assert.ok(tool.parameters.required.includes("travel"), tool.name);
     if (tool.name === "meetly_ask_owner") {
       assert.deepEqual(Object.keys(tool.parameters.properties), ["question"]);
       assert.deepEqual(tool.parameters.required, ["question"]);
@@ -2147,14 +2149,6 @@ for (const booked of [false, true]) test(`decline notifies the owner for a legac
   assert.match(f.ownerLines.at(-1)!, booked ? /cancelled/ : /declined/);
 });
 
-test("owner offer schemas require an explicit travel decision", () => {
-  for (const register of [registerOwnerGroupTool, registerOwnerDmTool]) {
-    let tool: any;
-    register({ registerTool(factory: any) { tool = factory(context); } });
-    assert.ok(tool.parameters.required.includes("travel"), tool.name);
-  }
-});
-
 for (const override of [false, true]) test(`booked replacement persists its travel estimate with owner override=${override}`, async t => {
   const f = fixture(t);
   const oldTravel = { beforeMin: 15, afterMin: 15, ...(override ? { override: true } : {}) };
@@ -2166,7 +2160,8 @@ for (const override of [false, true]) test(`booked replacement persists its trav
   const result = await f.act(context, "other_times", { offer_week: false, travel: estimate }) as any;
   assert.equal(result.error, undefined, JSON.stringify(result));
   const expected = override ? oldTravel : estimate;
-  assert.deepEqual(f.request().travel, expected);
+  assert.deepEqual(f.request().travel, original.travel);
+  assert.deepEqual(f.request().replacement?.travel, expected);
   assert.deepEqual(f.request().booked, original.booked);
   assert.equal(f.request().eventId, original.eventId);
   const moved = await f.act(context, "pick", { start: result.offered[0].start }) as any;
@@ -2177,4 +2172,33 @@ for (const override of [false, true]) test(`booked replacement persists its trav
   assert.deepEqual(children.map(e => (Date.parse(e.end.dateTime) - Date.parse(e.start.dateTime)) / 60_000), [expected.beforeMin, expected.afterMin]);
   assert.doesNotMatch(JSON.stringify(moved), /beforeMin|afterMin|travelEvents/);
   t.diagnostic(JSON.stringify({ replacement: result, moved, privateTravel: request.travel, children, ownerNotice: f.ownerLines.at(-1) }));
+});
+
+for (const originalFormat of ["meet", "in_person"] as const) test(`replacement from ${originalFormat} keeps the active meeting until its proposed place and travel are picked`, async t => {
+  const f = fixture(t);
+  const oldTravel = originalFormat === "meet" ? { beforeMin: 0, afterMin: 0 } : { beforeMin: 15, afterMin: 15 };
+  await f.act(context, "format", { format: originalFormat, location: originalFormat === "meet" ? "" : "Old cafe", travel: oldTravel });
+  await f.act(context, "pick", { start: offers[0]!.start });
+  const original = f.request(), event = structuredClone(f.events.get(original.eventId!)!);
+  const proposal = { format: "in_person" as const, location: "Library", travel: { beforeMin: 40, afterMin: 25 } };
+  const next = { start: "2026-10-06T11:00:00Z", end: "2026-10-06T11:30:00Z" };
+  await offerRequest({ requestId: original.id, origin: original.origin, handle: original.handle, topic: original.topic,
+    ...proposal, offered: [next] });
+  assert.deepEqual(f.request().travel, original.travel);
+  assert.equal(f.request().format, original.format);
+  assert.equal(f.request().location, original.location);
+  assert.deepEqual(f.events.get(original.eventId!)!, event);
+  const moved = await f.act(context, "pick", { start: next.start }) as any;
+  assert.equal(moved.error, undefined, JSON.stringify(moved));
+  assert.equal(f.request().eventId, original.eventId);
+  assert.equal(moved.format, proposal.format);
+  assert.equal(moved.location, proposal.location);
+  assert.deepEqual(f.request().travel, proposal.travel);
+  assert.equal(f.events.get(original.eventId!)!.location, proposal.location);
+  assert.deepEqual(f.request().travelEvents!.map(ref => {
+    const child = f.events.get(ref.holdId)!;
+    return (Date.parse(child.end.dateTime) - Date.parse(child.start.dateTime)) / 60_000;
+  }), [40, 25]);
+  assert.doesNotMatch(JSON.stringify(moved), /beforeMin|afterMin|travelEvents/);
+  t.diagnostic(JSON.stringify({ original: { format: original.format, location: original.location, travel: original.travel }, proposal, moved, ownerNotice: f.ownerLines.at(-1) }));
 });

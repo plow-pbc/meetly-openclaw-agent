@@ -79,7 +79,7 @@ they do not appear in the scheduled reminder list.
       release`.
    6. Run `contact.ts --handle <sender>` for their name, then `ledger.ts save
       --json` with `status: "asked"`, `origin: "inbound"`, `handle`, `name`,
-      `sourceRowid` = the request's rowid, `topic`, `meal` if applicable, and
+      `sourceRowid` = the request's rowid, `topic`, `travel` using `meetly-travel`, `meal` if applicable, and
       `durationMin` only when explicitly stated; otherwise omit it and let the
       ledger resolve the meal/config default. Include `proposed` for any times they proposed, their `locale`, and
       `format`: the format if their words say it (`meetly` "Meeting
