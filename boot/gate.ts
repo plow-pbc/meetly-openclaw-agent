@@ -22,3 +22,17 @@ export function applyGate(config: Record<string, any>): Record<string, any> {
   config.plugins.entries.meetly = { enabled: true, hooks: { allowConversationAccess: true } };
   return config;
 }
+
+/**
+ * OpenClaw's own guard against a model repeating one failing tool call: it
+ * warns, then blocks the repeat and lets the model answer instead. Off by
+ * default; the base owns `tools`, so it is set per agent.
+ */
+export function guardToolLoops(config: Record<string, any>): Record<string, any> {
+  config.agents ??= {};
+  config.agents.entries ??= {};
+  config.agents.entries.main ??= {};
+  const tools = config.agents.entries.main.tools ?? {};
+  config.agents.entries.main.tools = { ...tools, loopDetection: { ...tools.loopDetection, enabled: true } };
+  return config;
+}
