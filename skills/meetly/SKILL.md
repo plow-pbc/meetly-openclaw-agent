@@ -24,7 +24,7 @@ exits non-zero: report that line; never guess a result. State lives in
 | | `delivery --id X --kind notify\|start\|answer --action begin\|complete\|clear` | `{request, delivery?}`: `begin` records the attempt before sending (a start returns `delivery.state: reserved`, `sendNow: true`; starts and answers refuse a second attempt); `complete` records success or unknown delivery; `clear` resets an unlinked start or an answer attempt, only on the owner's explicit instruction |
 | | `reminders [--lead-min N]` | `{requests}`: booked Meets whose link is due (default 10 min before, until 5 min after the start) |
 | `event.ts` | `--in F` | `{id, status, start, end, meetUrl}` from a saved calendar event read |
-| `calendar.ts` | `offer --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer; uses explicit, then saved, then meal-default or configured `durationMin`; requires matching intervals; retains an existing offer on failure; drops a failed new request while retaining cleanup |
+| `calendar.ts` | `offer [--id X] --json '<request with slots, no hold ids>'` | `{request}`: create holds and atomically replace the offer; uses explicit, saved, meal-default or configured `durationMin` and requires matching intervals; retains an existing offer on failure; drops a failed new request while retaining cleanup |
 | | `approve-time --id X --json '{"start":"<approved time>"}'` | `{approved,request,...}`; a time approval never grants an overlap. On `TIME_APPROVAL_BUSY`, use `slots.ts --request X --near <near> --no-overlap` |
 | | `book --id X --json '{"start":"<ISO>","end":"<ISO for a non-offered time>","attendees":"<email if known>"}'` | `{request, confirmationTime, meetUrl, warning?:"no-meet-link"}`: book and release the other holds |
 | | `format --id X --json '{"format":"meet", "location":"<optional place>"}'` | save format/location on an offered request, or update and record a booked event; both use the calendar lock |
@@ -43,6 +43,8 @@ exits non-zero: report that line; never guess a result. State lives in
 | `contact.ts` | `--handle <+E164 or email>` | `{found:true, handle, name, phones, emails, matches}`, `{found:false, handle}` or `{found:false, handle, reason:"mac-unavailable"}` |
 
 Notes:
+- A booked request may have replacement `offered` times and `offeredAt`. Expiry releases only
+  those replacement holds; the original event remains until a move or cancellation.
 - `pendingOwner` holds one `{question, askedAt}` or `{start, end, askedAt}`.
   `ledger.ts pending` lists both kinds for "Owner confirms" in `meetly-confirm`.
 - A request's `format` is `meet`, `in_person`, `phone` or `unknown`.

@@ -5,9 +5,10 @@ export function createGuestTurns() {
   return {
     begin(ctx) {
       if (ctx.runId && ctx.sessionKey && turns.get(ctx.sessionKey)?.runId !== ctx.runId) {
-        turns.set(ctx.sessionKey, { runId: ctx.runId });
+        turns.set(ctx.sessionKey, { runId: ctx.runId, startedAt: Date.now() });
       }
     },
+    take(sessionKey) { return turns.get(sessionKey)?.startedAt; },
     reply(sessionKey, action, result) {
       const turn = turns.get(sessionKey);
       if (["pick", "other_times", "format", "decline"].includes(action) && !result.error && result.status) {

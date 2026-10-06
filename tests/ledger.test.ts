@@ -148,7 +148,7 @@ test("update resets offeredAt with new offers and rejects unknown keys", () => {
 test("expired: 48 hours after the offer, open requests only", () => {
   let l = addRequest(empty(), input(), T0, "r_1");
   l = addRequest(l, input({ handle: "+15559999999" }), T0, "r_2");
-  l = updateRequest(l, "r_2", { status: "booked" }, T0);
+  l = updateRequest(l, "r_2", { status: "booked", offered: [] }, T0);
   assert.deepEqual(expiredRequests(l, 48, T0 + 47 * HOUR), []);
   assert.deepEqual(expiredRequests(l, 48, T0 + 48 * HOUR).map((r) => r.id), ["r_1"]);
 });
