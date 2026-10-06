@@ -109,8 +109,9 @@ async function pick(request: Request, config: Config, start: string, attendees?:
     && Date.parse(request.offeredAt!) < turnStartedAt!)) {
     return { error: "Present the replacement times and wait for the guest to choose in a later turn. The booking is unchanged." };
   }
-  const travel = request.travel;
-  const checked = await check(request, config, offer.start);
+  const meeting = request.replacement ?? request;
+  const travel = meeting.travel;
+  const checked = await check({ ...request, ...meeting }, config, offer.start);
   if (request.excludedDays?.includes(checked.slot.dayOfWeek) || !checked.free || checked.outsideHours || !withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, request.constraints)) return { error: "That time is no longer available.", code: "TIME_UNAVAILABLE",
     recovery: { action: "other_times", tool: "meetly_other_times", retry: false } };
   if (request.status === "booked") {
@@ -135,7 +136,8 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     const message = "For that week, keep offer_week: true and omit next_week entirely. Retain excludedDays and any preferred weekday. next_week is only for a new week relative to a source timestamp, with offer_week: false. No search or holds were made; retry using only the intended scope.";
     return { error: message, code: "DATE_SCOPE_CONFLICT", recovery: { action: "retry", message } };
   }
-  const travel = request.travel?.override ? request.travel : args.travel ?? request.travel;
+  const meeting = request.replacement ?? request;
+  const travel = meeting.travel?.override ? meeting.travel : args.travel ?? meeting.travel;
   const preferred = preferences(args, config.timezone);
   const newlyExcluded = preferences({ days: args.excludedDays }, config.timezone).days ?? [];
   const restored = preferences({ days: args.restoredDays }, config.timezone).days ?? [];
@@ -152,7 +154,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
   }
   let exact: Slot | undefined;
   if (start) {
-    const checked = await check({ ...request, travel }, config, start);
+    const checked = await check({ ...request, ...meeting, travel }, config, start);
     if (!withinConstraints(Date.parse(checked.slot.start), Date.parse(checked.slot.end), config.timezone, availableDays)) {
       return { error: "That weekday was ruled out. Choose a different day." };
     }
@@ -165,7 +167,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     preferred.before = checked.slot.end.slice(11, 16);
   }
   const now = Date.now();
-  const query: SlotQuery = { busy: [], ...bounds, now, config, travel, format: request.format,
+  const query: SlotQuery = { busy: [], ...bounds, now, config, travel, format: meeting.format,
     meal: request.meal, startTime: request.constraints?.startTime, durationMin: request.durationMin, allowOverlap: request.allowOverlap, locale: request.locale, exclude: [...currentOffers(request).map(o => o.start), ...(request.booked ? [request.booked.start] : [])] };
   const range = preferredSearchCoverage(query, preferred);
   const fromDate = localIso(Date.parse(range.from), config.timezone).slice(0, 10);
@@ -191,7 +193,7 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
         : "Those times don't work. I can't confirm another time yet.",
       recovery: { action: "wait", retry: false } };
   }
-  const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = request;
+  const { channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale } = { ...request, ...meeting };
   request = (await write(request, { action: "offer", request: {
     channel, origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale, travel,
     offered: slots.map(slot => ({ start: slot.start, end: slot.end, account: config.defaultAccount })),

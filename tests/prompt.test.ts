@@ -80,6 +80,7 @@ test("the poll never contacts anyone new: it saves the request as asked and asks
   assert.ok(poll.includes("never contacts anyone new: it opens no group and messages no one who wrote to the owner"));
   assert.ok(poll.includes("`ledger.ts save --json` with `status: \"asked\"`"));
   assert.ok(poll.includes("No holds, no group, no message to them."));
+  assert.match(poll, /`travel`.*`meetly-travel`/);
   assert.ok(poll.includes("Run `pipeline.ts nudge` once"));
   assert.ok(poll.includes("give https://plow.co/download/latch. Go to step 6: it needs no message reads."));
 });
