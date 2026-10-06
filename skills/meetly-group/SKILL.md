@@ -34,8 +34,8 @@ In the owner’s main DM, read `meetly-travel`, "Flexible blockers", before sear
 alternatives to a busy preferred time. Use `slots.ts --at <time>` with the same
 format/travel to check that exact candidate. Inspect with `meetly_movable` before
 `--near`. If a blocker looks flexible, ask once privately, finish `NO_REPLY` and
-wait for a new owner message; previous decisions never authorize overlap. Only
-if no blocker looks flexible or the owner refuses should you search alternatives.
+wait for a new owner message; previous decisions never authorize overlap. If rigid or refused, offer the returned nearby alternatives in the same response;
+do not ask permission to search them.
 Group and guest requests use alternatives without private inspection.
 
 
@@ -110,9 +110,9 @@ before searching, keeping any hard conditions they did not change.
    --format <format> --travel '<estimate>'` (plus `--request <id>` for saved requests).
    `--at` rejects search filters: no days/after/before/from/to/exclude/count/near.
    If busy in the owner's main DM, use the inspection flow above before `--near` or offers.
-   A permission question ends this turn. Ask before searching unrequested alternatives;
-   once authorized use `--near <requested ISO start>`, keeping hard conditions such as
-   "only at 11:30", and offer in the returned order.
+   A persisted permission question ends this turn. Otherwise offer its returned nearby
+   alternatives now, keeping hard conditions and the returned ranking; never pin
+   alternatives to the start just found busy.
    - **No slots.** If the person's `proposed` times block it, run again
      without them, keeping `constraints`, and say those times don't work.
      If `constraints` block it, tell the owner which one and suggest
@@ -194,8 +194,8 @@ and Contacts has no card; keep it out of `topic`.
 Extract the topic, proposed times, hard conditions, explicit duration, format and
 place, and the request's saved overlap permission. Follow
 "Offer times" with `origin: owner`, including its inspection and wait branch for busy
-preferred times. Inspect also when few free options fit. Ask before searching
-unrequested alternatives; preserve duration, travel and hard conditions. State the
+preferred times. Inspect also when few free options fit. For busy preferred times, use the returned nearby alternatives after rigid inspection
+or refusal; preserve duration, travel and hard conditions. State the
 time zone and confirm the offer once in its meeting thread.
 
 For an owner-requested duration change on an open request, read busy times and run

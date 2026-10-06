@@ -69,7 +69,7 @@ test("private tool uses runtime identity, not caller-supplied identity", async t
 test("one blocker across the full travel window returns only its title and previous answer", async t => {
   const f = fixture(t);
   const result = await movableAction(owner, inspect, f.options);
-  assert.deepEqual(result, { candidates: [{ ...slot, title: "Focus block", previous: null }] });
+  assert.deepEqual(result, { candidates: [{ ...slot, title: "Focus block", previous: null }], requiresRequest: true });
   assert.doesNotMatch(JSON.stringify(result), /owner@example|focus"|PRIVATE|location|attendees/);
   assert.ok(f.calls[0]!.includes("2026-10-05T11:35:00.000Z"));
   assert.ok(f.calls[0]!.includes("2026-10-05T13:25:00.000Z"));

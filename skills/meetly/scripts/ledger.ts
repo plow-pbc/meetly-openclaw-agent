@@ -9,6 +9,7 @@ import { isMain, run } from "./cli.ts";
 import { holdHours, parseTime, loadConfig, MEAL_DEFAULTS, reminderLeadMin, type Meal } from "./config.ts";
 import { isMeetUrl } from "./event.ts";
 import { DAYS } from "./time.ts";
+import { unpinBusyStart } from "./last-busy.ts";
 import { file } from "./paths.ts";
 import { type EventRef, type OverlapGrant } from "./busy.ts";
 import { checkTravel, travelFor, type Travel } from "./travel.ts";
@@ -17,7 +18,8 @@ export type { Constraints } from "./slots.ts";
 import { readJson, updateJson } from "./store.ts";
 
 // `asked`: a request seen in the owner's messages, waiting for the owner's
-// yes before anyone is contacted. It has no offered times, holds or chat.
+// yes before anyone is contacted. Owner-originated requests may establish a
+// delivery context before the first offer; they still have no holds.
 export type Status = "asked" | "offered" | "booked" | "dropped" | "expired";
 export type Offer = { start: string; end: string; holdId?: string; account: string };
 export type HoldRef = { holdId: string; account: string };
@@ -412,7 +414,7 @@ export function updateRequest(ledger: Ledger, id: string, patch: Patch, now: num
   const at = new Date(now).toISOString();
   const updated: Request = { ...ledger.requests[index]!, updatedAt: at };
   requireDuration(updated.durationMin);
-  if (updated.status === "asked" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
+  if (updated.status === "asked" && updated.origin !== "owner" && patch.chatUid !== undefined) throw new Error("an asked request has no chat until the owner says yes and it is offered");
   if (updated.chatUid && patch.chatUid !== undefined && patch.chatUid !== updated.chatUid) throw new Error("a request cannot move to another chat");
   for (const [key, value] of Object.entries(patch)) {
     if (value === null && (NULLABLE as readonly string[]).includes(key)) delete updated[key as (typeof NULLABLE)[number]];
@@ -448,7 +450,8 @@ export function recordDelivery(ledger: Ledger, id: string, kind: string, action:
     const { answerAttemptedAt, ...question } = pending;
     return updateRequest(ledger, id, { pendingOwner: action === "begin" ? { ...question, answerAttemptedAt: new Date(now).toISOString() } : question }, now);
   }
-  if (request.status !== "offered") throw new Error(`cannot ${kind} for ${request.status} request`);
+  if (request.status !== "offered" && !(request.status === "asked" && request.origin === "owner")) throw new Error(`cannot ${kind} for ${request.status} request`);
+  if (request.status === "asked") checkContact(ledger, request.handle, request);
   const [attempt, completed] = ["startedAt", "startCompletedAt"] as const;
   const at = new Date(now).toISOString();
   const updated = { ...request, updatedAt: at };
@@ -558,6 +561,7 @@ if (isMain(import.meta.url)) {
         const input = jsonArg(values);
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires an inspected question answered through meetly_answer_owner.");
         const id = requestId();
+        if (input.constraints) input.constraints = unpinBusyStart(input.constraints, loadConfig().timezone, now);
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => addRequest(l, input, now, id));
         if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
         return { request: ledger.requests.find((r) => r.id === id) };
@@ -569,6 +573,7 @@ if (isMain(import.meta.url)) {
         }
         if ("allowOverlap" in input || "allowOverlapTitles" in input) throw new Error("Overlap authorization requires an inspected question answered through meetly_answer_owner.");
         const id = requestId();
+        if (input.constraints) input.constraints = unpinBusyStart(input.constraints, loadConfig().timezone, now);
         const ledger = updateJson<Ledger>(path, EMPTY, (l) => saveRequest(l, input, now, id));
         if (input.origin === "inbound" && input.status === "asked" && doNotContact(ledger, input.handle)) return { skipped: "do-not-contact" };
         return { request: findOpenByHandle(ledger, input.handle) ?? findOpenBySource(ledger, input) };

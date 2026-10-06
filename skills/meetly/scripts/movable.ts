@@ -5,11 +5,12 @@ import { calendarListings, eventTitle } from "./calendar-read.ts";
 import { requestEvents, sameRequest, updateRequest, type Ledger, type OverlapChoice } from "./ledger.ts";
 import { type BridgeOptions } from "./mac.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
+import { lastBusy } from "./last-busy.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { travelRange, type TravelInput } from "./travel.ts";
 
-export type MovableArgs = TravelInput & { action: "inspect"; requestId?: string;
+export type MovableArgs = TravelInput & { action: "inspect"; requestId?: string; ask?: boolean;
   candidates?: { start: string; end: string }[] };
 
 export async function movableAction(ctx: OwnerContext, args: MovableArgs, options: BridgeOptions = {}) {
@@ -17,6 +18,8 @@ export async function movableAction(ctx: OwnerContext, args: MovableArgs, option
   try {
     const path = file("ledger.json");
     const config = loadConfig();
+    const last = args.candidates === undefined ? lastBusy() : null;
+    if (last && (args.requestId === undefined || last.requestId === undefined || args.requestId === last.requestId)) args = { ...last, ...args, candidates: [last.slot] };
     if (args.action !== "inspect" || !Array.isArray(args.candidates) || args.candidates.length < 1 || args.candidates.length > 2) throw new Error("inspect one or two candidate times");
     const request = args.requestId === undefined ? undefined : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === args.requestId);
     if (args.requestId !== undefined && !request) throw new Error("unknown request");
@@ -53,7 +56,8 @@ export async function movableAction(ctx: OwnerContext, args: MovableArgs, option
       return [{ start: slot.start, end: slot.end, title, event: { account: event.account, id: event.id } }];
     });
     const candidates = choices.map(({ event: _event, ...slot }) => ({ ...slot, previous: memory[slot.title.toLowerCase()] ?? null }));
-    if (!request || !choices.length) return { candidates };
+    if (!choices.length || args.ask === false) return { candidates };
+    if (!request) return { candidates, requiresRequest: true };
     if (!request.chatUid || !["asked", "offered", "booked"].includes(request.status)) throw new Error("inspect a linked scheduling request");
     const pendingOwner = { askedAt: new Date(Date.now()).toISOString(), question: "May I offer one of these times over its existing commitment, leaving that event unchanged?", overlap: { choices, travel: travel.travel! } };
     updateJson<Ledger>(path, { requests: [] }, latest => {

@@ -6,7 +6,7 @@ import { movableAction } from "../skills/meetly/scripts/movable.ts";
 import { guestAction } from "../skills/meetly/scripts/guest.ts";
 import { calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.ts";
 import { answerOwner } from "../skills/meetly/scripts/answer-owner.ts";
-import { addRequest, pendingOwnerList, type Ledger } from "../skills/meetly/scripts/ledger.ts";
+import { addRequest, pendingOwnerList, recordDelivery, updateRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
 import { DEFAULTS } from "../skills/meetly/scripts/config.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { calendarEvent, fakeCalendar, tmpHome } from "./helpers.ts";
@@ -15,7 +15,7 @@ const now = Date.parse("2026-10-03T08:00:00Z"), account = "owner@example.com";
 const slot = { start: "2026-10-05T12:00:00Z", end: "2026-10-05T12:30:00Z" };
 const owner = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "+15550001111", nativeChannelId: "owner-dm", sessionKey: "agent:main:main" };
 
-for (const scenario of ["allow", "refuse", "same-title", "other-account", "revoked", "email", "prior-grant", "booked", "travel", "asked", "travel-estimate", "guest-search", "guest-exact", "replacement", "clear-grant", "wrong-interval", "delivery-failure", "second-choice", "email-choice", "format-growth", "travel-growth"] as const) test(`fresh overlap answer binds exact inspected event: ${scenario}`, async t => {
+for (const scenario of ["allow", "refuse", "same-title", "other-account", "revoked", "email", "prior-grant", "booked", "travel", "asked", "travel-estimate", "guest-search", "guest-exact", "replacement", "clear-grant", "wrong-interval", "delivery-failure", "second-choice", "email-choice", "format-growth", "travel-growth", "new-request"] as const) test(`fresh overlap answer binds exact inspected event: ${scenario}`, async t => {
   const home = tmpHome(), old = process.env.MEETLY_HOME;
   process.env.MEETLY_HOME = home;
   t.mock.method(Date, "now", () => now);
@@ -36,6 +36,17 @@ for (const scenario of ["allow", "refuse", "same-title", "other-account", "revok
     const result = await calendar.command({ argv });
     return Response.json({ result: { content: [{ type: "text", text: JSON.stringify({ exit_code: 0, output: result.output }) }] } });
   } };
+  if (scenario === "new-request") {
+    writeJson(join(home, "ledger.json"), { requests: [] });
+    const initial = await movableAction(owner, { action: "inspect", candidates: [slot], format: "meet", travel: { beforeMin: 0, afterMin: 0 } }, bridge);
+    assert.equal(initial.requiresRequest, true, "an unsaved inspection must require context before asking");
+    assert.equal(initial.askedAt, undefined);
+    const created = addRequest({ requests: [] }, { origin: "owner", status: "asked", handle: "+15550002222", topic: "Lunch", durationMin: 30,
+      format: "meet", travel: { beforeMin: 0, afterMin: 0 }, offered: [] }, now, "request");
+    writeJson(join(home, "ledger.json"), updateRequest(recordDelivery(recordDelivery(created, "request", "start", "begin", now), "request", "start", "complete", now), "request", { chatUid: "guest-chat" }, now));
+    assert.deepEqual(read().offered, []);
+    assert.equal(calendar.calls.some(c => c[2] === "create"), false);
+  }
   const twoChoices = scenario.endsWith("choice");
   const inspected = await movableAction(owner, { action: "inspect", requestId: "request", candidates: twoChoices ? [{ start: "2026-10-05T13:00:00Z", end: "2026-10-05T13:30:00Z" }, slot] : [slot], ...(scenario === "travel-estimate" ? { travel: { beforeMin: 45, afterMin: 0 } } : {}) }, bridge);
   assert.ok(inspected.askedAt, JSON.stringify(inspected));
@@ -49,6 +60,7 @@ for (const scenario of ["allow", "refuse", "same-title", "other-account", "revok
   const options = { command: calendar.command, now: () => now };
   if (scenario === "prior-grant") writeJson(join(home, "ledger.json"), { requests: [{ ...read(), allowOverlap: [{ account, id: "unapproved" }] }] });
   const before = read();
+  if (scenario === "new-request") assert.equal(readJson<Ledger>(join(home, "ledger.json"), { requests: [] }).requests.length, 1);
   assert.ok("error" in await answerOwner({ ...owner, turnStartedAt: now + 1 }, { ...args, outcome: "answer" }, send, options));
   assert.deepEqual(read(), before, "generic answers cannot consume overlap decisions");
   if (twoChoices) {
