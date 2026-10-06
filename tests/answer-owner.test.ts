@@ -227,6 +227,48 @@ test(`exhausted-search owner tool searches, holds and delivers without rejected 
   assert.equal(deliveries.length, 1);
 });
 
+test("exhausted-search approval cannot reserve a question replaced during its calendar write", async t => {
+  const f = alternativesFixture(t);
+  const fetch = globalThis.fetch;
+  let replacement: unknown;
+  t.mock.method(globalThis, "fetch", async (url: any, init: RequestInit) => {
+    if (!replacement && JSON.parse(String(init.body)).params.arguments.argv[2] === "create") {
+      const refusal = await answerOwner({ ...ctx, sessionKey: "group-mia", nativeChannelId: "group-mia" },
+        { ...args, declineAlternatives: true }, async () => assert.fail("refusal is already visible"));
+      assert.equal("error" in refusal, false);
+      await guestAction({ messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "group-mia", requesterSenderId: "mia@example.com" },
+        "ask_owner", { question: "Which entrance?" }, async () => {});
+      replacement = f.read().requests[0]!.pendingOwner;
+      assert.ok(replacement);
+    }
+    return fetch(url, init);
+  });
+  let sends = 0;
+  const { tool } = ownerTool(async () => { sends++; return { status: "sent" }; });
+  const result = await tool.execute("approve", { ...args, text: "Yes" });
+  assert.equal(result.isError, true);
+  assert.equal(sends, 0);
+  assert.deepEqual(f.read().requests[0]!.pendingOwner, replacement);
+  assert.ok(f.read().requests[0]!.offered.every(o => o.holdId));
+});
+
+for (const [locale, expected] of [
+  ["pt-BR", /^Patrick tem disponibilidade .+ ou .+\. Qual horário funciona para você\?$/],
+  ["pt-PT", /^Patrick tem disponibilidade .+ ou .+\. Qual horário funciona para você\?$/],
+  ["fr-FR", /^Patrick: .+ ou .+\?$/],
+] as const) test(`exhausted-search offer uses the saved guest locale: ${locale}`, async t => {
+  const f = alternativesFixture(t);
+  writeJson(f.path, updateRequest(f.read(), "mia", { locale }, Date.now()));
+  const deliveries: string[] = [];
+  const { tool } = ownerTool(async input => { deliveries.push(input.payloads[0].text); return { status: "sent" }; });
+  const result = await tool.execute("approve", { ...args, text: "Yes" });
+  assert.equal(result.isError, false, JSON.stringify(result.details));
+  assert.equal(deliveries.length, 1);
+  assert.match(deliveries[0]!, expected);
+  assert.doesNotMatch(deliveries[0]!, / is free | or |Which time/);
+  t.diagnostic(deliveries[0]!);
+});
+
 for (const outcome of ["empty", "calendar-failure", "hold-failure", "delivery-unknown"])
 test(`exhausted-search transaction retains pending on ${outcome}`, async t => {
   const f = alternativesFixture(t);

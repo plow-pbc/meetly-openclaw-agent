@@ -48,8 +48,14 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
         origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
         offered: slots.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),
       } }, { validate(latest) { if (JSON.stringify(latest) !== JSON.stringify(before)) throw new Error("Request changed. Read pending requests again."); } })).request;
-      const labels = request.offered.map(o => localeFormatter(locale ?? "en-US", config.timezone).format(new Date(o.start)));
-      text = `${config.ownerName} is free ${labels.join(" or ")}. Which time works for you?`;
+      const guestLocale = locale ?? "en-US";
+      const labels = request.offered.map(o => localeFormatter(guestLocale, config.timezone).format(new Date(o.start)));
+      const choices = new Intl.ListFormat(guestLocale, { type: "disjunction" }).format(labels);
+      const sentences: Record<string, string> = {
+        en: `${config.ownerName} is free ${choices}. Which time works for you?`,
+        pt: `${config.ownerName} tem disponibilidade ${choices}. Qual horário funciona para você?`,
+      };
+      text = sentences[new Intl.Locale(guestLocale).language] ?? `${config.ownerName}: ${choices}?`;
     } catch (error) {
       return { error: error instanceof Error ? error.message : "Alternative search failed. The decision remains pending." };
     }
@@ -58,7 +64,9 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (!alreadyVisible) {
     try {
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {
-        if (JSON.stringify(latest.requests.find(r => r.id === request.id)) !== JSON.stringify(request)) throw new Error("request changed");
+        const current = latest.requests.find(r => r.id === request.id);
+        if (JSON.stringify(current?.pendingOwner) !== JSON.stringify(pending)) throw new Error("pending question changed");
+        if (JSON.stringify(current) !== JSON.stringify(request)) throw new Error("request changed");
         return recordDelivery(latest, request.id, "answer", "begin", Date.now());
       });
       pending = begun.requests.find(r => r.id === request.id)!.pendingOwner!;
