@@ -62,18 +62,18 @@ export async function offerOwnerGroup(ctx: OwnerContext, args: GroupRequest, sen
       ? resolveSearchConstraints(args.constraints ?? savedPolicy, args.week, now, config.timezone) : existing?.constraints;
     const proposed = args.proposed ?? (existing?.status === "asked" ? existing.proposed : undefined);
     try {
-      checkContact(ledger, handle, existing?.contactConfirmed);
+      checkContact(ledger, handle, existing);
     } catch (error) {
       if (!(error instanceof ContactConfirmationRequired)) throw error;
-      const pendingContact = { origin: "owner-group" as const, handle, name, topic, meal, durationMin, constraints, proposed,
+      const contact = { origin: "owner-group" as const, handle, name, topic, meal, durationMin, constraints, proposed,
         format, location, locale, chatUid: chat, askDetails: false, offered: [], status: "asked" as const };
       let id = existing?.id ?? requestId();
       updateJson<Ledger>(file("ledger.json"), { requests: [] }, current => {
         const saved = findOpenByHandle(current, handle);
         if (saved && saved.chatUid && saved.chatUid !== chat) throw new Error("request belongs to another conversation");
         id = saved?.id ?? id;
-        if (!saved) current = addRequest(current, pendingContact, now, id);
-        return { requests: current.requests.map(r => r.id === id ? { ...r, pendingContact, chatUid: chat } : r) };
+        if (!saved) current = addRequest(current, contact, now, id);
+        return { requests: current.requests.map(r => r.id === id ? { ...r, pendingOwner: { contact, askedAt: new Date(now).toISOString() }, chatUid: chat } : r) };
       });
       // The group receives only the coordination outcome, never the private reason.
       const dates = (label: string, value?: Constraints) => {

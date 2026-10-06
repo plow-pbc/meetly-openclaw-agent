@@ -122,7 +122,7 @@ export function registerContactTools(api, execute = runContact) {
   for (const [name, action, description, properties, required] of [
     ["meetly_contact_preference", "preference", "Set or clear a do-not-contact preference only on the owner's explicit main-DM instruction. Resolve the exact handle first. Never use in a group.",
       { handle: string, blocked: { type: "boolean" }, name: string }, ["handle", "blocked"]],
-    ["meetly_confirm_contact", "confirm", "Offer times for a saved flagged request only after the owner explicitly confirms contact in their main DM. Read the saved pendingContact (or request) and search matching times first. Preserves the contact flag and saved group chat. The confirmation applies only to this request. Never use in a group.",
+    ["meetly_confirm_contact", "confirm", "Offer times for a saved flagged request only after the owner explicitly confirms contact in their main DM. Read the saved pendingOwner.contact and search matching times first. Preserves the contact flag and saved group chat. The confirmation applies only to this request. Never use in a group.",
       { requestId: string, offered: { type: "array", minItems: 1, maxItems: 3, items: { type: "object", additionalProperties: false, required: ["start", "end"], properties: { start: string, end: string } } } }, ["requestId", "offered"]],
   ]) api.registerTool(context => ({
     name, label: name, description,

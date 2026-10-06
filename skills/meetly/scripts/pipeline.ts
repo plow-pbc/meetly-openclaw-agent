@@ -32,7 +32,7 @@ export function pipeline(ledger: Ledger, now: number, unresolved: readonly strin
     if (unresolved.includes(request.id)) {
       state = "waiting_on_us"; reason = "calendar-write"; since = request.updatedAt;
       detail = "Calendar write unresolved; reconciliation owns this alert."; nudge = false;
-    } else if (request.pendingOwner && ["offered", "booked"].includes(request.status)) {
+    } else if (request.pendingOwner && ["asked", "offered", "booked"].includes(request.status)) {
       const pending = request.pendingOwner;
       since = pending.askedAt;
       if (pending.answerAttemptedAt) {
@@ -40,8 +40,8 @@ export function pipeline(ledger: Ledger, now: number, unresolved: readonly strin
         detail = "Owner answer delivery needs checking; do not resend automatically.";
       } else {
         state = "waiting_on_owner";
-        reason = "question" in pending ? "owner-question" : "time-approval";
-        detail = "question" in pending ? `Waiting for your answer: ${JSON.stringify(line(pending.question))}.`
+        reason = "contact" in pending ? "owner-decision" : "question" in pending ? "owner-question" : "time-approval";
+        detail = "contact" in pending ? `Confirm contact for ${JSON.stringify(line(pending.contact.topic))} in our private DM before I offer times.` : "question" in pending ? `Waiting for your answer: ${JSON.stringify(line(pending.question))}.`
           : `Waiting for your approval of ${time(pending.start)}.`;
       }
     } else if (request.status === "asked" && !blocked) {

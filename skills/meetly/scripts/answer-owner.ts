@@ -16,7 +16,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   const ledger = readJson<Ledger>(path, { requests: [] });
   const request = ledger.requests.find(r => r.id === args.requestId);
   let pending = request?.pendingOwner;
-  if (!request?.chatUid || !pending || pending.askedAt !== args.askedAt
+  if (!request?.chatUid || !pending || "contact" in pending || pending.askedAt !== args.askedAt
     || !["offered", "booked"].includes(request.status)) return { error: "No matching pending meeting question. Read the pending requests again." };
   const inGroup = chat === request.chatUid && ctx.agentAccountId === (request.channel === "email" ? "email" : "chat");
   if (!(ctx.agentAccountId === "chat" && ctx.sessionKey === "agent:main:main") && !inGroup) {

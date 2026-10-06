@@ -135,7 +135,7 @@ when returned, use `schedulingResult`. Do not announce the private handoff.
     "Asked requests";
   - the owner says yes to a requested time, answers a pending meeting question
     or time approval, or books, changes or cancels a meeting → `meetly-confirm`;
-  - the owner asks what is pending or changes a contact preference → `meetly-pipeline`;
+  - the owner replies to a private contact-confirmation prompt, asks what is pending or changes a contact preference → `meetly-pipeline`;
   - the owner changes a setting, pauses, resumes or asks for status →
     `meetly-setup`, "After setup".
 - **Email turns:** load `meetly-email` and follow its “Reply routing” section.

@@ -23,15 +23,16 @@ Only the owner in their main DM can set or clear do-not-contact. Resolve one
 exact phone/email for "don't schedule with X"; if ambiguous, ask which person.
 Call `meetly_contact_preference` with `handle`, `blocked: true`, and optional `name`.
 To re-enable scheduling on the owner's instruction, use `blocked: false`.
-The flag applies to every request for that canonical handle. If there is no prior
-request, a closed preference record stores it in the ledger. Setting it does not
+A closed preference record keeps the flag for that canonical handle. Active
+requests require their own contact decision; confirming one leaves the general
+preference in place. Setting it does not
 cancel existing events; use the normal cancellation flow if the owner asks.
 Never expose this private preference in a group, including on an owner's turn.
 The owner group tool sends the confirmation request directly to the owner's DM
 and returns a neutral `silent` result. On that result, send nothing in the group,
 do not send a second DM, and do not retry an unconfirmed delivery. Only a
 confirmation in the owner's main DM authorizes `meetly_confirm_contact` for that
-specific saved `requestId`. Read its `pendingContact` (or request fields), search matching
+specific saved `requestId`. Read its `pendingOwner.contact`, search matching
 times, then pass those `offered` intervals. The tool preserves its group chat and allows
 subsequent guest scheduling for this request; an owner request or confirmation in the group does not.
 For a new DM request, save it as `asked` before requesting confirmation.

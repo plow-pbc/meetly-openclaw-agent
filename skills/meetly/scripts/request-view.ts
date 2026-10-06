@@ -32,7 +32,7 @@ export function view(request: Request, config: Config) {
     offered,
     ...(request.status === "booked" && offered.length ? { message: `Replacement times are held: ${offered.map(o => o.label).join("; ")} (${config.timezone}). The current booking remains unchanged until you pick a replacement.` } : {}),
     ...(request.booked ? { confirmationTime: formatMeetingTime(request.booked.start, config.timezone, request.locale), booked: time(request.booked), reminderAvailable: request.channel !== "email" && !!request.meetUrl, ...(request.channel === "email" && request.meetUrl ? { meetUrl: request.meetUrl } : {}) } : {}),
-    ...(request.pendingOwner ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
+    ...(request.pendingOwner && !("contact" in request.pendingOwner) ? { pendingOwner: "question" in request.pendingOwner ? { question: request.pendingOwner.question } : time(request.pendingOwner) } : {}),
     ...(request.holdCleanup?.length ? { cleanupPending: true } : {}),
   };
 }

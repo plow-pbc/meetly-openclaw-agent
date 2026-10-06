@@ -7,11 +7,11 @@ import type { Participant } from "../skills/meetly/scripts/owner-chat.ts";
 import { offerOwnerGroup } from "../skills/meetly/scripts/owner-group.ts";
 import { registerOwnerGroupTool, registerOwnerDmTool, registerContactTools } from "../plugin/owner-tools.js";
 import { confirmContactOffer, contactPreference } from "../skills/meetly/scripts/contact-policy.ts";
-import { reserveNudges } from "../skills/meetly/scripts/pipeline.ts";
+import { pipeline, reserveNudges } from "../skills/meetly/scripts/pipeline.ts";
 import plugin from "../plugin/index.js";
 import { calendarAction, offerRequest } from "../skills/meetly/scripts/calendar.ts";
 import { guestAction, type GuestAction, type GuestArgs, type GuestContext } from "../skills/meetly/scripts/guest.ts";
-import { addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
+import { doNotContact, pendingOwnerList, addRequest, type Ledger, type Request } from "../skills/meetly/scripts/ledger.ts";
 import { readJson, writeJson } from "../skills/meetly/scripts/store.ts";
 import { withinConstraints } from "../skills/meetly/scripts/slots.ts";
 import { DEFAULTS, SLOT_COUNT } from "../skills/meetly/scripts/config.ts";
@@ -1878,11 +1878,15 @@ for (const existing of [true, false]) for (const delivery of ["sent", "unknown",
     assert.equal(result.details.recovery.action, "silent");
     assert.equal(result.details.recovery.retry, false);
     assert.doesNotMatch(JSON.stringify(result), /do.?not.?contact|marked|blocked|PRIVATE|Guest|Coffee|15551234567/i);
-    const saved = f.read().requests.find(r => r.pendingContact)!;
+    const saved = f.read().requests.find(r => r.pendingOwner && "contact" in r.pendingOwner)!;
+    assert.ok(saved.pendingOwner && "contact" in saved.pendingOwner);
+    const contact = saved.pendingOwner.contact;
+    assert.ok(pendingOwnerList(f.read()).some(r => r.id === saved.id));
+    assert.equal(pipeline(f.read(), now).find(r => r.id === saved.id)?.reason, "owner-decision");
     assert.equal(saved.chatUid, "chat-one");
-    assert.equal(saved.pendingContact!.topic, "Coffee");
-    assert.equal(saved.pendingContact!.durationMin, 30);
-    assert.deepEqual(saved.pendingContact!.proposed, { from: "2026-10-05", to: "2026-10-11" });
+    assert.equal(contact.topic, "Coffee");
+    assert.equal(contact.durationMin, 30);
+    assert.deepEqual(contact.proposed, { from: "2026-10-05", to: "2026-10-11" });
     assert.equal(f.commands.length, 0);
     await hooks.before_prompt_build!({}, turn);
     await Promise.all([ask("rename", "Guest again"), ask("retry")]);
@@ -1904,7 +1908,9 @@ test("an existing owner-group offer still respects a do-not-contact flag", async
   const result = await offerOwnerGroup({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }, { topic: "Lunch", durationMin: 30 });
   assert.equal("silent" in result && result.silent, true, JSON.stringify(result));
   assert.doesNotMatch(JSON.stringify(result), /do.?not.?contact|marked|blocked/i);
-  assert.equal(f.request().pendingContact?.topic, "Lunch");
+  const pending = f.request().pendingOwner;
+  assert.ok(pending && "contact" in pending);
+  assert.equal(pending.contact.topic, "Lunch");
   assert.equal(f.commands.some(c => ["create", "update", "delete"].includes(c[2]!)), false);
 });
 
@@ -2047,6 +2053,8 @@ test("contact tools deny group and guest callers; private confirmation resumes t
   const group = { ...owner, sessionKey: "agent:main:plow:group:chat-one" };
   await offerOwnerGroup(group, { topic: "Coffee", durationMin: 30, constraints: { days: ["mon"], from: "2026-10-05", to: "2026-10-05" } }, async () => {});
   const saved = f.request();
+  assert.ok(saved.pendingOwner && "contact" in saved.pendingOwner);
+  const contact = saved.pendingOwner.contact;
   for (const ctx of [group, { ...owner, senderIsOwner: false }, { ...owner, agentAccountId: "email" }, { ...owner, requesterSenderId: undefined }, owner]) {
     const tools = new Map<string, any>();
     registerContactTools({ registerTool(factory: any) { const tool = factory(ctx); tools.set(tool.name, tool); } }, async (action, args) =>
@@ -2056,20 +2064,20 @@ test("contact tools deny group and guest callers; private confirmation resumes t
       assert.equal(result.isError, true);
       const clear = await tools.get("meetly_contact_preference").execute("clear", { handle: saved.handle, blocked: false });
       assert.equal(clear.isError, true);
-      assert.equal(f.request().contactConfirmed, false);
+      assert.equal(f.request().doNotContact, true);
       assert.equal(f.commands.length, 0);
     } else {
       assert.equal(result.isError, false, JSON.stringify(result));
       assert.equal(f.request().chatUid, "chat-one");
       assert.equal(f.request().topic, "Coffee");
-      assert.deepEqual(f.request().constraints, saved.pendingContact!.constraints);
-      f.ledger.requests[0]!.constraints = saved.pendingContact!.constraints;
-      assert.equal(f.request().pendingContact, undefined);
-      assert.equal(f.request().doNotContact, true);
-      assert.equal(f.request().contactConfirmed, true);
+      assert.deepEqual(f.request().constraints, contact.constraints);
+      f.ledger.requests[0]!.constraints = contact.constraints;
+      assert.equal(f.request().pendingOwner, undefined);
+      assert.equal(f.request().doNotContact, false);
+      assert.equal(doNotContact(f.read(), saved.handle), true);
       const picked = await guestAction(context, "pick", { start: offers[0]!.start });
       assert.equal("status" in picked && picked.status, "booked", JSON.stringify(picked));
-      t.diagnostic(JSON.stringify({ groupHandoff: saved.pendingContact, confirmed: result.details.request.id, guestBooking: picked }));
+      t.diagnostic(JSON.stringify({ groupHandoff: contact, confirmed: result.details.request.id, guestBooking: picked }));
     }
   }
 });

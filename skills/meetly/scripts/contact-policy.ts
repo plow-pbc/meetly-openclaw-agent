@@ -14,13 +14,18 @@ export async function confirmContactOffer(args: { requestId: string; offered: Of
   const path = file("ledger.json");
   const request = readJson<Ledger>(path, { requests: [] }).requests.find(r => r.id === args.requestId);
   if (!request || !["asked", "offered", "booked"].includes(request.status)) throw new Error("Choose an active saved request before confirming contact.");
-  const { origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails } = request.pendingContact ?? request;
+  const pending = request.pendingOwner;
+  if (!pending || !("contact" in pending)) throw new Error("No pending contact confirmation. Read the owner's pending decisions.");
+  const { durationMin } = pending.contact;
   const offered = args.offered.map(o => ({ ...o, account: o.account ?? loadConfig().defaultAccount }));
   if (!offered.length || offered.some(o => Date.parse(o.end) - Date.parse(o.start) !== durationMin * 60_000)) throw new Error("Search times matching the saved request duration before confirming contact.");
-  return calendarAction(request.id, { action: "offer", request: {
-    origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails, offered,
-  } }, { ...options, confirmContact: true, validate(current) {
-    options.validate?.(current);
-    if (!sameRequest(request, current)) throw new Error("Request changed; read it before confirming contact.");
-  } });
+  const updated = updateJson<Ledger>(path, { requests: [] }, l => {
+    if (!sameRequest(request, l.requests.find(r => r.id === request.id))) throw new Error("Request changed; read it before confirming contact.");
+    return { requests: l.requests.map(r => r.id === request.id ? { ...r,
+      pendingOwner: { ...pending, contact: { ...pending.contact, status: "offered" as const, offered } },
+    } : r) };
+  });
+  const saved = updated.requests.find(r => r.id === request.id)!.pendingOwner!;
+  if (!("contact" in saved)) throw new Error("Contact decision changed.");
+  return calendarAction(request.id, { action: "offer", request: saved.contact }, options);
 }
