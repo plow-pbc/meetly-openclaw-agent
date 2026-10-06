@@ -10,7 +10,8 @@ calendar write goes through `calendar.ts`; an unresolved write is resumed with
 in the third person, using `ownerName`; a conflict is "an existing commitment", never an
 event title. Copy the request's exact `chatUid` from the ledger. New offers follow
 `meetly-group`, "Offer times". Overlap permission ("noon is fine, it can overlap my
-other event") is not a time approval or a booking: follow `meetly-group`, "Read the calendar".
+other event") is not a time approval or a booking: pass the selected `requestId` to
+`meetly_offer_owner_dm` for that meeting, and follow `meetly-group`, "Read the calendar".
 
 For email requests, deliver through `meetly-email`.
 
@@ -45,7 +46,7 @@ tell the owner; do not resend. Only if the owner explicitly authorizes a retry, 
   Only after successful holds call `meetly_answer_owner` with `outcome:"calendar_change"`
   and their labels as the selection question; it sends the offer once even in the same group. If no times fit or a write is
   unresolved, leave the decision pending and tell the owner. If the owner declines,
-  call the answer tool with `outcome:"answer"`, `declineAlternatives:true` and their refusal; retain the existing offer.
+  call the answer tool with `outcome:"decline_alternatives"` and their refusal; retain the existing offer.
 - **Question (`pendingOwner.question`, without `alternatives`):** `text` is Meetly relaying the owner's answer.
   Apply any requested calendar change first. On failure or an unresolved write, leave the question pending. For a successful change set `outcome: "calendar_change"`: the tool delivers the confirmed result even in the same group. Otherwise set `outcome: "answer"`; in the same group the tool clears silently without
   sending or acknowledging; after `silent: true`, output nothing. If the owner answers

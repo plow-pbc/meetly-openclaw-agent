@@ -11,6 +11,7 @@ import { holdHours, loadConfig, SLOT_COUNT } from "./config.ts";
 import { parseCalendarObject, parseEvent } from "./event.ts";
 import { ContactConfirmationRequired, checkContact, addRequest, requestHolds, sameHandle, expiredRequests, findOpenByHandle, meetingDuration, requireDuration, requestId, sameCleanup, uniqueCleanup, saveRequest, updateRequest, type HoldCleanup, type HoldRef, type Ledger, type NewRequest, type Offer, type Patch, type Request } from "./ledger.ts";
 import { macOutcome, runOnMacOutcome, type MacCommand, type MacOutcome } from "./mac.ts";
+import { checkTime } from "./slots.ts";
 import { formatMeetingTime } from "./time.ts";
 import { file } from "./paths.ts";
 import { recordBooking } from "./record-booking.ts";
@@ -20,13 +21,15 @@ export type CalendarAction =
   | { action: "offer"; request: NewRequest; provisional?: boolean }
   | { action: "duration"; durationMin: number; topic: string; offered: OfferInput["offered"] }
   | { action: "book"; start: string; end?: string; attendees?: string; timeApproval?: boolean }
+  | { action: "approve-time"; start?: string; attendees?: string }
   | { action: "format"; format: Request["format"]; location?: string }
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
 type Step = { verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
 type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" }>; steps: Step[]; failed?: boolean };
-export type CalendarOptions = { validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+export type CalendarOptions = { overlapApproved?: boolean; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
 class TimeApprovalBusy extends Error {
-  constructor() { super("Time approval cannot book a busy slot; no overlap was authorized."); }
+  start: string;
+  constructor(start: string) { super("Time approval cannot book a busy slot; no overlap was authorized."); this.start = start; }
 }
 
 const EMPTY: Ledger = { requests: [] };
@@ -47,7 +50,7 @@ function saveOffer(l: Ledger, input: NewRequest, now: number, id: string): Ledge
   const validated = addRequest(EMPTY, input, now, id).requests[0]!;
   if (validated.status !== "offered") throw new Error("replacement needs offered times");
   return updateRequest(l, id, {
-    offered: validated.offered, allowOverlap: [], constraints: validated.constraints ?? {},
+    offered: validated.offered, allowOverlap: validated.allowOverlap ?? [], constraints: validated.constraints ?? {},
     holdCleanup: uniqueCleanup([...(request.holdCleanup ?? []), ...holds(request)]),
   }, now);
 }
@@ -141,17 +144,14 @@ export async function calendarAction(id: string, action: CalendarAction, options
     }
   };
   // A queued initial pick must not become a move when another booking wins the lock.
-  const wasBooked = action.action === "book" && requestById(id).status === "booked";
+  const wasBooked = (action.action === "book" || action.action === "approve-time") && requestById(id).status === "booked";
   return locked(id, async () => {
     const journal = file(`calendar/${encodeURIComponent(id)}.json`);
     let intent = readJson<Intent | undefined>(journal, undefined);
     let request = requestById(id);
     let input: CalendarAction = action;
-    if (input.action === "book" && request.channel === "email" && request.status !== "booked") {
-      input = { ...input, attendees: [...new Set([request.handle, ...(input.attendees?.split(",") ?? [])].map(value => value.trim().toLowerCase()).filter(Boolean))].join(",") };
-    }
     options.validate?.(request);
-    if (["offer", "duration", "book"].includes(input.action)) checkContact(ledger(), request.handle, request, input.action === "offer" ? input.request : undefined);
+    if (["offer", "duration", "book", "approve-time"].includes(input.action)) checkContact(ledger(), request.handle, request, input.action === "offer" ? input.request : undefined);
     if (intent && request.calendarRevision === intent.id) { rmSync(journal); intent = undefined; }
     if (intent && input.action !== "resume") throw new Error(`calendar operation unresolved for ${id}; run resume first`);
     if (!intent) {
@@ -179,7 +179,16 @@ export async function calendarAction(id: string, action: CalendarAction, options
         patch({ format: input.format, location: input.location ?? "" });
         return { request: requestById(id) };
       }
-      if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(request.status === "booked" && ((input.action === "book" && wasBooked) || input.action === "offer"))) throw new Error(`request is ${request.status}`);
+      if (input.action === "format" ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(request.status === "booked" && (((input.action === "book" || input.action === "approve-time") && wasBooked) || input.action === "offer"))) throw new Error(`request is ${request.status}`);
+      if (input.action === "approve-time" || (input.action === "book" && input.timeApproval)) {
+        const pending = request.pendingOwner && "start" in request.pendingOwner ? request.pendingOwner : undefined;
+        const start = input.start ?? pending?.start;
+        if (!start) throw new Error("Time approval needs an exact start or a pending time approval.");
+        const { slot } = checkTime({ now: now(), config: loadConfig(), busy: [], start,
+          meal: request.meal, durationMin: request.durationMin });
+        input = { action: "book", start: slot.start, end: slot.end, attendees: input.attendees, timeApproval: true };
+      }
+
       if (input.action === "duration") {
         const { channel, origin, handle, name, sourceRowid, chatUid, constraints, proposed, format, location, locale, askDetails } = request;
         const config = loadConfig();
@@ -192,6 +201,9 @@ export async function calendarAction(id: string, action: CalendarAction, options
           format, location, locale, askDetails, durationMin: input.durationMin, topic: input.topic,
           offered: input.offered.map(slot => ({ ...slot, account: config.defaultAccount })) } };
       }
+      if (input.action === "book" && request.channel === "email" && request.status !== "booked") {
+        input = { ...input, attendees: [...new Set([request.handle, ...(input.attendees?.split(",") ?? [])].map(value => value.trim().toLowerCase()).filter(Boolean))].join(",") };
+      }
       const steps: Step[] = [];
       const add = (verb: Step["verb"], slot: Offer, args: string[]) => steps.push({ verb, account: slot.account, eventId: slot.holdId, start: slot.start, end: slot.end, args, token: randomUUID() });
       if (input.action === "offer") {
@@ -199,6 +211,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
         if (input.request.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
         // Validate before any external effect; only the final commit replaces the old offer.
         const before = ledger();
+        // Replacement permission must be freshly resolved in the owner DM.
+        if (request.status === "booked" && !options.overlapApproved) delete input.request.allowOverlap;
         const validated = saveOffer(before, input.request, now(), id);
         const offeredRequest = validated.requests.find(r => r.id === id)!;
         if (validated.requests.length !== before.requests.length || validated.requests.find(r => r.id === id) === before.requests.find(r => r.id === id)) throw new Error("offer belongs to another request");
@@ -285,10 +299,10 @@ export async function calendarAction(id: string, action: CalendarAction, options
         const overlaps = busy.busy.filter(b => Date.parse(b.start) < Date.parse(step.end) && Date.parse(b.end) > Date.parse(step.start));
         const timeApproval = intent.input.action === "book" && intent.input.timeApproval;
         const allowed = timeApproval ? [] : intent.input.action === "offer"
-          ? request.status === "booked" ? [] : [...(request.allowOverlap ?? []), ...(intent.input.request.allowOverlap ?? [])] : request.allowOverlap;
+          ? request.status === "booked" ? intent.input.request.allowOverlap ?? [] : [...(request.allowOverlap ?? []), ...(intent.input.request.allowOverlap ?? [])] : request.allowOverlap;
         if (overlaps.some(b => !own.some(h => h.holdId === b.id && h.account === b.account) && !allowsOverlap(b, allowed))) {
           if (intent.input.action === "offer") { step.skipped = true; writeJson(journal, intent); continue; }
-          if (timeApproval) await fail(new TimeApprovalBusy());
+          if (timeApproval) await fail(new TimeApprovalBusy(step.start));
           intent.failed = true; writeJson(journal, intent);
         } else if (!timeApproval && step.verb === "create" && overlaps.length && !step.args.includes("--confirm-conflict")) step.args.push("--confirm-conflict");
       }
@@ -300,7 +314,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         if (outcome && "output" in outcome) step.output = outcome.output;
         if (outcome && "handle" in outcome) step.handle = outcome.handle;
         if (outcome && "error" in outcome) {
-          if (outcome.code === "calendar-conflict" && intent.input.action === "book" && intent.input.timeApproval) await fail(new TimeApprovalBusy());
+          if (outcome.code === "calendar-conflict" && intent.input.action === "book" && intent.input.timeApproval) await fail(new TimeApprovalBusy(step.start));
           if (intent.input.action === "offer" && outcome.code === "calendar-conflict") step.skipped = true;
           else intent.failed = true;
         }
@@ -310,7 +324,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
         const outcome = await poll(step.handle).catch(() => undefined);
         if (outcome && "output" in outcome) step.output = outcome.output;
         if (outcome && "error" in outcome) {
-          if (outcome.code === "calendar-conflict" && intent.input.action === "book" && intent.input.timeApproval) await fail(new TimeApprovalBusy());
+          if (outcome.code === "calendar-conflict" && intent.input.action === "book" && intent.input.timeApproval) await fail(new TimeApprovalBusy(step.start));
           if (intent.input.action === "offer" && outcome.code === "calendar-conflict") step.skipped = true;
           else intent.failed = true;
         }
@@ -379,50 +393,44 @@ export async function calendarAction(id: string, action: CalendarAction, options
       invitationUpdated = step.verb === "update" && Array.isArray(event.attendees)
         && event.attendees.some(a => typeof a?.email === "string" && !a.organizer && !a.self && !sameHandle(a.email, step.account));
     }
-    return { request, invitationSent: completed.input.action === "book" && !!completed.input.attendees,
+    return { request, ...(completed.input.action === "book" && completed.input.timeApproval ? { approved: true } : {}), invitationSent: completed.input.action === "book" && !!completed.input.attendees,
       invitationUpdated,
       meetUrl: request.meetUrl ?? null, ...(request.format === "meet" && request.status === "booked" && !request.meetUrl ? { warning: "no-meet-link" } : {}) };
+
   }).then(result => ({
     ...result,
     ...(result.request.booked ? { confirmationTime: formatMeetingTime(result.request.booked.start, loadConfig().timezone, result.request.locale) } : {}),
-  }));
+  })).catch(error => {
+    if (!(error instanceof TimeApprovalBusy)) throw error;
+    return { request: requestById(id), approved: false, code: "TIME_APPROVAL_BUSY", error: error.message,
+      near: error.start, recovery: { action: "find_nearest", allowOverlap: false } };
+  });
 }
 
 // A yes to a time is distinct from permission to overlap a calendar event.
 export async function approveTime(id: string, args: { start?: string; attendees?: string } = {}, options: CalendarOptions = {}) {
-  const request = requestById(id);
-  const pending = request.pendingOwner && "start" in request.pendingOwner ? request.pendingOwner : undefined;
-  const start = args.start ?? pending?.start;
-  if (!start) throw new Error("Time approval needs an exact start or a pending time approval.");
-  const { checkTime } = await import("./slots.ts");
-  const { slot } = checkTime({ now: (options.now ?? Date.now)(), config: loadConfig(), busy: [], start,
-    meal: request.meal, durationMin: request.durationMin });
-  try {
-    return { ...await calendarAction(id, { action: "book", start: slot.start, end: slot.end,
-      attendees: args.attendees, timeApproval: true }, options), approved: true };
-  } catch (error) {
-    if (!(error instanceof TimeApprovalBusy)) throw error;
-    return { request: requestById(id), approved: false, code: "TIME_APPROVAL_BUSY", error: error.message,
-      near: slot.start, recovery: { action: "find_nearest", allowOverlap: false } };
-  }
+  return calendarAction(id, { ...args, action: "approve-time" }, options);
 }
 
 export type OfferInput = Omit<NewRequest, "durationMin" | "offered"> & {
-  durationMin?: number; offered: (Omit<Offer, "account"> & { account?: string })[]; allowOverlapTitles?: string[];
+  requestId?: string; durationMin?: number; offered: (Omit<Offer, "account"> & { account?: string })[]; allowOverlapTitles?: string[];
 };
-export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, options: CalendarOptions = {}) {
+export async function offerRequest({ requestId: selectedId, allowOverlapTitles, ...args }: OfferInput, options: CalendarOptions = {}) {
   if (args.offered.length > SLOT_COUNT) throw new Error(`Offer at most ${SLOT_COUNT} times.`);
   if (args.offered.some(o => o.holdId)) throw new Error("offer slots must not supply hold ids");
   const config = loadConfig();
   if (config.paused) throw new Error("Scheduling is paused.");
   const current = ledger();
-  const saved = findOpenByHandle(current, args.handle) ?? current.requests.find(r => args.origin === "inbound" &&
-    args.sourceRowid !== undefined && r.sourceRowid === args.sourceRowid && ["asked", "offered"].includes(r.status));
+  const saved = selectedId === undefined ? findOpenByHandle(current, args.handle) ?? current.requests.find(r => args.origin === "inbound" &&
+    args.sourceRowid !== undefined && r.sourceRowid === args.sourceRowid && ["asked", "offered"].includes(r.status))
+    : current.requests.find(r => r.id === selectedId);
+  if (selectedId !== undefined && (!saved || !sameHandle(saved.handle, args.handle))) throw new Error("No matching selected request.");
   const durationMin = meetingDuration(args.durationMin ?? saved?.durationMin, args.meal ?? saved?.meal, config.durationMin);
   if (args.offered.some(slot => Date.parse(slot.end) - Date.parse(slot.start) !== durationMin * 60_000)) {
     throw new Error("Every offered interval must match the request durationMin. Set the request duration and search again.");
   }
-  const input: NewRequest = { ...args, durationMin,
+  const input: NewRequest = { ...args, chatUid: args.chatUid ?? saved?.chatUid, durationMin,
+    constraints: args.constraints ?? (selectedId === undefined ? undefined : saved?.constraints),
     offered: args.offered.map(slot => ({ ...slot, account: slot.account ?? config.defaultAccount })) };
   if (allowOverlapTitles?.length) {
     const busy = await fetchBusy(config, {
@@ -430,19 +438,21 @@ export async function offerRequest({ allowOverlapTitles, ...args }: OfferInput, 
       to: new Date(Math.max(...input.offered.map(o => Date.parse(o.end)))).toISOString(),
     }, { allowOverlapTitles });
     if (busy.degraded.length || busy.unknownAfter) throw new Error("calendar coverage incomplete");
-    input.allowOverlap = [...(input.allowOverlap ?? []), ...(busy.allowOverlap ?? [])];
+    input.allowOverlap = busy.allowOverlap ?? [];
   }
   let id = "", provisional = false;
   updateJson<Ledger>(file("ledger.json"), EMPTY, l => {
-    checkContact(l, input.handle, findOpenByHandle(l, input.handle));
-    const existing = findOpenByHandle(l, input.handle) ?? l.requests.find(r => input.origin === "inbound" && input.sourceRowid !== undefined && r.sourceRowid === input.sourceRowid && ["asked", "offered"].includes(r.status));
+    const existing = selectedId === undefined ? findOpenByHandle(l, input.handle) ?? l.requests.find(r => input.origin === "inbound" && input.sourceRowid !== undefined && r.sourceRowid === input.sourceRowid && ["asked", "offered"].includes(r.status))
+      : l.requests.find(r => r.id === selectedId);
+    if (selectedId !== undefined && !existing) throw new Error("No matching selected request.");
+    checkContact(l, input.handle, existing);
     if (existing && input.chatUid && existing.chatUid !== input.chatUid &&
       !(input.origin === "owner-group" && existing.status === "asked" && existing.chatUid === undefined)) throw new Error("request belongs to another conversation");
     id = existing?.id ?? requestId();
     provisional = !existing;
     return existing ? l : saveRequest(l, input, (options.now ?? Date.now)(), id);
   });
-  return calendarAction(id, { action: "offer", request: input, provisional }, { ...options, validate(request) {
+  return calendarAction(id, { action: "offer", request: input, provisional }, { ...options, overlapApproved: !!allowOverlapTitles?.length, validate(request) {
     options.validate?.(request);
     if (args.durationMin === undefined && (request.durationMin ?? config.durationMin) !== durationMin) throw new Error("Request duration changed; read the saved request and search again.");
   } });
