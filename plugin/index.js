@@ -95,6 +95,14 @@ export default {
   name: "Meetly",
   description: "Guest scheduling tools and the owner DM setup check.",
   register(api) {
+    api.on("gateway_start", () => new Promise((resolve, reject) => {
+      execFile(process.execPath, ["/opt/plow/skills/meetly/scripts/register-crons.ts", "--if-ready"],
+        { env: process.env, timeout: 120_000, maxBuffer: 65_536 }, (error, stdout) => {
+          if (error) { reject(error); return; }
+          api.logger.info(`meetly startup cron reconciliation: ${stdout.trim()}`);
+          resolve();
+        });
+    }));
     registerPipelineHooks(api);
     registerGuestTools(api);
     registerOwnerTools(api);
