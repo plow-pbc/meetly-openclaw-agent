@@ -22,3 +22,16 @@ export function applyGate(config: Record<string, any>): Record<string, any> {
   config.plugins.entries.meetly = { enabled: true, hooks: { allowConversationAccess: true } };
   return config;
 }
+
+/**
+ * Keeps heartbeat turns' final text private. The poll wakes its turn with a
+ * system event, which runs as a heartbeat: delivered to the owner, its final
+ * reply would arrive as a heartbeat alert, and the owner binding would refuse
+ * the poll's own sends to meeting threads as cross-context.
+ */
+export function quietHeartbeat(config: Record<string, any>): Record<string, any> {
+  config.agents ??= {};
+  config.agents.defaults ??= {};
+  config.agents.defaults.heartbeat = { ...config.agents.defaults.heartbeat, target: "none" };
+  return config;
+}

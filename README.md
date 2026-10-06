@@ -169,9 +169,14 @@ message is skipped.
   The owner's name comes from their Plow profile and the time zone from
   their Mac through Latch; setup asks only what neither can answer.
 - **Schedule.** One OpenClaw scheduler job (`openclaw cron`), `meetly-poll`:
-  an isolated agent turn every five minutes with no automatic delivery,
-  registered by `register-crons.ts` when setup finishes. It lives in the state
-  volume and survives restarts and rebuilds.
+  a command job (`poll.ts`) every five minutes with no automatic delivery,
+  registered by `register-crons.ts` when setup finishes and reconciled after
+  gateway readiness on every startup for setup-complete installs, updating old
+  agent-turn jobs in place. It makes no model call
+  unless it finds new inbound messages or ledger work, then wakes one agent
+  turn with a system event. It lives in the state volume and survives restarts
+  and rebuilds. Unfinished batches retain their id and contents and are re-woken
+  after ten minutes until the work turn acknowledges them.
 - **Chat.** Your phone DM is the main session and runs setup. A group Meetly
   opened is recognized from its ledger and handled as that one meeting. In an
   existing group with the owner, one guest and Meetly, the owner can request
