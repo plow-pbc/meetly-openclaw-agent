@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { contactQuery, lookupContact, parseContacts } from "../skills/meetly/scripts/contact.ts";
 
 test("contact queries accept canonical ledger handles", () => {
@@ -141,4 +142,27 @@ test("an owner identity outage never guesses national numbers but preserves inte
     { found: false, handle: "+16505550100" });
   const international = await lookupContact("+16505550100", { token: "tok", fetch: bridge(card("+1 (650) 555-0100")), api });
   assert.equal(international.found, true);
+});
+
+test("lookupContact strips nonbreaking spaces before SQL candidate selection", async t => {
+  const db = new DatabaseSync(":memory:");
+  t.after(() => db.close());
+  db.exec(`
+    CREATE TABLE ZABCDRECORD (Z_PK INTEGER, ZFIRSTNAME TEXT, ZLASTNAME TEXT, ZORGANIZATION TEXT);
+    CREATE TABLE ZABCDPHONENUMBER (ZOWNER INTEGER, ZFULLNUMBER TEXT);
+    CREATE TABLE ZABCDEMAILADDRESS (ZOWNER INTEGER, ZADDRESS TEXT);
+    INSERT INTO ZABCDRECORD VALUES (4, 'Ana', 'Lee', '');
+    INSERT INTO ZABCDEMAILADDRESS VALUES (4, 'ana@example.com');
+  `);
+  const phone = "(650)\u00a0555-0100";
+  db.prepare("INSERT INTO ZABCDPHONENUMBER VALUES (4, ?)").run(phone);
+  const fetchSql = (async (url, init) => {
+    const call = JSON.parse(String(init?.body));
+    const query = db.prepare(call.params.arguments.argv.at(-1));
+    query.setReturnArrays(true);
+    const output = "S|0\n" + query.all().map(row => Object.values(row).join("|")).join("\n");
+    return bridge(output)(url, init);
+  }) as typeof fetch;
+  assert.deepEqual(await lookupContact("+16505550100", { token: "tok", fetch: fetchSql, api: ownerApi("+16505550101") }),
+    { found: true, handle: "+16505550100", name: "Ana Lee", phones: [phone], emails: ["ana@example.com"], matches: 1 });
 });

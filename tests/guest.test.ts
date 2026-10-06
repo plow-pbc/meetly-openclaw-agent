@@ -349,25 +349,22 @@ test("pick books the chosen hold with fixed arguments, records the event, and de
   assert.deepEqual(f.commands.filter(c => c[2] === "delete"), [["plow-gog", "calendar", "delete", "primary", "hold-two", "--send-updates", "none", "--force", "--account", "owner@example.com"]]);
 });
 
-for (const phone of ["123-4567", "+445551234567"]) test(`pick never invites a contact whose number only shares the guest's suffix: ${phone}`, async t => {
-  const f = fixture(t, `S|0\nR|1|Other|Person|\nP|1|${phone}||\nE|1|wrong@example.net||`);
+const invitationCases = [
+  ["123-4567", "Other|Person", "wrong@example.net", false],
+  ["+445551234567", "Other|Person", "wrong@example.net", false],
+  ["(555) 123-4567", "Guest|", "guest@example.net", true],
+] as const;
+for (const [phone, name, email, invited] of invitationCases) test(`pick invitation eligibility: ${phone}`, async t => {
+  const f = fixture(t, `S|0\nR|1|${name}|\nP|1|${phone}||\nE|1|${email}||`);
   const result = await guestAction(context, "pick", { start: offers[0]!.start });
   assert.ok(!("error" in result), JSON.stringify(result));
   assert.equal(f.request().status, "booked");
-  assert.equal("invitationSent" in result && result.invitationSent, false);
+  assert.equal("invitationSent" in result && result.invitationSent, invited);
   const update = f.commands.find(c => c[2] === "update")!;
   assert.ok(update);
-  assert.ok(!update.includes("--attendees"));
-  assert.doesNotMatch(JSON.stringify(f.commands), /wrong@example.net/);
-});
-
-test("pick invites the exact guest whose card has a full national number", async t => {
-  const f = fixture(t, "S|0\nR|1|Guest||\nP|1|(555) 123-4567||\nE|1|guest@example.net||");
-  const result = await guestAction(context, "pick", { start: offers[0]!.start });
-  assert.ok(!("error" in result), JSON.stringify(result));
-  assert.equal("invitationSent" in result && result.invitationSent, true);
-  const update = f.commands.find(c => c[2] === "update")!;
-  assert.equal(update[update.indexOf("--attendees") + 1], "guest@example.net");
+  assert.equal(update.includes("--attendees"), invited);
+  if (invited) assert.equal(update[update.indexOf("--attendees") + 1], email);
+  else assert.ok(!JSON.stringify(f.commands).includes(email));
 });
 
 for (const allowed of [true, false]) test(`pick rechecks conflicts; owner-approved=${allowed}`, async t => {

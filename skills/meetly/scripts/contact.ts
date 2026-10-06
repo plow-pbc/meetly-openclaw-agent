@@ -16,7 +16,7 @@ export type Lookup =
 
 export type ContactOptions = BridgeOptions & { api?: ApiOptions };
 
-const STRIPPED = "replace(replace(replace(replace(replace(replace(p.ZFULLNUMBER, ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')";
+const STRIPPED = "replace(replace(replace(replace(replace(replace(replace(p.ZFULLNUMBER, char(160), ''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')";
 
 // Lines `R|id|first|last|org`, `P|id|number`, `E|id|email` for candidate cards;
 // suffix SQL only narrows the search, parseContacts requires canonical equality.
