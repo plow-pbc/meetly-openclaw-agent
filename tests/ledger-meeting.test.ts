@@ -207,7 +207,7 @@ test("CLI saves format, lists booked fixtures due for reminders and marks them s
   assert.deepEqual(due.json.requests.map((r: { id: string }) => r.id), [id]);
   // The env var sets the default lead.
   assert.equal(cli("ledger.ts", ["reminders"], { ...env, MEETLY_REMINDER_LEAD_MIN: String(25 * 60) }).json.requests.length, 1);
-  assert.equal(cli("reminder-check.ts", ["--id", id, "--sent"], env).status, 0);
+  assert.equal(cli("reminder-check.ts", ["--id", id, "--expected-start", tomorrow.start, "--sent"], env).status, 0);
   assert.deepEqual(cli("ledger.ts", ["reminders", "--lead-min", String(25 * 60)], env).json, { requests: [] });
   const bad = cli("ledger.ts", ["reminders", "--lead-min", "x"], env);
   assert.equal(bad.status, 1);

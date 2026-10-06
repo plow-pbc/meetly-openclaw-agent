@@ -206,9 +206,9 @@ test("the poll sends due reminders before reading messages, and marks each once"
   assert.ok(ready > 0 && reminders > ready && cursor > reminders, "order: ready/paused, reminders, cursor");
   assert.ok(poll.includes("a paused Meetly sends no reminders either"));
   assert.ok(poll.includes("`plow-gog calendar event primary <eventId> --account <booked.account> --json`"));
-  assert.ok(poll.includes("Run `reminder-check.ts --id <id> --event-file <that file>`"));
+  assert.ok(poll.includes("Run `reminder-check.ts --id <id> --expected-start <snapshot booked.start> --event-file <that file>`"));
   assert.ok(poll.includes("Use that URL exactly as printed; never any other link"));
-  assert.ok(poll.includes("Then run `reminder-check.ts --id <id> --sent`"));
+  assert.ok(poll.includes("Then run `reminder-check.ts --id <id> --expected-start <send.start> --sent`"));
   assert.ok(poll.includes("never resend"));
   for (const action of ["`send`", "`wait`", "`cancelled`", "`no-link`", "`skip`"]) assert.ok(poll.includes(action), action);
 });
