@@ -26,8 +26,8 @@ Shortcuts:
 - [ ] **Skills and runtime.** `docker run --rm
   --entrypoint sh meetly:dev -c 'ls /opt/plow/skills && test -f
   /app/openclaw.mjs && node --version'`.
-  - Expect: `google-workspace`, `owners-mac`, `meetly`, `meetly-group`,
-    `meetly-poll`, `meetly-setup`, and Node ≥ 24.16.
+  - Expect: `google-workspace`, `owners-mac`, `meetly`, `meetly-confirm`,
+    `meetly-group`, `meetly-poll`, `meetly-setup`, and Node ≥ 24.16.
 
 ## Scenarios
 
