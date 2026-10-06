@@ -443,7 +443,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
           travelEvents: completed.steps.filter(s => s.travel).map(s => ({ holdId: parseEvent(s.output!).id, account: s.account })),
           holdCleanup: uniqueCleanup([...(before.holdCleanup ?? []), ...(before.travelEvents ?? [])]),
         }, now());
-        if (completed.input.action === "book") next = updateRequest(next, id, {
+        if (completed.input.action === "book" || completed.input.action === "format") next = updateRequest(next, id, {
           offered: [], bookedReplacement: false, replacement: null, allowOverlap: [], holdCleanup: uniqueCleanup([...(before.holdCleanup ?? []), ...(before.travelEvents ?? []), ...holds(before)]),
         }, now());
       }

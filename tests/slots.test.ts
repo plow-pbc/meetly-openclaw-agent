@@ -483,3 +483,26 @@ test("only a known busy exact-time check routes the model to private inspection"
   assert.equal(soon.json.reason, "too-soon");
   assert.equal(soon.json.next, undefined);
 });
+
+for (const format of ["meet", "in_person"] as const) test(`held replacement exact-time check uses its ${format} format and travel`, () => {
+  const home = tmpHome();
+  writeJson(join(home, "config.json"), CONFIG);
+  const start = "2026-09-28T11:00:00-03:00";
+  const replacement = { format, travel: format === "meet" ? { beforeMin: 0, afterMin: 0 } : { beforeMin: 30, afterMin: 30 } };
+  const request = { id: "replacement", status: "booked", durationMin: 30, format: format === "meet" ? "in_person" : "meet",
+    travel: format === "meet" ? { beforeMin: 30, afterMin: 30, override: true } : { beforeMin: 0, afterMin: 0 },
+    bookedReplacement: true, replacement, offered: [{ start, end: "2026-09-28T11:30:00-03:00", holdId: "held", account: "jean@example.com" }] };
+  const path = join(home, "ledger.json"), busyFile = join(home, "busy.json");
+  writeJson(path, { requests: [request] });
+  writeJson(busyFile, { coverage, busy: [{ id: "other", account: "jean@example.com", start: "2026-09-28T10:00:00-03:00", end: start }], degraded: [] });
+  const args = ["--request", request.id, "--in", busyFile, "--now", new Date(NOW).toISOString(), "--at"];
+  const checked = cli("slots.ts", [...args, "2026-09-28T11:00"], { MEETLY_HOME: home });
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.equal(checked.json.free, format === "meet");
+  assert.doesNotMatch(checked.stdout, /beforeMin|afterMin|jean@example/);
+  const unheld = cli("slots.ts", [...args, "2026-09-28T11:15:00-03:00"], { MEETLY_HOME: home });
+  assert.equal(unheld.json.free, format !== "meet", "unheld times use the active booking");
+  writeJson(path, { requests: [{ ...request, bookedReplacement: false }] });
+  const inactive = cli("slots.ts", [...args, start], { MEETLY_HOME: home });
+  assert.equal(inactive.json.free, format !== "meet", "inactive proposals cannot determine the check");
+});

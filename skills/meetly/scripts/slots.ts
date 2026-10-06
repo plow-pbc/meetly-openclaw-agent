@@ -361,7 +361,10 @@ if (isMain(import.meta.url)) {
       for (const flag of ["days", "after", "before", "from", "to", "exclude", "count", "near", "start-time", "week", "asap"] as const) {
         if (values[flag] !== undefined) throw new Error(`--at checks one time; drop --${flag}`);
       }
-      const result = checkTime({ ...q, start: values.at });
+      const start = checkTime({ ...q, travel: { beforeMin: 0, afterMin: 0 }, start: values.at }).slot.start;
+      if (request?.status === "booked" && request.bookedReplacement && request.replacement
+        && request.offered.some(slot => Date.parse(slot.start) === Date.parse(start))) Object.assign(q, request.replacement);
+      const result = checkTime({ ...q, start });
       const next = result.reason === "busy" && !degraded.length ? {
         ownerMainDM: "Before searching alternatives, call the meetly_movable tool (not a script) with action inspect, this slot as candidates, and the same format/travel or requestId. Read meetly-travel. If a blocker looks flexible, ask once privately, finish NO_REPLY and wait for a new owner message. Do not run --near, grant overlap or offer in this turn. Past permission is not a new answer.",
         otherChats: "Search alternatives without inspecting or disclosing private blockers.",
