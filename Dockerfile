@@ -1,5 +1,5 @@
 # Meetly: a scheduling variant of Plow's OpenClaw base image.
-FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents@sha256:1cf8e57ec949f8077329927da47df4215620605cdd987bbd4bb36eaa5147da06
+FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents@sha256:d2260b014fad595dd8ec5ecbb2a9441a8bcab313df2a1ddf981a070417e41554
 
 # New groups give guests only the scheduling tools; owners keep full tools.
 ENV AGENT_ID=meetly \
