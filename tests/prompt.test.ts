@@ -40,7 +40,7 @@ test("AGENTS.md renders the conversation identity and keeps the base's tool and 
   const base = flat(readFileSync(join(ROOT, "tests", "fixtures", "base-AGENTS.md"), "utf8"));
   for (const rule of BASE_CONTRACT) assert.ok(base.includes(rule), `the base no longer says: ${rule}`);
   assert.ok(prompt.includes("Meetly poll: batch"));
-  assert.ok(flat(prompt).includes("Guest scheduling tools support Plow chat only; they are unavailable to email guests."));
+  assert.ok(flat(prompt).includes("Email participants may act on that thread's scheduling request with guest tools;"));
 });
 
 test("the eight Meetly skills exist", () => {
@@ -305,7 +305,7 @@ test("owner format changes reach the guest and visible answers still clear their
 });
 
 test("owner answers apply calendar changes before clearing the question", () => {
-  const question = confirmSkill().split("- **Question (`pendingOwner.question`, without `alternatives`):**")[1]!.split("- **Yes to a time**")[0]!;
+  const question = confirmSkill().split("- **Question (`pendingOwner.question`, without `alternatives` or `overlap`):**")[1]!.split("- **Yes to a time**")[0]!;
   assert.match(question, /location, format or time/);
   assert.match(question, /calendar\.ts format/);
   assert.match(question, /Book the event.*Changes after booking/);

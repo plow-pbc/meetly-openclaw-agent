@@ -1,8 +1,7 @@
 import { offerRequest, type CalendarOptions } from "./calendar.ts";
 import { rememberOverlap } from "./movable.ts";
 import { formatMeetingTime } from "./time.ts";
-import { loadConfig } from "./config.ts";
-import { sameRequest, recordDelivery, updateRequest, type Ledger } from "./ledger.ts";
+import { sameRequest, requestEvents, recordDelivery, updateRequest, type Constraints, type Ledger } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 import { resolveOwnerChat, type OwnerContext } from "./owner-turn.ts";
@@ -11,7 +10,7 @@ import { calendarAction } from "./calendar.ts";
 import { DAYS, loadConfig } from "./config.ts";
 import { findSlots, localeFormatter, searchCoverage } from "./slots.ts";
 
-type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change" | "decline_alternatives" | "allow_overlap" | "refuse_overlap"; overlapChoice?: number; emailSent?: boolean };
+type Args = { requestId?: string; askedAt?: string; text?: string; outcome?: "answer" | "calendar_change" | "decline_alternatives" | "allow_overlap" | "refuse_overlap"; overlapChoice?: number; constraints?: Constraints; emailSent?: boolean };
 
 export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: string, text: string) => Promise<void>, options: CalendarOptions = {}): Promise<object> {
   const chat = resolveOwnerChat(ctx, ["chat", "email"]);
@@ -41,24 +40,24 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   const alternatives = "question" in pending ? pending.alternatives : undefined;
   const declined = args.outcome === "decline_alternatives";
   if (declined && !alternatives) return { error: "No alternative search is pending." };
-  if (alternatives && !declined) {
+  if (alternatives && !declined && !args.emailSent) {
     if (pending.answerAttemptedAt) return { error: "Answer delivery already attempted. Do not repeat the search or send without the owner's explicit retry authorization." };
     try {
       const config = loadConfig(), now = Date.now();
       if (config.paused || !["offered", "booked"].includes(request.status)) throw new Error("Scheduling is paused or this offer is no longer open.");
       const constraints = { ...request.constraints, ...args.constraints };
       const query = { ...constraints, now, config, busy: [], meal: request.meal, durationMin: request.durationMin,
-        locale: request.locale, allowOverlap: request.status === "booked" ? [] : request.allowOverlap, exclude: alternatives.previousStarts,
-        days: (constraints.days ?? DAYS).filter(day => !request.excludedDays?.includes(day)) };
+        format: request.format, travel: request.travel, locale: request.locale, allowOverlap: request.status === "booked" ? [] : request.allowOverlap, exclude: alternatives.previousStarts,
+        days: (constraints.days ?? DAYS).filter(day => !request!.excludedDays?.includes(day)) };
       const busy = await fetchBusy(config, searchCoverage(query));
       if (busy.degraded.length) throw new Error("Calendar unavailable. The alternative-search decision remains pending.");
-      busy.busy = busy.busy.filter(b => !requestEvents(request).some(o => o.holdId === b.id && o.account === b.account));
+      busy.busy = busy.busy.filter(b => !requestEvents(request!).some(o => o.holdId === b.id && o.account === b.account));
       const { slots } = findSlots({ ...query, ...busy });
       if (!slots.length) throw new Error("No new times are available in the checked calendar range. The alternative-search decision remains pending.");
       const before = request;
-      const { origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, proposed, allowOverlap, format, locale } = request;
+      const { origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, proposed, allowOverlap, format, locale, travel } = request;
       request = (await calendarAction(request.id, { action: "offer", request: {
-        origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale,
+        origin, handle, name, sourceRowid, chatUid, topic, location, meal, durationMin, constraints, proposed, allowOverlap, format, locale, travel,
         offered: slots.map(({ start, end }) => ({ start, end, account: config.defaultAccount })),
       } }, { validate(latest) { if (JSON.stringify(latest) !== JSON.stringify(before)) throw new Error("Request changed. Read pending requests again."); } })).request;
       const guestLocale = locale ?? "en-US";
@@ -68,7 +67,7 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
         en: `${config.ownerName} is free ${choices}. Which time works for you?`,
         pt: `${config.ownerName} tem disponibilidade ${choices}. Qual horário funciona para você?`,
       };
-      text = sentences[new Intl.Locale(guestLocale).language] ?? `${config.ownerName}: ${choices}?`;
+      args = { ...args, text: sentences[new Intl.Locale(guestLocale).language] ?? `${config.ownerName}: ${choices}?` };
     } catch (error) {
       return { error: error instanceof Error ? error.message : "Alternative search failed. The decision remains pending." };
     }
@@ -95,7 +94,9 @@ export async function answerOwner(ctx: OwnerContext, args: Args, send: (to: stri
   if (!skipDelivery && !emailReceipt) {
     try {
       const begun = updateJson<Ledger>(path, { requests: [] }, latest => {
-        if (!sameRequest(latest.requests.find(r => r.id === request!.id), request)) throw new Error("request changed");
+        const current = latest.requests.find(r => r.id === request!.id);
+        if (JSON.stringify(current?.pendingOwner) !== JSON.stringify(pending)) throw new Error("pending question changed");
+        if (!sameRequest(current, request)) throw new Error("request changed");
         return recordDelivery(latest, request!.id, "answer", "begin", Date.now());
       });
       pending = begun.requests.find(r => r.id === request.id)!.pendingOwner!;

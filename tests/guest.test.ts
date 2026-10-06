@@ -114,7 +114,7 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
       return { status: delivery.status };
     },
   });
-  const tools = new Map<string, { execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
+  const tools = new Map<string, { parameters: { properties: Record<string, { description: string }> }; execute: (id: string, args: object) => Promise<{ content: { text: string }[] }> }>();
   // Baseline scenarios permit the full date horizon unless they explicitly keep the offer week.
   registerGuestTools({ runtime: { channel: {
     routing: { resolveAgentRoute(args: object) {
@@ -262,7 +262,10 @@ test("ordinary plugin tool factories retain context, have no identity arguments,
       assert.deepEqual(Object.keys(tool.parameters.properties), ["question"]);
       assert.deepEqual(tool.parameters.required, ["question"]);
     }
-    if (!["meetly_offer_owner_group", "meetly_offer_owner_dm", "meetly_contact_preference"].includes(tool.name)) assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap", "constraints"].includes(k)));
+    if (!["meetly_offer_owner_group", "meetly_offer_owner_dm", "meetly_contact_preference"].includes(tool.name)) {
+      assert.ok(!Object.keys(tool.parameters.properties).some(k => ["id", "handle", "chatUid", "sender", "account", "allowOverlap"].includes(k)));
+      assert.equal("constraints" in tool.parameters.properties, tool.name === "meetly_answer_owner");
+    }
   } });
   assert.deepEqual(names, JSON.parse(readFileSync(new URL("../plugin/openclaw.plugin.json", import.meta.url), "utf8")).contracts.tools);
 });
@@ -339,7 +342,7 @@ test("pick books the chosen hold with fixed arguments, records the event, and de
   const update = f.commands.find(c => c[2] === "update")!;
   assert.deepEqual(update.slice(0, 5), ["plow-gog", "calendar", "update", "primary", "hold-one"]);
   for (const [flag, value] of [["--summary", "Lunch with Guest"], ["--from", offers[0]!.start], ["--to", offers[0]!.end],
-    ["--account", "owner@example.com"], ["--send-updates", "all"], ["--attendees", "guest@example.net"]]) assert.equal(update[update.indexOf(flag!) + 1], value);
+    ["--account", "owner@example.com"], ["--send-updates", "all"], ["--add-attendee", "guest@example.net"]]) assert.equal(update[update.indexOf(flag!) + 1], value);
   assert.ok(update.includes("--with-meet"));
   assert.match(update[update.indexOf("--private-prop") + 1]!, /^meetlyOperation=/);
   assert.deepEqual(f.commands.filter(c => c[2] === "delete"), [["plow-gog", "calendar", "delete", "primary", "hold-two", "--send-updates", "none", "--force", "--account", "owner@example.com"]]);
@@ -1909,8 +1912,8 @@ for (const [action, args] of actions.filter(([action]) => action !== "ask_owner"
   assert.equal(f.ownerLines.length, action === "decline" ? 1 : 0);
   if (action === "pick") {
     assert.equal("invitationSent" in result && result.invitationSent, true);
-    const booking = f.commands.find(argv => argv.includes("--attendees"))!;
-    assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net");
+    const booking = f.commands.find(argv => argv.includes("--add-attendee"))!;
+    assert.equal(booking[booking.indexOf("--add-attendee") + 1], "ana@example.net");
     assert.ok(f.commands.every(argv => argv[0] !== "/bin/sh"), "an email guest does not need Contacts");
   }
 });
@@ -1919,8 +1922,8 @@ test("an explicit additional email invitee is included without replacing the gue
   const f = emailFixture(t);
   const result = await f.act(f.ctx, "pick", { start: offers[0]!.start, attendees: ["ea@example.net"] });
   assert.ok(!("error" in result));
-  const booking = f.commands.find(argv => argv.includes("--attendees"))!;
-  assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net,ea@example.net");
+  const booking = f.commands.find(argv => argv.includes("--add-attendee"))!;
+  assert.equal(booking[booking.indexOf("--add-attendee") + 1], "ana@example.net,ea@example.net");
 });
 
 test("email requests cannot be acted on from phone turns or another email thread", async t => {
@@ -1973,8 +1976,8 @@ for (const approval of [false, true]) test(`an owner-side email booking invites 
   const result = approval ? await approveTime(f.request().id, { start: offers[0]!.start })
     : await calendarAction(f.request().id, { action: "book", start: offers[0]!.start });
   assert.equal("invitationSent" in result && result.invitationSent, true);
-  const booking = f.commands.find(argv => argv.includes("--attendees"))!;
-  assert.equal(booking[booking.indexOf("--attendees") + 1], "ana@example.net");
+  const booking = f.commands.find(argv => argv.includes("--add-attendee"))!;
+  assert.equal(booking[booking.indexOf("--add-attendee") + 1], "ana@example.net");
 });
 
 test("an unused empty attendee list does not block a phone booking", async t => {
@@ -2222,4 +2225,45 @@ test("owner-group replacement search skips an approved blocker and offers later 
   assert.deepEqual(f.request().allowOverlap, []);
   assert.equal(f.events.get("approved")!.status, "confirmed");
   t.diagnostic(JSON.stringify({ offered, grant: f.request().allowOverlap }));
+});
+
+test("invalid-start tool guidance distinguishes dated errors from weekday arguments", () => {
+  let description = "";
+  registerGuestTools({ registerTool(factory: (ctx: object) => { name: string; description: string }) {
+    const tool = factory({}); if (tool.name === "meetly_other_times") description = tool.description;
+  } });
+  assert.match(description, /invalid weekday arguments/);
+  assert.match(description, /ask the guest to correct the explicit date\/time/);
+  assert.match(description, /Never substitute a weekday/);
+});
+
+test("ask-owner rejects over-length text without effects", async t => {
+  const f = fixture(t);
+  const before = f.request();
+  const tool = f.tools.get("meetly_ask_owner")!;
+  assert.match(tool.parameters.properties.question!.description, /verbatim/);
+  assert.match(tool.parameters.properties.question!.description, /ask the guest to shorten/i);
+  const rejected = JSON.parse((await tool.execute("long", { question: "x".repeat(501) })).content[0]!.text);
+  assert.match(rejected.error, /500 characters or fewer/);
+  assert.deepEqual(f.request(), before);
+  assert.equal(f.ownerLines.length, 0);
+  assert.equal(f.deliveries.length, 0);
+
+});
+
+for (const [start, timezone] of [
+  ["2026-11-31T10:00", "UTC"], ["2026-02-29T10:00:00Z", "UTC"],
+  ["2026-10-05T24:00", "UTC"], ["2026-10-05T10:00:60", "UTC"],
+  ["2026-10-05T10:00:00+25:00", "UTC"], ["2026-03-08T02:30", "America/New_York"],
+]) test(`malformed exact start is rejected before effects: ${start}`, async t => {
+  const f = fixture(t, undefined, timezone);
+  const before = f.read();
+  const result = JSON.parse((await f.tools.get("meetly_other_times")!.execute("invalid", { offer_week: false, start, excludedDays: ["wed"] })).content[0]!.text);
+  assert.equal(result.code, "INVALID_START");
+  assert.equal(result.recovery.action, "reply");
+  assert.match(result.recovery.message, /correct.*date.*time/i);
+  assert.doesNotMatch(result.recovery.message, /nested weekday|retry/i);
+  assert.deepEqual(f.read(), before);
+  assert.deepEqual(f.commands, []);
+  assert.deepEqual(f.ownerLines, []);
 });

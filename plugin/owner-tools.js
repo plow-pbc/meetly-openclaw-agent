@@ -14,11 +14,12 @@ export function registerOwnerTools(api, execute = run, outbound) {
   const required = ["requestId", "askedAt", "text", "outcome"];
   api.registerTool(context => ({
     name: "meetly_answer_owner", label: "Answer a meeting question",
-    description: "Resolve a pending meeting question or time approval from the owner's own answer. For a private overlap question, wait for a new owner message, then use allow_overlap or refuse_overlap and overlapChoice to identify the inspected candidate. The tool holds that exact time on approval and delivers the generated offer; never pass private titles in text or offer by title. First match ledger.ts pending by person and topic. In a group, read ledger.ts find --chat for this chat and call this tool when the owner answers its pending question, even when their answer is already visible. Never substitute a normal reply or silence for clearing the pending question. For pendingOwner.alternatives, an owner yes runs a fresh alternative search through meetly-confirm before answering. Preserve saved conditions unless the owner explicitly changes them. Hold new times before relaying the offer; never just relay yes and clear the decision. Set outcome=decline_alternatives only when the owner refuses new alternatives. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. Choose outcome=answer for words only, or calendar_change after applying a meeting change through calendar.ts. For a question in that same group, outcome=answer or decline_alternatives clears silently without sending or acknowledging; calendar_change sends its confirmed result once before clearing. When silent is true, output nothing: no group reply, commentary or \"(Silent — …)\" note. For email, send returned email.to/email.body with plow_send_email, then call again with the same requestId, askedAt, outcome and text plus emailSent:true only after confirmed sent:true. An unknown send remains pending. A question already answered by the owner in the email thread clears without another send. Owner only. For time approvals, first run calendar.ts approve-time: a yes never authorizes overlap. If busy, tell the owner privately and offer nearest free alternatives without conflict titles, then call this tool with the result; it sends the result once even in the group and clears the approval.",
+    description: "Resolve a pending meeting question or time approval from the owner's own answer. For a private overlap question, wait for a new owner message, then use allow_overlap or refuse_overlap and overlapChoice to identify the inspected candidate. The tool holds that exact time on approval and delivers the generated offer; never pass private titles in text or offer by title. First match ledger.ts pending by person and topic. In a group, read ledger.ts find --chat for this chat and call this tool when the owner answers its pending question, even when their answer is already visible. Never substitute a normal reply or silence for clearing the pending question. For pendingOwner.alternatives, call this tool with outcome=calendar_change on the owner's yes: it searches fresh availability, excludes all rejected starts, holds times, generates the offer text and delivers it. Supply constraints only for conditions the owner explicitly changes; omitted conditions stay saved. Do not search, hold, or compose that offer separately. Set outcome=decline_alternatives only when the owner refuses new alternatives. For ordinary place/format/time answers (not alternative-search or overlap approvals): Before calling this tool, apply any location, format or time change through the existing calendar.ts flows in meetly-confirm. If the answer requests a calendar change, call only after the calendar writer succeeds; on failed or unresolved writes leave the question pending and do not acknowledge completion. Pass its requestId and pending askedAt, and text as Meetly relaying the answer. From the owner's main DM, sends once to the recorded group and clears after confirmed delivery; never send separately or retry unknown delivery. Choose outcome=answer for words only, or calendar_change after applying a meeting change through calendar.ts. For a question in that same group, outcome=answer or decline_alternatives clears silently without sending or acknowledging; calendar_change sends its confirmed result once before clearing. When silent is true, output nothing: no group reply, commentary or \"(Silent — …)\" note. For email, send returned email.to/email.body with plow_send_email, then call again with the same requestId, askedAt, outcome and text plus emailSent:true only after confirmed sent:true. An unknown send remains pending. A question already answered by the owner in the email thread clears without another send. Owner only. For time approvals, first run calendar.ts approve-time: a yes never authorizes overlap. If busy, tell the owner privately and offer nearest free alternatives without conflict titles, then call this tool with the result; it sends the result once even in the group and clears the approval.",
     parameters: {
       type: "object", additionalProperties: false, required,
       properties: {
         outcome: { type: "string", enum: ["answer", "calendar_change", "decline_alternatives", "allow_overlap", "refuse_overlap"], description: "answer for words only; calendar_change after successfully applying a meeting change; decline_alternatives when refusing a pending alternative search. Never include private travel details in text." },
+        constraints: { ...constraints, description: "For an approved exhausted search, only the conditions the owner explicitly changed; other saved conditions remain in force." },
         requestId: { type: "string", description: "The matched request's id." },
         askedAt: { type: "string", description: "The matched pending question or time approval's askedAt." },
         text: { type: "string", description: "The owner's answer, phrased as Meetly for the group." },
@@ -145,6 +146,36 @@ export function registerContactTools(api, execute = runContact) {
 function isOwnerMainDm(context) {
   return context.messageChannel === "plow" && context.agentAccountId === "chat" && context.senderIsOwner === true &&
     !!context.requesterSenderId && context.sessionKey === "agent:main:main";
+}
+
+const runAttendee = async (context, { requestId, operation, email }) => {
+  const { calendarAction } = await import("/opt/plow/skills/meetly/scripts/calendar.ts");
+  return calendarAction(requestId, { action: "attendee", operation, email }, { validate(request) {
+    if (context.sessionKey !== "agent:main:main" && (request.chatUid !== context.nativeChannelId ||
+      context.agentAccountId !== (request.channel === "email" ? "email" : "chat"))) throw new Error("Use this meeting's thread or the owner's main DM.");
+  } });
+};
+
+export function registerAttendeeTool(api, execute = runAttendee) {
+  const required = ["requestId", "operation", "email"];
+  api.registerTool(context => ({
+    name: "meetly_edit_attendee", label: "Add a meeting attendee",
+    description: "Owner only. Add one attendee to an existing booked meeting using its requestId and the resolved email address. Updates the invitation without moving the meeting. Confirm only after success, using confirmationTime with its time zone. Never rebook or suggest alternatives for an attendee edit. Attendee removal is unsupported: tell the owner, Please remove the guest in your calendar app. Never rewrite the attendee list or cancel automatically.",
+    parameters: { type: "object", additionalProperties: false, required, properties: {
+      requestId: { type: "string" }, operation: { type: "string", enum: ["add"] }, email: { type: "string" },
+    } },
+    async execute(_id, args) {
+      let result;
+      if (context.messageChannel !== "plow" || !["chat", "email"].includes(context.agentAccountId) ||
+        context.senderIsOwner !== true || !context.requesterSenderId || !context.nativeChannelId) {
+        result = { error: "Only the owner's own Plow turn can edit attendees." };
+      } else {
+        try { result = await execute(context, cleanArgs(args, required)); }
+        catch (error) { result = { error: error instanceof Error ? error.message : "Attendee change could not be completed." }; }
+      }
+      return { isError: "error" in result, content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  }));
 }
 
 const runMovable = async (context, args) => {

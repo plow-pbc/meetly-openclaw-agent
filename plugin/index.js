@@ -11,7 +11,7 @@ import { calendarPolicy } from "./calendar-policy.js";
 import { execFile } from "node:child_process";
 import { guestTurns } from "./guest-turn.js";
 import { registerGuestTools } from "./guest-tools.js";
-import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool, registerContactTools, registerMovableTool } from "./owner-tools.js";
+import { registerOwnerTools, registerOwnerGroupTool, registerOwnerDmTool, registerContactTools, registerMovableTool, registerAttendeeTool } from "./owner-tools.js";
 
 export const OWNER_DM_SESSION = "agent:main:main";
 export const SETUP_STATUS = "/opt/plow/skills/meetly/scripts/setup-status.ts";
@@ -110,6 +110,7 @@ export default {
     registerOwnerDmTool(api);
     registerContactTools(api);
     registerMovableTool(api);
+    registerAttendeeTool(api);
     api.on("before_tool_call", calendarPolicy);
     api.on("agent_end", guestTurns.end);
     api.on("before_prompt_build", async (_event, ctx) => {

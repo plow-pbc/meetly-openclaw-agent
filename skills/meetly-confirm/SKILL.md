@@ -31,29 +31,26 @@ if everyone already saw the answer. A reply or silence alone leaves it pending. 
 
 For email answers, the tool returns `email.to` and `email.body` after reserving delivery. Send with `plow_send_email`, then repeat the same outcome and answer with `emailSent: true` only after confirmed `sent: true`. An answer already visible from the owner clears without another email.
 
-For text requests, deliver every result with `meetly_answer_owner` (`requestId`, pending `askedAt`, `outcome`, `text`),
+For a pending text question or approval, deliver its result with `meetly_answer_owner` (`requestId`, pending `askedAt`, `outcome`, `text`),
 never separately with `plow_reply_to` or a group reply. It sends once to the recorded
 group and clears the pending item only after the send succeeds.
 Without a pending item, deliver once to the saved group. If delivery is unknown,
 tell the owner; do not resend. For a pending item, only if the owner explicitly authorizes a retry, run
 `ledger.ts delivery --id <id> --kind answer --action clear` first.
 
-- **Exhausted search (`pendingOwner.alternatives`):** an owner yes starts a fresh
-  alternative search before answering. Read the calendar and search with `slots.ts
-  --request <id>`, preserving saved conditions, excluded weekdays, meal and duration.
-  If the owner explicitly changes dates or the time window, search with those revised
-  conditions and omit `--request`, which would intersect the old bounds again.
-  A bare yes authorizes the search, not loosening saved conditions.
-  Pass each `previousStarts` value as `--exclude` so rejected times are not offered again.
-  Hold the returned times with `calendar.ts offer --id <id>`, including the authorized
-  constraints and the request's other saved fields; do not update the ledger first.
-  Only after successful holds call `meetly_answer_owner` with `outcome:"calendar_change"`
-  and their labels as the selection question; it sends the offer once even in the same group. If no times fit or a write is
-  unresolved, leave the decision pending and tell the owner. If the owner declines,
-  call the answer tool with `outcome:"decline_alternatives"` and their refusal; retain the existing offer.
+- **Exhausted search (`pendingOwner.alternatives`):** call `meetly_answer_owner` on
+  the owner's yes; it searches, holds and delivers the new offer. Pass `constraints`
+  only for conditions the owner explicitly changed. For a refusal, pass
+  `outcome:"decline_alternatives"` and their answer as `text`.
 - **Overlap (`pendingOwner.overlap`):** follow `meetly-travel`'s pending-answer flow; use `allow_overlap` or `refuse_overlap`, never generic `outcome:"answer"`.
-- **Question (`pendingOwner.question`, without `alternatives` or `overlap`):** `text` is Meetly relaying the owner's answer.
-  Apply any requested calendar change first. On failure or an unresolved write, leave the question pending. For a successful change set `outcome: "calendar_change"`: the tool delivers the confirmed result even in the same group. Otherwise set `outcome: "answer"`; in the same group the tool clears silently without
+- **Question (`pendingOwner.question`, without `alternatives` or `overlap`):** if the owner's answer changes location, format or time,
+  apply it first: use `calendar.ts format` for place/format, or
+  "Book the event" / "Changes after booking" for time changes. Wait until the
+  calendar writer succeeds before calling `meetly_answer_owner` or acknowledging.
+  On a failed or unresolved write, leave the question pending; resume unresolved
+  writes and never claim the change completed. `text` relays the confirmed result,
+  or the owner's answer when no calendar change is needed.
+  For a successful change set `outcome: "calendar_change"`: the tool delivers the confirmed result even in the same group. Otherwise set `outcome: "answer"`; in the same group the tool clears silently without
   sending or acknowledging; after `silent: true`, output nothing. If the owner answers
   a different question already visible in the group, leave the unrelated pending
   question open and output nothing. Never send the answer separately.
@@ -66,8 +63,9 @@ tell the owner; do not resend. For a pending item, only if the owner explicitly 
     pending approval exists, otherwise to the saved group. If already booked, relay it without booking again.
   - `code: TIME_APPROVAL_BUSY`: tell the owner in their DM that the time is busy.
     Read fresh busy time, run `slots.ts --near <near> --request <id> --no-overlap`,
-    hold the returned times with `calendar.ts offer --id <id> --json '<request with offered slots>'` and deliver them with
-    `meetly_answer_owner`, as "an existing commitment" to guests. If there are no
+    hold the returned times with `calendar.ts offer --id <id> --json '<request with offered slots>'`.
+    Deliver once to the saved group, using `meetly_answer_owner` only when a pending approval exists.
+    Describe the conflict as "an existing commitment" to guests. If there are no
     slots, tell the owner and leave the current offer intact.
 - **No:** use `meetly_answer_owner` to tell the group that time doesn't work
   for the owner, and offer the current times or new ones.
@@ -143,6 +141,16 @@ Flagged contacts need the private confirmation in `meetly-pipeline`, then
   invitation was updated when the writer returns `invitationUpdated: true`;
   otherwise say the calendar event moved, without claiming an invitation.
   The writer releases every replacement hold after committing the move.
+- **Add an attendee:** only on the owner's instruction, resolve the person's
+  email from their message or Contacts; ask if missing or ambiguous. Call
+  `meetly_edit_attendee` with structured `requestId`, `operation: "add"`
+  and `email` fields. Never interpolate the address into a shell command. This updates the existing event with `sendUpdates: "all"`;
+  existing guests may receive an update. It preserves the booking, Meet link, travel and
+  replacement holds. No calendar write occurs when the attendee is already present.
+  Confirm the attendee addition only after success, using
+  the returned `confirmationTime` from the calendar event, including its time zone. Do not suggest new times or rebook.
+- **Remove an attendee:** say "Please remove the guest in your calendar app."
+  Never rewrite the attendee list or cancel/rebook the meeting to remove someone.
 - **Cancel:** run `calendar.ts cancel --id <id>`. It records `dropped`, clears
   the offer and pending question, and deletes the event with `sendUpdates: "all"`.
   If `holdCleanup` is nonempty, report pending cancellation/hold cleanup rather
