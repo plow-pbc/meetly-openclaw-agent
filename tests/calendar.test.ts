@@ -1316,3 +1316,14 @@ for (const change of ["start", "end"] as const) test(`travel correction rejects 
   assert.ok(f.calls.every(argv => !["create", "update", "delete"].includes(argv[2]!)));
   assert.deepEqual(pendingCalendarWrites(), []);
 });
+
+for (const override of [false, true]) test(`offered overlap permission survives travel that does not grow: override=${override}`, async t => {
+  const f = fixture(t);
+  const travel = { beforeMin: 30, afterMin: 30, ...(override ? { override: true } : {}) };
+  const allowOverlap = [{ account, id: "approved", start, end }];
+  writeJson(f.path, { requests: [{ ...f.read(), format: "in_person", travel, allowOverlap }] });
+  await calendarAction("r_one", { action: "format", format: "in_person", travel: { beforeMin: override ? 120 : 15, afterMin: override ? 120 : 15 } }, f.options);
+  assert.deepEqual(f.read().allowOverlap, allowOverlap);
+  assert.deepEqual(f.read().travel, override ? travel : { beforeMin: 15, afterMin: 15 });
+  assert.deepEqual(f.calls, []);
+});

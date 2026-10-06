@@ -208,8 +208,9 @@ export async function calendarAction(id: string, action: CalendarAction, options
         travelFor({ format, travel: input.travel });
       }
       if ((input.action === "format" || input.action === "travel") && request.status === "offered") {
+        const grows = input.travel!.beforeMin > (request.travel?.beforeMin ?? 0) || input.travel!.afterMin > (request.travel?.afterMin ?? 0);
         patch({ ...(input.action === "format" ? { format: input.format, location: input.location ?? "" } : {}),
-          travel: input.travel });
+          travel: input.travel, ...(grows ? { allowOverlap: [] } : {}) });
         return { request: requestById(id) };
       }
       if ((input.action === "format" || input.action === "travel") ? request.status !== "booked" : request.status !== "offered" && request.status !== "asked" && !(request.status === "booked" && (((input.action === "book" || input.action === "approve-time") && wasBooked) || input.action === "offer"))) throw new Error(`request is ${request.status}`);

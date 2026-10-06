@@ -2202,3 +2202,23 @@ for (const originalFormat of ["meet", "in_person"] as const) test(`replacement f
   assert.doesNotMatch(JSON.stringify(moved), /beforeMin|afterMin|travelEvents/);
   t.diagnostic(JSON.stringify({ original: { format: original.format, location: original.location, travel: original.travel }, proposal, moved, ownerNotice: f.ownerLines.at(-1) }));
 });
+
+test("owner-group replacement search skips an approved blocker and offers later free times", async t => {
+  const f = fixture(t), saved = f.ledger.requests[0]!;
+  saved.constraints = { from: "2026-10-05", to: "2026-10-05", after: "12:00", before: "17:00" };
+  saved.offered[0] = { ...saved.offered[0]!, start: "2026-10-05T12:00:00Z", end: "2026-10-05T12:30:00Z" };
+  saved.allowOverlap = [{ account: "owner@example.com", id: "approved", start: saved.offered[0].start, end: saved.offered[0].end }];
+  f.save(f.ledger);
+  f.events.set("hold-one", event("hold-one", saved.offered[0].start, saved.offered[0].end));
+  f.events.set("approved", event("approved", "2026-10-05T12:00:00Z", "2026-10-05T15:00:00Z"));
+  let tool: any;
+  registerOwnerGroupTool({ registerTool(factory: any) { tool = factory({ ...context, senderIsOwner: true, sessionKey: "agent:main:plow:group:chat-one" }); } }, offerOwnerGroup);
+  const result = await tool.execute("replacement", { introduction: "already_introduced", topic: saved.topic, durationMin: 30, format: "meet", travel: { beforeMin: 0, afterMin: 0 } });
+  assert.equal(result.isError, false, JSON.stringify(result));
+  const offered: { start: string }[] = JSON.parse(result.content[0].text).offered;
+  assert.equal(offered.length, SLOT_COUNT);
+  assert.ok(offered.every(slot => Date.parse(slot.start) >= Date.parse("2026-10-05T15:00:00Z")));
+  assert.deepEqual(f.request().allowOverlap, []);
+  assert.equal(f.events.get("approved")!.status, "confirmed");
+  t.diagnostic(JSON.stringify({ offered, grant: f.request().allowOverlap }));
+});

@@ -15,7 +15,7 @@ const now = Date.parse("2026-10-03T08:00:00Z"), account = "owner@example.com";
 const slot = { start: "2026-10-05T12:00:00Z", end: "2026-10-05T12:30:00Z" };
 const owner = { messageChannel: "plow", agentAccountId: "chat", senderIsOwner: true, requesterSenderId: "+15550001111", nativeChannelId: "owner-dm", sessionKey: "agent:main:main" };
 
-for (const scenario of ["allow", "refuse", "same-title", "other-account", "revoked", "email", "prior-grant", "booked", "travel", "asked", "travel-estimate", "guest-search", "guest-exact", "replacement", "clear-grant", "wrong-interval", "delivery-failure", "second-choice", "email-choice"] as const) test(`fresh overlap answer binds exact inspected event: ${scenario}`, async t => {
+for (const scenario of ["allow", "refuse", "same-title", "other-account", "revoked", "email", "prior-grant", "booked", "travel", "asked", "travel-estimate", "guest-search", "guest-exact", "replacement", "clear-grant", "wrong-interval", "delivery-failure", "second-choice", "email-choice", "format-growth", "travel-growth"] as const) test(`fresh overlap answer binds exact inspected event: ${scenario}`, async t => {
   const home = tmpHome(), old = process.env.MEETLY_HOME;
   process.env.MEETLY_HOME = home;
   t.mock.method(Date, "now", () => now);
@@ -28,7 +28,7 @@ for (const scenario of ["allow", "refuse", "same-title", "other-account", "revok
     offered: scenario === "asked" ? [] : [{ start: "2026-10-06T12:00:00Z", end: "2026-10-06T12:30:00Z", account }] }, now, "request"));
   const read = () => readJson<Ledger>(join(home, "ledger.json"), { requests: [] }).requests[0]!;
   if (scenario === "booked") writeJson(join(home, "ledger.json"), { requests: [{ ...read(), status: "booked", eventId: "existing-meeting", booked: read().offered[0] }] });
-  const event = { ...calendarEvent("inspected", scenario === "travel-estimate" ? "2026-10-05T11:20:00Z" : scenario === "travel" ? "2026-10-05T11:45:00Z" : slot.start, scenario === "travel-estimate" ? "2026-10-05T11:30:00Z" : scenario === "travel" ? slot.start : "2026-10-05T15:00:00Z"), summary: "Private focus block" };
+  const event = { ...calendarEvent("inspected", scenario.endsWith("growth") ? "2026-10-05T10:00:00Z" : scenario === "travel-estimate" ? "2026-10-05T11:20:00Z" : scenario === "travel" ? "2026-10-05T11:45:00Z" : slot.start, scenario === "travel-estimate" ? "2026-10-05T11:30:00Z" : scenario === "travel" ? slot.start : "2026-10-05T15:00:00Z"), summary: "Private focus block" };
   const originalBlocker = structuredClone(event);
   const calendar = fakeCalendar([event]);
   const bridge = { token: "fixture", fetch: async (_url: unknown, init?: RequestInit) => {
@@ -119,8 +119,23 @@ for (const scenario of ["allow", "refuse", "same-title", "other-account", "revok
     if (scenario === "replacement") await assert.rejects(offerRequest({ ...input, requestId: "request" }, options), /previous offer retained/);
     else { await offerRequest({ ...input, requestId: "request" }, options); assert.deepEqual(read().allowOverlap, []); }
   }
+  if (scenario.endsWith("growth")) {
+    const previousToken = process.env.PLOW_MCP_BRIDGE_TOKEN;
+    process.env.PLOW_MCP_BRIDGE_TOKEN = "fixture";
+    t.after(() => { if (previousToken === undefined) delete process.env.PLOW_MCP_BRIDGE_TOKEN; else process.env.PLOW_MCP_BRIDGE_TOKEN = previousToken; });
+    t.mock.method(globalThis, "fetch", bridge.fetch);
+    const guest = { messageChannel: "plow", agentAccountId: "chat", nativeChannelId: "guest-chat", requesterSenderId: "+15550002222" };
+    if (scenario === "format-growth") assert.ok(!("error" in await guestAction(guest, "format", { format: "in_person", travel: { beforeMin: 120, afterMin: 120 } })));
+    else await calendarAction("request", { action: "travel", travel: { beforeMin: 45, afterMin: 0, override: true } }, options);
+    assert.deepEqual(read().allowOverlap, [], "expanded travel requires fresh overlap approval");
+    const writes = calendar.calls.filter(c => ["create", "update"].includes(c[2]!)).length;
+    const picked = await guestAction(guest, "pick", { start: slot.start });
+    assert.ok("code" in picked && picked.code === "TIME_UNAVAILABLE", JSON.stringify(picked));
+    await assert.rejects(calendarAction("request", { action: "book", start: slot.start }, options), /previous offer retained/);
+    assert.equal(calendar.calls.filter(c => ["create", "update"].includes(c[2]!)).length, writes);
+  }
   if (scenario === "wrong-interval") await assert.rejects(calendarAction("request", { action: "book", start: "2026-10-05T13:00:00Z", end: "2026-10-05T13:30:00Z" }, options), /previous offer retained/);
-  if (scenario.startsWith("travel")) {
+  if (scenario === "travel" || scenario === "travel-estimate") {
     await calendarAction("request", { action: "book", start: slot.start }, options);
     assert.equal(read().travelEvents?.length, 1);
     if (scenario === "travel-estimate") { assert.equal(read().travel.beforeMin, 45); assert.equal(calendar.events.get(read().travelEvents![0]!.holdId)!.start.dateTime, "2026-10-05T11:15:00.000Z"); }
