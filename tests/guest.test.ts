@@ -1461,19 +1461,28 @@ test("exact clock constraints are owner-only; guests use the dated start argumen
 });
 
 for (const start of ["thu", "Thursday", '{"weekday":"funday"}', { weekday: "Thursday" }])
-test(`weekday text is rejected before effects and an enum retry succeeds: ${JSON.stringify(start)}`, async t => {
+test(`invalid starts separate guest correction from weekday retry: ${JSON.stringify(start)}`, async t => {
   const f = fixture(t);
   f.ledger.requests[0]!.constraints = {};
   f.save(f.ledger);
   const before = f.request();
   const tool = f.tools.get("meetly_other_times")!;
   const rejected = JSON.parse((await tool.execute("invalid", { offer_week: true, start })).content[0]!.text);
-  assert.match(rejected.error, /weekday.*mon, tue, wed, thu, fri, sat, sun/);
-  assert.match(rejected.error, /HH:MM/);
-  assert.match(rejected.error, /ISO/);
+  assert.equal(rejected.code, "INVALID_START");
+  if (typeof start === "string") {
+    assert.equal(rejected.recovery.action, "reply");
+    assert.match(rejected.recovery.message, /correct.*date.*time/i);
+    assert.doesNotMatch(rejected.recovery.message, /nested weekday|retry/i);
+  } else {
+    assert.equal(rejected.recovery.action, "retry");
+    assert.match(rejected.error, /weekday.*mon, tue, wed, thu, fri, sat, sun/);
+    assert.match(rejected.error, /HH:MM/);
+    assert.match(rejected.error, /ISO/);
+  }
   assert.deepEqual(f.request(), before);
   assert.deepEqual(f.commands, []);
   assert.deepEqual(f.ownerLines, []);
+  if (typeof start === "string") return;
   const retried = JSON.parse((await tool.execute("retry", { offer_week: true, start: { weekday: "thu" } })).content[0]!.text);
   assert.ok(retried.offered.length, JSON.stringify(retried));
   assert.ok(retried.offered.every((slot: { start: string }) => slot.start.startsWith("2026-10-08")));
@@ -1512,7 +1521,9 @@ for (const [start, timezone] of [
   const before = f.read();
   const result = JSON.parse((await f.tools.get("meetly_other_times")!.execute("invalid", { offer_week: false, start, excludedDays: ["wed"] })).content[0]!.text);
   assert.equal(result.code, "INVALID_START");
-  assert.equal(result.recovery.action, "retry");
+  assert.equal(result.recovery.action, "reply");
+  assert.match(result.recovery.message, /correct.*date.*time/i);
+  assert.doesNotMatch(result.recovery.message, /nested weekday|retry/i);
   assert.deepEqual(f.read(), before);
   assert.deepEqual(f.commands, []);
   assert.deepEqual(f.ownerLines, []);

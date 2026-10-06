@@ -109,6 +109,10 @@ async function otherTimes(request: Request, config: Config, args: GuestArgs, sen
     }
   } catch (error) {
     if (error instanceof WeekdayDateRequired) throw error;
+    if (typeof args.start === "string") {
+      const message = "That date or time is invalid. Please correct the date and time you'd like to meet.";
+      return { error: message, code: "INVALID_START", recovery: { action: "reply", message } };
+    }
     const message = 'Provide a nested weekday object, for example arguments {"start":{"weekday":"thu"}} for Thursday. Allowed weekday values: mon, tue, wed, thu, fri, sat, sun. Optional time must be HH:MM; omit it for a day-only preference. Do not quote the object as a JSON string or pass a bare weekday. Only for an explicitly dated time, start may be an ISO string YYYY-MM-DDTHH:MM[:SS[.sss]][Z|±HH:MM]. Never invent a clock time to repair a weekday-only request.';
     return { error: message, code: "INVALID_START", recovery: { action: "retry", message } };
   }
