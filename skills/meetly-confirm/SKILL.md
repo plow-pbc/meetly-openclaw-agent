@@ -39,7 +39,7 @@ tell the owner; do not resend. For a pending item, only if the owner explicitly 
 `ledger.ts delivery --id <id> --kind answer --action clear` first.
 
 - **Exhausted search (`pendingOwner.alternatives`):** call `meetly_answer_owner` on
-  the owner's yes; it searches, holds and delivers the new offer. Pass `constraints`
+  the owner's yes with `outcome:"calendar_change"`; it searches, holds and delivers the new offer. Pass `constraints`
   only for conditions the owner explicitly changed. For a refusal, pass
   `outcome:"decline_alternatives"` and their answer as `text`.
 - **Overlap (`pendingOwner.overlap`):** follow `meetly-travel`'s pending-answer flow; use `allow_overlap` or `refuse_overlap`, never generic `outcome:"answer"`.
