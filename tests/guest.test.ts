@@ -1963,14 +1963,16 @@ for (const action of ["view", "pick", "decline"] as const) test(`unlinked email 
 
 for (const action of ["ask_owner", "decline"] as const) for (const failed of [false, true]) test(`email ${action} awaits private delivery and silences the final: failed=${failed}`, async t => {
   const f = emailFixture(t);
-  let sends = 0, completed = false, release!: () => void;
+  let sends = 0, completed = false, release!: () => void, entered!: () => void;
   const delivery = new Promise<void>(resolve => { release = resolve; });
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
   const work = guestAction(f.ctx, action, { question: "Should Ana bring the budget?" }, async () => {
     sends++;
+    entered();
     await delivery;
     if (failed) throw new Error("Uncertain delivery");
   }).then(result => { completed = true; return result; });
-  await new Promise(resolve => setTimeout(resolve, 20));
+  await waiting;
   assert.equal(sends, 1);
   assert.equal(completed, false, "tool must await the private send");
   release();
