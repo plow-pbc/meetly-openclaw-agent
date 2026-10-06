@@ -23,8 +23,8 @@ export type CalendarAction =
   | { action: "format"; format: Request["format"]; location?: string }
   | { action: "drop" } | { action: "expire" } | { action: "cancel" } | { action: "cleanup" } | { action: "resume" };
 type Step = { verb: "create" | "update"; account: string; eventId?: string; start: string; end: string; args: string[]; token: string; sentAt?: number; abandoned?: boolean; skipped?: boolean; handle?: string; output?: string };
-type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" }>; steps: Step[]; failed?: boolean };
-export type CalendarOptions = { validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
+type Intent = { id: string; input: Extract<CalendarAction, { action: "offer" | "book" | "format" }>; steps: Step[]; failed?: boolean; contactConfirmed?: boolean };
+export type CalendarOptions = { confirmContact?: boolean; validate?: (request: Request) => void; command?: (command: MacCommand) => Promise<MacOutcome | undefined>; poll?: (handle: string) => Promise<MacOutcome | undefined>; now?: () => number };
 class TimeApprovalBusy extends Error {
   constructor() { super("Time approval cannot book a busy slot; no overlap was authorized."); }
 }
@@ -148,7 +148,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
     let request = requestById(id);
     let input: CalendarAction = action;
     options.validate?.(request);
-    if (["offer", "duration", "book"].includes(input.action)) checkContact(ledger(), request.handle, request.contactConfirmed);
+    if (["offer", "duration", "book"].includes(input.action)) checkContact(ledger(), request.handle, request.contactConfirmed || (input.action === "offer" && options.confirmContact));
     if (input.action === "offer" && ("contactConfirmed" in input.request || "pendingContact" in input.request)) throw new Error("Contact authorization requires the owner DM tool.");
     if (intent && request.calendarRevision === intent.id) { rmSync(journal); intent = undefined; }
     if (intent && input.action !== "resume") throw new Error(`calendar operation unresolved for ${id}; run resume first`);
@@ -231,7 +231,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
           ...(format === "phone" ? ["--location=Phone call"] : location !== undefined ? [`--location=${location}`] : []),
           ...(input.action === "book" && input.attendees ? ["--attendees", input.attendees] : [])]);
       }
-      intent = { id: randomUUID(), input, steps };
+      // Consent commits with the new offer; a failed replacement cannot authorize old holds.
+      intent = { id: randomUUID(), input, steps, ...(input.action === "offer" && options.confirmContact ? { contactConfirmed: true } : {}) };
       writeJson(journal, intent);
     }
     const fail = async (error?: Error) => {
@@ -250,7 +251,7 @@ export async function calendarAction(id: string, action: CalendarAction, options
       if (step.skipped) continue;
       if (step.output !== undefined) { checkedEvent(step); continue; }
       if (step.sentAt === undefined && !intent.failed) {
-        if (["offer", "book"].includes(intent.input.action)) checkContact(ledger(), request.handle, requestById(id).contactConfirmed);
+        if (["offer", "book"].includes(intent.input.action)) checkContact(ledger(), request.handle, requestById(id).contactConfirmed || intent.contactConfirmed);
         const config = loadConfig();
         const results: unknown[] = [];
         for (const account of new Set(config.calendars.map(c => c.account))) {
@@ -348,7 +349,8 @@ export async function calendarAction(id: string, action: CalendarAction, options
         if (r.id !== id) return r;
         const cleanup = uniqueCleanup(r.holdCleanup ?? [])
           .filter(h => !(r.status === "booked" && r.eventId === h.holdId && r.booked?.account === h.account));
-        return { ...r, calendarRevision: completed.id, holdCleanup: cleanup };
+        return { ...r, ...(completed.contactConfirmed ? { contactConfirmed: true, pendingContact: undefined } : {}),
+          calendarRevision: completed.id, holdCleanup: cleanup };
       }) };
     });
     rmSync(journal);

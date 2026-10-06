@@ -1,6 +1,6 @@
 import { calendarAction, type CalendarOptions, type OfferInput } from "./calendar.ts";
 import { loadConfig } from "./config.ts";
-import { doNotContact, setDoNotContact, type Ledger } from "./ledger.ts";
+import { doNotContact, sameRequest, setDoNotContact, type Ledger } from "./ledger.ts";
 import { file } from "./paths.ts";
 import { readJson, updateJson } from "./store.ts";
 
@@ -17,18 +17,10 @@ export async function confirmContactOffer(args: { requestId: string; offered: Of
   const { origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails } = request.pendingContact ?? request;
   const offered = args.offered.map(o => ({ ...o, account: o.account ?? loadConfig().defaultAccount }));
   if (!offered.length || offered.some(o => Date.parse(o.end) - Date.parse(o.start) !== durationMin * 60_000)) throw new Error("Search times matching the saved request duration before confirming contact.");
-  updateJson<Ledger>(path, { requests: [] }, l => ({ requests: l.requests.map(r => {
-    if (r.id !== request.id) return r;
-    if (JSON.stringify(r) !== JSON.stringify(request)) throw new Error("Request changed; read it before confirming contact.");
-    return { ...r, contactConfirmed: true };
-  }) }));
-  const result = await calendarAction(request.id, { action: "offer", request: {
+  return calendarAction(request.id, { action: "offer", request: {
     origin, handle, name, topic, meal, durationMin, constraints, proposed, format, location, locale, chatUid, askDetails, offered,
-  } }, options);
-  updateJson<Ledger>(path, { requests: [] }, l => ({ requests: l.requests.map(r => {
-    if (r.id !== request.id || JSON.stringify(r.pendingContact) !== JSON.stringify(request.pendingContact)) return r;
-    const { pendingContact, ...rest } = r;
-    return rest;
-  }) }));
-  return result;
+  } }, { ...options, confirmContact: true, validate(current) {
+    options.validate?.(current);
+    if (!sameRequest(request, current)) throw new Error("Request changed; read it before confirming contact.");
+  } });
 }
