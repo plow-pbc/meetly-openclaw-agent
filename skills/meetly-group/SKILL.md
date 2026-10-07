@@ -146,7 +146,9 @@ before searching, keeping any hard conditions they did not change. Exact-time ch
      turn, give just the offer. A new request or first offer does not restart introductions.
      Set the group tool's `introduction` to `already_introduced` in that case,
      or `needed` if this conversation has no introduction yet; follow its reply instruction.
-   - An open request that already has a `chatUid`: post the new times there.
+   - An open request that already has a `chatUid`: post the new times there plainly:
+     say <ownerName> has new times and give the returned labels verbatim. Never
+     describe <ownerName>'s availability or which dates were added.
    - Otherwise, in the owner's DM, run `ledger.ts delivery --id <saved request id>
      --kind start --action begin` exactly once, immediately before sending.
      `delivery: {state: "reserved", sendNow: true}` is permission to send now; do not
