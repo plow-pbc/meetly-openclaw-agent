@@ -24,10 +24,9 @@ export function travelRange(start: string | number, end: string | number, input:
     to: new Date((typeof end === "number" ? end : Date.parse(end)) + travel.afterMin * 60_000).toISOString() };
 }
 
-export function travelNote(request: TravelInput & { topic: string; location?: string }): string | undefined {
+export function travelNote(request: TravelInput & { location?: string }): string | undefined {
   const { beforeMin, afterMin } = travelFor(request);
-  // A topic like "Lunch at Tartine" already names the place.
-  const place = request.location && !request.topic.toLowerCase().includes(request.location.toLowerCase()) ? ` at ${request.location}` : "";
+  // Built from saved fields only; the free-text topic may already name the place.
   return beforeMin || afterMin
-    ? `Held ${beforeMin} min travel before and ${afterMin} min after ${request.topic}${place} — say if that's off.` : undefined;
+    ? `Held ${beforeMin} min travel before and ${afterMin} min after the meeting${request.location ? ` at ${request.location}` : ""} — say if that's off.` : undefined;
 }

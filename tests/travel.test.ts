@@ -12,10 +12,9 @@ test("travel requires a model decision and rejects incompatible virtual estimate
   for (const value of [-1, 121, 1.5, Infinity, "25", null]) assert.throws(() => travelFor({travel: {beforeMin: value as number, afterMin: 0}}), /whole minutes/);
 });
 
-test("the owner's travel note names the place once", () => {
+test("the owner's travel note uses saved fields, not the topic", () => {
   const travel = { beforeMin: 15, afterMin: 15 }, format = "in_person" as const;
-  assert.equal(travelNote({ format, travel, topic: "Lunch at Tartine Manufactory", location: "Tartine Manufactory" }),
-    "Held 15 min travel before and 15 min after Lunch at Tartine Manufactory — say if that's off.");
-  assert.equal(travelNote({ format, travel, topic: "Lunch with Mia", location: "Tartine Manufactory" }),
-    "Held 15 min travel before and 15 min after Lunch with Mia at Tartine Manufactory — say if that's off.");
+  assert.equal(travelNote({ format, travel, topic: "Lunch at Tartine Manufactory", location: "Tartine Manufactory" } as Parameters<typeof travelNote>[0]),
+    "Held 15 min travel before and 15 min after the meeting at Tartine Manufactory — say if that's off.");
+  assert.equal(travelNote({ format, travel }), "Held 15 min travel before and 15 min after the meeting — say if that's off.");
 });
