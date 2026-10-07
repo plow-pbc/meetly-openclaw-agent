@@ -271,14 +271,14 @@ test("the CLI reads busy.ts output and the stored config", () => {
   const busyFile = join(home, "busy.json");
   writeFileSync(busyFile, JSON.stringify({
     busy: [{ start: "2026-09-28T13:00:00.000Z", end: "2026-09-28T14:00:00.000Z", id: "weekly", account: "jean@example.com" }],
-    degraded: ["other@example.com"], coverage,
+    degraded: [], coverage,
   }));
   const env = { MEETLY_HOME: home };
   const now = ["--now", "2026-09-28T08:00:00-03:00", "--duration", "30"];
   const r = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now], env);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.json.slots[0].start, "2026-09-28T11:00:00-03:00");
-  assert.deepEqual(r.json.degraded, ["other@example.com"]);
+  assert.deepEqual(r.json.degraded, []);
   const oversized = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now, "--count", "6"], env);
   assert.equal(oversized.status, 0, oversized.stderr);
   assert.deepEqual(oversized.json, r.json);
@@ -290,7 +290,7 @@ test("the CLI reads busy.ts output and the stored config", () => {
     slot: { start: "2026-10-03T10:00:00-03:00", end: "2026-10-03T11:00:00-03:00", dayOfWeek: "sat", label: "sáb., 03/10, 10:00 BRT" },
     free: true,
     outsideHours: true,
-    degraded: ["other@example.com"],
+    degraded: [],
   });
   const saturday = cli("slots.ts", ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, ...now, "--at", "2026-10-03T10:00:00-03:00", "--days", "sat"], env);
   assert.equal(saturday.status, 0, saturday.stderr);
@@ -320,6 +320,24 @@ test("the CLI reads busy.ts output and the stored config", () => {
     if (expected) assert.deepEqual(result.json.slots.map((s: { start: string }) => s.start),
       expected.map(time => `2026-09-28T${time}:00-03:00`));
   }
+});
+
+test("an unreadable calendar stops owner searches and time checks", () => {
+  const home = tmpHome();
+  writeJson(join(home, "config.json"), CONFIG);
+  const busyFile = join(home, "busy.json");
+  writeJson(busyFile, { busy: [], degraded: ["other@example.com"], coverage });
+  const args = ["--travel", '{"beforeMin":0,"afterMin":0}', "--in", busyFile, "--now", "2026-09-28T08:00:00-03:00", "--duration", "30"];
+  const search = cli("slots.ts", args, { MEETLY_HOME: home });
+  assert.equal(search.status, 0, search.stderr);
+  assert.deepEqual(search.json.slots, []);
+  assert.match(search.json.next.reply, /other@example\.com/);
+  const exact = cli("slots.ts", [...args, "--at", "2026-09-28T10:00:00-03:00"], { MEETLY_HOME: home });
+  assert.equal(exact.status, 0, exact.stderr);
+  assert.equal(exact.json.free, false);
+  assert.equal(exact.json.reason, "unknown");
+  assert.deepEqual(exact.json.degraded, ["other@example.com"]);
+  assert.match(exact.json.next.reply, /other@example\.com/);
 });
 
 test("owner re-offer uses saved week bounds and ignores only its own holds", () => {

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { calendarAction, type CalendarOptions } from "./calendar.ts";
+import { calendarAction, pendingCalendarWrites, type CalendarOptions } from "./calendar.ts";
 import { isMain, run } from "./cli.ts";
 import { recordDelivery, updateRequest, type Ledger } from "./ledger.ts";
 import { file } from "./paths.ts";
@@ -12,6 +12,8 @@ export async function emailStart(id: string, receipt?: Receipt, options: Calenda
   const request = readJson<Ledger>(path, { requests: [] }).requests.find(r => r.id === id);
   if (request?.channel !== "email") throw new Error("Choose an email request.");
   if (receipt === undefined) {
+    // An unresolved offer may still be dropped; its times must not reach the guest.
+    if (pendingCalendarWrites().includes(id)) throw new Error("The offer's calendar holds are unresolved; do not email these times. Tell the owner the offer could not be confirmed.");
     updateJson<Ledger>(path, { requests: [] }, l => recordDelivery(l, id, "start", "begin", now));
     return { prepared: true, requestId: id };
   }

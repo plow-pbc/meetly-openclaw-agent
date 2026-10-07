@@ -319,10 +319,12 @@ export async function guestAction(ctx: GuestContext, action: GuestAction, args: 
     // Keep the exception in local diagnostics; never relay backend details to guests.
     console.error(`meetly guest ${action} failed (${code}):`, error);
     // Backend output can contain private event details, contact data, and accounts.
-    return { error: "The scheduling action could not be completed.", code,
-      recovery: code === "REQUEST_CHANGED" ? { action: "view_request", tool: "meetly_view_request" }
-        : { action: "reply", message: code === "CALENDAR_WRITE_PENDING"
-          ? "The calendar update is still pending. Please wait for confirmation."
-          : "I couldn't update the meeting times. Please try again later." } };
+    const recovery = code === "REQUEST_CHANGED" ? { action: "view_request", tool: "meetly_view_request" }
+      : { action: "reply", message: code === "CALENDAR_WRITE_PENDING"
+        ? "The calendar update is still pending. Please wait for confirmation."
+        : "I couldn't update the meeting times. Please try again later." };
+    // A failed pick ends the guest's turn with this fixed reply, not a model retry or explanation.
+    return { error: "The scheduling action could not be completed.", code, recovery,
+      ...(action === "pick" && recovery.message ? { guestReply: recovery.message } : {}) };
   }
 }

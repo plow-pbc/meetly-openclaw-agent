@@ -41,6 +41,9 @@ const run = async (context, action, args, sendOwner) => {
   return guestAction(context, action, args, sendOwner);
 };
 
+// The tool already sent the reply its recovery asked for; the model must not send another.
+const silentRecovery = result => result.recovery?.action === "reply" ? { recovery: { action: "silent", retry: false } } : {};
+
 const loadOutbound = () => import("openclaw/plugin-sdk/channel-outbound");
 
 export async function sendPlowMessage(api, context, to, text, kind, outbound = loadOutbound) {
@@ -76,10 +79,10 @@ export function registerGuestTools(api, execute = run, outbound = loadOutbound) 
           if (!result.guestReply || context.agentAccountId === "email") return result;
           try {
             await sendPlowMessage(api, context, context.nativeChannelId ?? context.deliveryContext?.to?.replace(/^plow:/, ""), result.guestReply, "group", outbound);
-            return { ...result, guestReplyAttempted: true, guestReplyDelivered: true, silent: true, askDetails: false };
+            return { ...result, guestReplyAttempted: true, guestReplyDelivered: true, silent: true, askDetails: false, ...silentRecovery(result) };
           } catch {
             return { ...result, guestReplyAttempted: true, guestReplyDelivered: false, silent: true, askDetails: false,
-              warning: "guest-reply-unconfirmed" };
+              warning: "guest-reply-unconfirmed", ...silentRecovery(result) };
           }
         });
         const emailSilent = context.agentAccountId === "email" && result.silent;
