@@ -114,7 +114,8 @@ function fixture(t: TestContext, contactOutput = "S|0\nR|1|Guest||\nP|1|+1555123
   const outbound = async () => ({
     buildOutboundSessionContext: (args: object) => args,
     sendDurableMessageBatch: async (args: Record<string, any>) => {
-      assert.ok(read().requests[0]!.pendingOwner || read().requests[0]!.booked || read().requests[0]!.status === "dropped", "save the question or scheduling change before sending");
+      assert.ok(read().requests[0]!.pendingOwner || read().requests[0]!.booked || read().requests[0]!.status === "dropped"
+        || args.payloads[0].text === "I couldn't update the meeting times. Please try again later.", "save the question or scheduling change before sending");
       deliveries.push(args);
       if (delivery.fail) throw new Error("PRIVATE TRANSPORT ERROR");
       if (args.to === "plow-owner") ownerLines.push(args.payloads[0].text);
@@ -1472,6 +1473,28 @@ test("guest calendar failures return a safe terminal recovery through the plugin
   assert.equal(detail.code, "CALENDAR_UNAVAILABLE");
   assert.deepEqual(detail.recovery, { action: "reply", message: "I couldn't update the meeting times. Please try again later." });
   assert.doesNotMatch(JSON.stringify(detail), /PRIVATE|owner@example.com/);
+});
+
+test("a failed pick sends the guest one fixed reply and ends the turn", async t => {
+  const f = fixture(t);
+  f.fail.add("event");
+  const tool = f.tools.get("meetly_pick_time")!;
+  const turn = { runId: "failed-pick", sessionKey: context.nativeChannelId };
+  guestTurns.begin(turn); t.after(() => guestTurns.end({}, turn));
+  guestTurns.beforeTool({ toolName: "meetly_pick_time", toolCallId: "first" }, turn);
+  const result = await tool.execute("first", { start: offers[0]!.start });
+  const detail = JSON.parse(result.content[0]!.text);
+  assert.equal(detail.code, "SCHEDULING_FAILED");
+  assert.equal(detail.silent, true);
+  assert.deepEqual(detail.recovery, { action: "silent", retry: false });
+  assert.match(result.content.map(c => c.text).join("\n"), /NO_REPLY/);
+  assert.deepEqual(f.deliveries.map(d => [d.to, d.payloads[0].text]), [[context.nativeChannelId, "I couldn't update the meeting times. Please try again later."]]);
+  const commands = f.commands.length;
+  guestTurns.beforeTool({ toolName: "meetly_pick_time", toolCallId: "again" }, turn);
+  await tool.execute("again", { start: offers[0]!.start });
+  assert.equal(f.commands.length, commands, "a retry in the same turn must not touch the calendar");
+  assert.equal(f.deliveries.length, 1);
+  assert.equal(f.request().status, "offered");
 });
 
 for (const existing of [false, true]) test(`malformed owner locale is rejected before calendar writes: existing=${existing}`, async t => {

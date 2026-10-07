@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { emailStart } from "../skills/meetly/scripts/email.ts";
 import { addRequest, type Ledger } from "../skills/meetly/scripts/ledger.ts";
@@ -36,4 +36,19 @@ for (const sent of [true, false, "unknown", "transport-unknown"] as const) test(
     assert.equal(read().chatUid, "thread");
   }
   t.diagnostic(JSON.stringify({ receipt, request: read(), calendarCalls: calendar.calls.map(call => call[2]) }));
+});
+
+test("an offer with an unresolved calendar write cannot be emailed", t => {
+  const home = tmpHome(), previous = process.env.MEETLY_HOME;
+  process.env.MEETLY_HOME = home;
+  t.after(() => { if (previous === undefined) delete process.env.MEETLY_HOME; else process.env.MEETLY_HOME = previous; rmSync(home, { recursive: true, force: true }); });
+  const offered = [{ start: "2026-10-13T16:00:00Z", end: "2026-10-13T16:30:00Z", account: "owner@example.com" }];
+  const path = join(home, "ledger.json");
+  writeJson(path, addRequest({ requests: [] }, { travel: { beforeMin: 0, afterMin: 0 }, channel: "email", origin: "owner", handle: "ana@example.net", topic: "Sync", durationMin: 30, offered }, Date.now(), "request"));
+  mkdirSync(join(home, "calendar"));
+  writeJson(join(home, "calendar", "request.json"), { id: "intent", input: { action: "offer", provisional: true }, steps: [] });
+  const prepared = cli("email.ts", ["prepare", "--id", "request"], { MEETLY_HOME: home });
+  assert.equal(prepared.status, 1);
+  assert.match(prepared.stderr, /unresolved/);
+  assert.equal(readJson<Ledger>(path, { requests: [] }).requests[0]!.startedAt, undefined);
 });

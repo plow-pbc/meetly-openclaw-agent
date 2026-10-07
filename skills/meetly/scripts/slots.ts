@@ -326,6 +326,8 @@ if (isMain(import.meta.url)) {
     const now = values.now !== undefined ? Date.parse(values.now) : Date.now();
     if (Number.isNaN(now)) throw new Error(`--now is not a time: ${values.now}`);
     const degraded = input.degraded ?? [];
+    // Unread calendars may hide conflicts, so no time is offered until every calendar reads.
+    const unread = degraded.length ? { reply: `Stop and tell the owner these calendars could not be read: ${degraded.join(", ")}. Offer no times until they can be read.` } : undefined;
     const request = values.request === undefined ? undefined
       : readJson<Ledger>(file("ledger.json"), { requests: [] }).requests.find(r => r.id === values.request);
     if (values.request !== undefined && (!request || !["asked", "offered", "booked"].includes(request.status))) throw new Error("--request needs an asked, offered or booked request");
@@ -386,6 +388,7 @@ if (isMain(import.meta.url)) {
         if (!sameRequest(latest.requests.find(r => r.id === request.id), request)) throw new Error("request changed; check its time again");
         return updateRequest(latest, request.id, { constraints: conditions }, now);
       });
+      if (unread) return { ...result, ...(result.free ? { free: false, reason: "unknown" } : {}), degraded, next: unread };
       const nearby = busy ? await nearbyAlternatives(q, result.slot.start,
         request ? requestEvents(request).map(o => ({ account: o.account, id: o.holdId })) : []) : undefined;
       const next = busy ? { reply: `Tell the owner the requested time is busy and present the returned alternatives in their ranked order in this same reply. ${request ? "Conditions are already saved on this request; do not update the ledger after this check." : "Use resolvedConstraints if later creating a request; never pin the busy start."} Do not ask permission to search. If degraded or alternativesIncomplete is present, report incomplete calendar coverage instead of claiming no times exist.` }
@@ -393,6 +396,6 @@ if (isMain(import.meta.url)) {
       return { ...result, ...(busy ? { resolvedConstraints } : {}), degraded: [...degraded, ...(nearby?.degraded ?? [])],
         ...(nearby ? { alternatives: nearby.slots, ...(nearby.incomplete ? { alternativesIncomplete: nearby.incomplete } : {}) } : {}), ...(next ? { next } : {}) };
     }
-    return { ...findSlots(q), degraded };
+    return { ...findSlots(q), ...(unread ? { slots: [], next: unread } : {}), degraded };
   });
 }
