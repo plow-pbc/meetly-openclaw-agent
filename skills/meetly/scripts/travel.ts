@@ -26,6 +26,8 @@ export function travelRange(start: string | number, end: string | number, input:
 
 export function travelNote(request: TravelInput & { topic: string; location?: string }): string | undefined {
   const { beforeMin, afterMin } = travelFor(request);
+  // A topic like "Lunch at Tartine" already names the place.
+  const place = request.location && !request.topic.toLowerCase().includes(request.location.toLowerCase()) ? ` at ${request.location}` : "";
   return beforeMin || afterMin
-    ? `Held ${beforeMin} min travel before and ${afterMin} min after ${request.topic}${request.location ? ` at ${request.location}` : ""} — say if that's off.` : undefined;
+    ? `Held ${beforeMin} min travel before and ${afterMin} min after ${request.topic}${place} — say if that's off.` : undefined;
 }

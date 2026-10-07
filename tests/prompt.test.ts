@@ -267,6 +267,12 @@ test("the owner's conditions hold for every offer of a request; the person's pro
 });
 
 
+test("new times for an open group are posted plainly, without describing the owner's availability", () => {
+  const group = groupSkill();
+  assert.ok(group.includes("An open request that already has a `chatUid`: post the new times there plainly"));
+  assert.ok(group.includes("Never describe <ownerName>'s availability or which dates were added"));
+});
+
 test("guests route to their tool descriptions without loading skills or running scripts", () => {
   const rule = prompt.match(/- \*\*Guest phone turns:\*\*([\s\S]*?)(?=\n- \*\*)/)?.[1] ?? "";
   assert.match(rule, /meetly_view_request/);

@@ -108,6 +108,15 @@ for (const row of invitationGuidance) test(`invitation guidance: update=${row.in
   assert.equal(/no invitation will follow/i.test(JSON.stringify((await pick.execute("pick", {})).content)), row.expected);
 });
 
+test("a sent booking invitation is reported, never denied", async () => {
+  let pick: any;
+  registerGuestTools({ registerTool(factory: any) { const tool = factory({ agentAccountId: "email" }); if (tool.name === "meetly_pick_time") pick = tool; } },
+    async () => ({ status: "booked", channel: "email", invitationSent: true }));
+  const guidance = (await pick.execute("pick", {})).content.slice(1).map((c: { text: string }) => c.text).join("\n");
+  assert.match(guidance, /invitation was sent/i);
+  assert.doesNotMatch(guidance, /no invitation will follow/i);
+});
+
 test("host call bindings isolate overlapping runs in the same session and serialize their actions", async () => {
   const turns = createGuestTurns();
   const first = { runId: "first", sessionKey: "shared" };
